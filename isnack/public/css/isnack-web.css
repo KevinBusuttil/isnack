@@ -1,0 +1,44 @@
+/* Works on Chrome, Edge, and Safari */
+:root{
+    --main-color: #37bee0;
+    --second-color: #37bee0;
+    --third-color: #a5488a;
+    --widget-bg: #e8eafcad;
+
+    .page-card-head h4 {
+        color: #37bee0;
+    }
+    .page-card-actions button {
+        background-color: #37bee0;
+    }
+    body {
+        background-color: white;
+        color: white;
+    }
+}
+[data-theme=isn_theme]{
+    --primary: var(--main-color);
+    --dt-primary-color: var(--main-color);
+    --blue-avatar-bg: var(--main-color);
+    --blue-avatar-color: var(--main-color);
+    --blue: var(--main-color)
+}
+
+.navbar {
+    background: linear-gradient(to right, var(--main-color), var(--second-color)) !important;
+    border: none !important;
+}
+
+nav.navbar.navbar-light.navbar-expand-lg {
+    display: none;
+}
+
+[data-theme=isn_theme] .navbar-nav>li>a{
+	color:#fff !important;
+}
+[data-theme=isn_theme] .navbar-nav>li>a:hover{
+	color:#ddd !important;
+}
+[data-theme=isn_theme] .navbar-brand:hover {
+	color:#ddd !important;
+}

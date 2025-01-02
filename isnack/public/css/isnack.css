@@ -1,0 +1,29 @@
+/* Works on Chrome, Edge, and Safari */
+/* Taken from https://github.com/tahir-zaqout/sundae_theme/tree/master/sundae_theme/public/css */
+:root{
+    --main-color: #37bee0;
+    --second-color: #37bee0;
+    --third-color: #a5488a;
+    --widget-bg: #e8eafcad ;
+}
+[data-theme=isn_theme]{
+    --primary: var(--main-color);
+    --dt-primary-color: var(--main-color);
+    --blue-avatar-bg: var(--main-color);
+    --blue-avatar-color: var(--main-color);
+    --blue: var(--main-color)
+}
+
+[data-theme=isn_theme] .navbar {
+    background: linear-gradient(to right, var(--main-color), var(--second-color)) !important;
+    border: none !important;
+}
+[data-theme=isn_theme] .navbar-nav>li>a{
+	color:#fff !important;
+}
+[data-theme=isn_theme] .navbar-nav>li>a:hover{
+	color:#ddd !important;
+}
+[data-theme=isn_theme] .navbar-brand:hover {
+	color:#ddd !important;
+}
