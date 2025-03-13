@@ -226,4 +226,8 @@ doctype_js = {"Sales Order" : "public/js/sales_order_proforma.js"}
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
+fixtures = [
+    {"dt": "Custom Field"},
+    {"dt": "Client Script"},
+    {"dt": "Property Setter"}
+]
