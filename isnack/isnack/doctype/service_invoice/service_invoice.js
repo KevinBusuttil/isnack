@@ -10,8 +10,7 @@ frappe.ui.form.on('Service Invoice', {
 			return {
 				filters: {
 					"company": doc.company,
-					"is_group": 0,
-					"do_not_manual_entry": 0,
+					"is_group": 0
 				}
 			}
 		});
@@ -19,8 +18,7 @@ frappe.ui.form.on('Service Invoice', {
 			return {
 				filters: {
 					"company": doc.company,
-					"is_group": 0,
-					"do_not_manual_entry": 0,
+					"is_group": 0
 				}
 			}
 		});
@@ -87,18 +85,17 @@ isnack.accounts.service_invoice = {
 
 frappe.ui.form.on('Service Invoice Items', {
 	party: function(frm, cdt, cdn) {
-		var invoice = frappe.get_doc(cdt, cdn);
-		if(invoice.party_type && invoice.party) {
-			if(!frm.doc.company) frappe.throw(__("Please select Company"));
+		var d = frappe.get_doc(cdt, cdn);
+		if (!d.account && d.party_type && d.party) {
+			if (!frm.doc.company) frappe.throw(__("Please select Company"));
 			return frm.call({
-				method: "erpnext.accounts.doctype.journal_entry.journal_entry.get_party_account_and_balance",
-				child: invoice,
+				method: "erpnext.accounts.doctype.journal_entry.journal_entry.get_party_account_and_currency",
+				child: d,
 				args: {
 					company: frm.doc.company,
-					party_type: invoice.party_type,
-					party: invoice.party,
-					cost_center: invoice.cost_center
-				}
+					party_type: d.party_type,
+					party: d.party,
+				},
 			});
 		}
 	},
