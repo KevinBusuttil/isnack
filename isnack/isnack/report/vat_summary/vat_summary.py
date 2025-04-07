@@ -19,15 +19,21 @@ def get_data(filters):
     
     sales_conditions = " "
     purchase_conditions = " "
-    
+    service_conditions = " "
+    reversed_je_conditions = " "
+        
     if(filters.get('voucher')):
         sales_conditions += f" AND siv.name='{filters.get('voucher')}' "
         purchase_conditions += f" AND piv.name='{filters.get('voucher')}' "
-    
+        service_conditions += f" AND svi.name='{filters.get('voucher')}' "
+        reversed_je_conditions += f" AND je.name='{filters.get('voucher')}' "
+            
     if(filters.get('vat_code')):
         sales_conditions += f" AND it.item_tax_template='{filters.get('vat_code')}' "
         purchase_conditions += f" AND it.item_tax_template='{filters.get('vat_code')}' "
-    
+        service_conditions += f" AND svii.vat_code='{filters.get('vat_code')}' "
+        reversed_je_conditions += f" AND svii.vat_code='{filters.get('vat_code')}' "
+            
     sql = f"""
 	(SELECT
 		'Sales Invoice',
@@ -76,6 +82,58 @@ def get_data(filters):
 	AND COALESCE(ittd_item.tax_rate, ittd_group.tax_rate) IS NOT NULL
 	GROUP BY COALESCE(it_item.item_tax_template, it_group.item_tax_template))
     
+    UNION ALL
+    
+    (SELECT
+        'Service Invoice',
+		svii.vat_code AS item_tax_template, 
+		SUM(svii.credit) AS net_amount, 
+		ittd.tax_rate, 
+		SUM((((ittd.tax_rate)/100) * svii.credit)) AS vat_amount
+    FROM `tabService Invoice Items` AS svii
+    JOIN `tabService Invoice` AS svi on svii.parent = svi.name
+	JOIN `tabItem Tax Template Detail` as ittd
+		ON ittd.parent=svii.vat_code
+    WHERE svii.vat_code is not null
+    AND svii.docstatus not in ('Draft', 'Cancelled')    
+    AND svi.company = '{company}'
+	AND (svii.date BETWEEN '{from_date}' AND '{to_date}' ) {service_conditions}
+	GROUP BY svii.vat_code)
+
+	UNION ALL
+
+    (SELECT 
+	ReversedEntries.journal_type,
+	ReversedEntries.item_tax_template,
+	SUM(ReversedEntries.net_amount) AS net_amount,
+	ReversedEntries.tax_rate,
+	SUM(ReversedEntries.vat_amount) AS vat_amount
+	FROM 
+		(SELECT distinct je.posting_date as posting_date,
+					svii.party as item_code,
+					svii.description as item_name,
+					svii.party,
+					svii.vat_code AS item_tax_template, 
+					svii.debit-svii.credit AS net_amount, 
+					ittd.tax_rate, 
+					(((ittd.tax_rate)/100) * (svii.debit-svii.credit)) AS vat_amount,
+					'Reversed' as journal_type,
+					jesi.name as service_journal_voucher,
+					je.name as journal_voucher
+		FROM `tabJournal Entry Account` AS jea
+		JOIN `tabJournal Entry` AS je on jea.parent = je.name
+		JOIN `tabJournal Entry` AS jesi on je.reversal_of = jesi.name
+		JOIN `tabService Invoice Items` AS svii on svii.journal_entry = jesi.name
+		JOIN `tabService Invoice` AS svi on svi.name = svii.parent
+		JOIN `tabItem Tax Template Detail` as ittd
+				ON ittd.parent=svii.vat_code
+		WHERE (je.posting_date BETWEEN '{from_date}' AND '{to_date}') {reversed_je_conditions}
+		AND je.reversal_of IS NOT NULL
+		AND svii.vat_code IS NOT NULL
+		AND je.company = '{company}'
+		order by je.name) AS ReversedEntries
+	GROUP BY ReversedEntries.item_tax_template)
+        
     ORDER BY 1
     """
     

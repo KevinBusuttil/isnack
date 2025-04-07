@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-04-04 12:40:18.538981",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_fc44",
+  "company",
+  "column_break_wqyu",
+  "namin_series",
+  "reversal_of",
+  "section_break_iblh",
+  "invoices",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_fc44",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Service Invoice",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "column_break_wqyu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "namin_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "ACC-JV-.YYYY.-"
+  },
+  {
+   "fieldname": "section_break_iblh",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "reversal_of",
+   "fieldtype": "Link",
+   "label": "Reversal Of",
+   "options": "Service Invoice"
+  },
+  {
+   "fieldname": "invoices",
+   "fieldtype": "Table",
+   "label": "Invoices",
+   "options": "Service Invoice Items"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-04-04 12:48:47.988509",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Service Invoice",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
