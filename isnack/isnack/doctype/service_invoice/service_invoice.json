@@ -74,7 +74,6 @@
    "default": "0",
    "fieldname": "vat_inclusive",
    "fieldtype": "Check",
-   "hidden": 1,
    "label": "VAT Inclusive"
   },
   {
@@ -85,7 +84,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-04-07 21:51:11.237828",
+ "modified": "2025-04-10 20:10:15.408609",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Service Invoice",
