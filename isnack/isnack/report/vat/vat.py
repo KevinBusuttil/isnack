@@ -105,9 +105,12 @@ def get_data(filters):
         svii.description AS item_name, 
         svii.party,
 		svii.vat_code AS item_tax_template, 
-		svii.credit AS net_amount, 
+   		(svii.credit-svii.debit) AS net_amount, 
 		ittd.tax_rate, 
-		(((ittd.tax_rate)/100) * svii.credit) AS vat_amount,
+        CASE 
+            WHEN svi.vat_inclusive = 1 THEN (svii.credit-svii.debit) * (1 - (1/(1+(ittd.tax_rate/100))))
+            ELSE (ittd.tax_rate/100) * (svii.credit-svii.debit)
+        END AS vat_amount,
         'Service Invoice',
         svi.name,
         svii.journal_entry
@@ -131,7 +134,10 @@ def get_data(filters):
         		svii.vat_code AS item_tax_template, 
         		svii.debit-svii.credit AS net_amount, 
 				ittd.tax_rate, 
-                (((ittd.tax_rate)/100) * (svii.debit-svii.credit)) AS vat_amount,
+				CASE 
+					WHEN svi.vat_inclusive = 1 THEN (svii.debit-svii.credit) * (1 - (1/(1+(ittd.tax_rate/100))))
+					ELSE (ittd.tax_rate/100) * (svii.debit-svii.credit)
+				END AS vat_amount,
                 'Reversed',
                 jesi.name,
                 je.name

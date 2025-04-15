@@ -87,9 +87,12 @@ def get_data(filters):
     (SELECT
         'Service Invoice',
 		svii.vat_code AS item_tax_template, 
-		SUM(svii.credit) AS net_amount, 
+		SUM(svii.credit - svii.debit) AS net_amount, 
 		ittd.tax_rate, 
-		SUM((((ittd.tax_rate)/100) * svii.credit)) AS vat_amount
+        SUM(CASE 
+            WHEN svi.vat_inclusive = 1 THEN (svii.credit-svii.debit) * (1 - (1/(1+(ittd.tax_rate/100))))
+            ELSE (ittd.tax_rate/100) * (svii.credit-svii.debit)
+        END) AS vat_amount
     FROM `tabService Invoice Items` AS svii
     JOIN `tabService Invoice` AS svi on svii.parent = svi.name
 	JOIN `tabItem Tax Template Detail` as ittd
