@@ -115,7 +115,7 @@ doctype_js = {"Sales Order" : "public/js/sales_order_proforma.js"}
 # Override standard doctype classes
 
 # override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
+#     "Item Tax Template": "isnack.overrides.item_tax_template.CustomItemTaxTemplate"
 # }
 
 # Document Events
