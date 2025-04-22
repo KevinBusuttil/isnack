@@ -1,0 +1,58 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-04-22 11:08:55.189676",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "certification_name",
+  "certification_number",
+  "certifying_body",
+  "expiration_date"
+ ],
+ "fields": [
+  {
+   "fieldname": "certification_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Certification Name",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "certification_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Certification Number",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "certifying_body",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Certifying Body"
+  },
+  {
+   "fieldname": "expiration_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Expiration Date",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-04-22 11:11:24.887528",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Item Certifications",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
