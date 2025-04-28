@@ -7,7 +7,6 @@
  "engine": "InnoDB",
  "field_order": [
   "date",
-  "voucher",
   "account",
   "column_break_abya",
   "party_type",
@@ -39,11 +38,6 @@
    "in_list_view": 1,
    "label": "Date",
    "reqd": 1
-  },
-  {
-   "fieldname": "voucher",
-   "fieldtype": "Data",
-   "label": "Voucher"
   },
   {
    "fieldname": "account",
@@ -191,7 +185,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-04-07 22:04:24.207029",
+ "modified": "2025-04-28 15:18:33.719797",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Service Invoice Items",
