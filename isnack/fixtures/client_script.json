@@ -1,1 +1,13 @@
-[]
+[
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Purchase Order",
+  "enabled": 1,
+  "modified": "2025-05-14 22:17:33.757185",
+  "module": "Isnack",
+  "name": "Default PO Incoterm",
+  "script": "frappe.ui.form.on('Purchase Order', {\n  supplier(frm) {\n    if (!frm.doc.supplier) return;\n    frappe.db.get_value('Supplier',\n      frm.doc.supplier,\n      'default_incoterm',\n      (r) => {\n        if (r.default_incoterm) {\n          frm.set_value('incoterm', r.default_incoterm);\n        }\n        else {\n          frm.set_value('incoterm', '');\n        }\n        \n      }\n    );\n  }\n});\n",
+  "view": "Form"
+ }
+]
