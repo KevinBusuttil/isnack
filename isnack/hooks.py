@@ -230,6 +230,7 @@ doctype_js = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 fixtures = [
+    {"dt": "Custom Field"},
     {"dt": "Client Script"},
     {"dt": "Property Setter"}
 ]
