@@ -1,0 +1,41 @@
+{
+ "add_total_row": 1,
+ "columns": [],
+ "creation": "2025-06-04 16:04:54.051772",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [
+  {
+   "fieldname": "production_plan_id",
+   "fieldtype": "Link",
+   "label": "Production Plan",
+   "mandatory": 1,
+   "options": "Production Plan",
+   "wildcard_filter": 0
+  }
+ ],
+ "idx": 0,
+ "is_standard": "Yes",
+ "json": "{}",
+ "letter_head": "I Snacks",
+ "letterhead": null,
+ "modified": "2025-06-05 21:07:03.056752",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Production Cost Summary",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "SELECT\n    pp.name AS \"Production Plan ID:Link/Production Plan:120\",\n    ppi.item_code AS \"Finished Item:Link/Item:120\",\n    ppi.planned_qty AS \"Production Quantity:Float:100\",\n    ppi.stock_uom AS \"UOM:Link/UOM:100\",\n    bei.item_code AS \"Exploded Component:Link/Item:120\",\n    (bei.stock_qty * ppi.planned_qty/bom.quantity) AS \"Total Required Exploded Quantity:Float:150\",\n    bei.stock_uom AS \"UOM:Link/UOM:100\",\n    (bei.rate) AS \"Est. Cost Per Unit of Component:Currency:180\",\n    (bei.amount) AS \"Total Est. Cost for Component:Currency:200\"\nFROM\n    `tabProduction Plan` pp\nJOIN\n    `tabProduction Plan Item` ppi ON ppi.parent = pp.name\nJOIN\n    `tabBOM` bom ON bom.item = ppi.item_code AND bom.name = ppi.bom_no\nJOIN\n    `tabBOM Explosion Item` bei ON bei.parent = bom.name\nWHERE\n    pp.docstatus = 1\n    AND pp.name = %(production_plan_id)s\nORDER BY\n    pp.name, ppi.item_code, bei.item_code;",
+ "ref_doctype": "Production Plan",
+ "report_name": "Production Cost Summary",
+ "report_type": "Query Report",
+ "roles": [
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Manufacturing Manager"
+  }
+ ]
+}
