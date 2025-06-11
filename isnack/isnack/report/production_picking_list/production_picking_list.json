@@ -1,6 +1,5 @@
 {
  "add_total_row": 1,
- "add_translate_data": 0,
  "columns": [],
  "creation": "2025-06-11 11:11:46.154914",
  "disabled": 0,
@@ -19,13 +18,13 @@
  "idx": 0,
  "is_standard": "Yes",
  "letterhead": null,
- "modified": "2025-06-11 12:40:22.670560",
+ "modified": "2025-06-11 15:26:12.383920",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Production Picking List",
  "owner": "Administrator",
  "prepared_report": 0,
- "query": "SELECT\n    pp.name AS \"Production Plan:Link/Production Plan:120\",\n    \n    -- Finished Product Info\n    ppi.item_code AS \"Finished Product:Link/Item:150\",\n    ppi.planned_qty AS \"Planned Qty:Float:100\",\n    ppi.stock_uom AS \"Finished Product UOM:Link/UOM:80\",\n    ppi.source_warehouse AS \"Component Source Warehouse:Link/Warehouse:180\",\n    ppi.warehouse AS \"Target Warehouse (Finished Product):Link/Warehouse:180\",\n\n    -- Component Info\n    bei.item_code AS \"Component Item:Link/Item:150\",\n    bei.stock_qty AS \"Per BOM Qty:Float:80\",\n    bom.quantity AS \"BOM Qty:Float:80\",\n    (bei.stock_qty * ppi.planned_qty / bom.quantity) AS \"Required Qty:Float:120\",\n    bei.stock_uom AS \"Component UOM:Link/UOM:80\"\n\n    -- Optional Costs (commented out)\n    -- , bei.rate AS \"Est. Rate:Currency:100\"\n    -- , (bei.rate * (bei.stock_qty * ppi.planned_qty / bom.quantity)) AS \"Total Est. Cost:Currency:150\"\n\nFROM\n    `tabProduction Plan` pp\nJOIN\n    `tabProduction Plan Item` ppi ON ppi.parent = pp.name\nJOIN\n    `tabBOM` bom ON bom.name = ppi.bom_no\nJOIN\n    `tabBOM Explosion Item` bei ON bei.parent = bom.name\n\nWHERE\n    pp.docstatus = 1\n    AND pp.name = %(production_plan_id)s\n\nORDER BY\n    pp.name,\n    ppi.item_code,\n    bei.item_code;\n",
+ "query": "SELECT\n    pp.name AS \"Production Plan:Link/Production Plan:120\",\n\n    -- Finished Product Info\n    ppi.item_code AS \"Finished Product:Link/Item:150\",\n    ppi.planned_qty AS \"Planned Qty:Float:100\",\n    ppi.stock_uom AS \"Finished Product UOM:Link/UOM:80\",\n    ppi.warehouse AS \"Finished Goods Warehouse:Link/Warehouse:180\",\n\n    -- Component Info\n    bei.item_code AS \"Component Item:Link/Item:150\",\n    bei.stock_qty AS \"Per BOM Qty:Float:80\",\n    bom.quantity AS \"BOM Qty:Float:80\",\n    (bei.stock_qty * ppi.planned_qty / bom.quantity) AS \"Required Qty:Float:120\",\n    bei.stock_uom AS \"Component UOM:Link/UOM:80\",\n\n    -- Component Source Warehouse\n    COALESCE(id_item.default_warehouse, id_group.default_warehouse) AS \"Component Source Warehouse:Link/Warehouse:180\"\n\nFROM\n    `tabProduction Plan` pp\nJOIN\n    `tabProduction Plan Item` ppi ON ppi.parent = pp.name\nJOIN\n    `tabBOM` bom ON bom.name = ppi.bom_no\nJOIN\n    `tabBOM Explosion Item` bei ON bei.parent = bom.name\nLEFT JOIN\n    `tabItem` item ON item.name = bei.item_code\nLEFT JOIN\n    `tabItem Default` id_item ON id_item.parent = bei.item_code AND id_item.parenttype = 'Item'\nLEFT JOIN\n    `tabItem Default` id_group ON id_group.parent = item.item_group AND id_group.parenttype = 'Item Group'\n\nWHERE\n    pp.docstatus = 1\n    AND pp.name = %(production_plan_id)s\n\nORDER BY\n    pp.name,\n    ppi.item_code,\n    bei.item_code;\n",
  "ref_doctype": "Production Plan",
  "report_name": "Production Picking List",
  "report_type": "Query Report",
@@ -36,6 +35,5 @@
   {
    "role": "Manufacturing Manager"
   }
- ],
- "timeout": 0
+ ]
 }
