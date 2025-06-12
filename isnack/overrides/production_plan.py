@@ -93,6 +93,7 @@ class CustomProductionPlan(ProductionPlan):
         "Fetch sub assembly items and optionally combine them."
         self.sub_assembly_items = []
         sub_assembly_items_store = []  # temporary store to process all subassembly items
+        bin_details = frappe._dict()
 
         for row in self.po_items:
             if self.skip_available_sub_assembly_item and not self.sub_assembly_warehouse:
@@ -106,12 +107,29 @@ class CustomProductionPlan(ProductionPlan):
 
             bom_data = []
 
-            warehouse = (self.sub_assembly_warehouse) if self.skip_available_sub_assembly_item else None
             if self.custom_split_sub_assembly_items:
-                get_sub_assembly_items_split(row.bom_no, bom_data, row.planned_qty, self.company, warehouse=warehouse)
+                get_sub_assembly_items_split(
+                    [item.production_item for item in sub_assembly_items_store],
+                    bin_details,
+                    row.bom_no,
+                    bom_data,
+                    row.planned_qty,
+                    self.company,
+                    warehouse=self.sub_assembly_warehouse,
+                    skip_available_sub_assembly_item=self.skip_available_sub_assembly_item,
+                )
             else:
-                get_sub_assembly_items(row.bom_no, bom_data, row.planned_qty, self.company, warehouse=warehouse)
-                
+                get_sub_assembly_items(
+                    [item.production_item for item in sub_assembly_items_store],
+                    bin_details,
+                    row.bom_no,
+                    bom_data,
+                    row.planned_qty,
+                    self.company,
+                    warehouse=self.sub_assembly_warehouse,
+                    skip_available_sub_assembly_item=self.skip_available_sub_assembly_item,
+                )
+
             self.set_sub_assembly_items_based_on_level(row, bom_data, manufacturing_type)
             sub_assembly_items_store.extend(bom_data)
 
@@ -139,27 +157,94 @@ class CustomProductionPlan(ProductionPlan):
         self.set_default_supplier_for_subcontracting_order()
 
 
-def get_sub_assembly_items_split(bom_no, bom_data, to_produce_qty, company, warehouse=None, indent=0):
+# def get_sub_assembly_items_split(bom_no, bom_data, to_produce_qty, company, warehouse=None, indent=0):
+#     data = get_bom_children(parent=bom_no)
+#     for d in data:
+#         if d.expandable:
+#             parent_item_code = frappe.get_cached_value("BOM", bom_no, "item")
+#             stock_qty = (d.stock_qty / d.parent_bom_qty) * flt(to_produce_qty)
+
+#             if warehouse:
+#                 bin_details = get_bin_details(d, company, for_warehouse=warehouse)
+
+#                 for _bin_dict in bin_details:
+#                     if _bin_dict.projected_qty > 0:
+#                         if _bin_dict.projected_qty > stock_qty:
+#                             stock_qty = 0
+#                             continue
+#                         else:
+#                             stock_qty = stock_qty - _bin_dict.projected_qty
+
+#             if stock_qty > 0:
+#                 def make_row(qty):
+#                     return frappe._dict({
+#                         "parent_item_code":      parent_item_code,
+#                         "description":           d.description,
+#                         "production_item":       d.item_code,
+#                         "item_name":             d.item_name,
+#                         "stock_uom":             d.stock_uom,
+#                         "uom":                   d.stock_uom,
+#                         "bom_no":                d.value,
+#                         "is_sub_contracted_item":d.is_sub_contracted_item,
+#                         "bom_level":             indent,
+#                         "indent":                indent,
+#                         "stock_qty":             qty,
+#                     })
+                
+#                 whole = int(stock_qty)
+#                 frac  = stock_qty - whole
+
+#                 # append one row per full unit
+#                 for _ in range(whole):
+#                     bom_data.append(make_row(1.0))
+
+#                 # append the leftover fractional piece, if any
+#                 if frac > 0:
+#                     bom_data.append(make_row(frac))
+
+#                 if d.value:
+#                     get_sub_assembly_items_split(
+#                         d.value, bom_data, stock_qty, company, warehouse, indent=indent + 1
+#                     )
+
+def get_sub_assembly_items_split(
+    sub_assembly_items,
+    bin_details,
+    bom_no,
+    bom_data,
+    to_produce_qty,
+    company,
+    warehouse=None,
+    indent=0,
+    skip_available_sub_assembly_item=False,
+):
     data = get_bom_children(parent=bom_no)
     for d in data:
         if d.expandable:
             parent_item_code = frappe.get_cached_value("BOM", bom_no, "item")
             stock_qty = (d.stock_qty / d.parent_bom_qty) * flt(to_produce_qty)
 
-            if warehouse:
-                bin_details = get_bin_details(d, company, for_warehouse=warehouse)
+            if skip_available_sub_assembly_item and d.item_code not in sub_assembly_items:
+                bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
 
-                for _bin_dict in bin_details:
+                for _bin_dict in bin_details[d.item_code]:
                     if _bin_dict.projected_qty > 0:
-                        if _bin_dict.projected_qty > stock_qty:
+                        if _bin_dict.projected_qty >= stock_qty:
+                            _bin_dict.projected_qty -= stock_qty
                             stock_qty = 0
                             continue
                         else:
                             stock_qty = stock_qty - _bin_dict.projected_qty
+                            sub_assembly_items.append(d.item_code)
+            elif warehouse:
+                bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
 
             if stock_qty > 0:
                 def make_row(qty):
                     return frappe._dict({
+                        "actual_qty": bin_details[d.item_code][0].get("actual_qty", 0)
+                        if bin_details.get(d.item_code)
+                        else 0,
                         "parent_item_code":      parent_item_code,
                         "description":           d.description,
                         "production_item":       d.item_code,
@@ -183,8 +268,16 @@ def get_sub_assembly_items_split(bom_no, bom_data, to_produce_qty, company, ware
                 # append the leftover fractional piece, if any
                 if frac > 0:
                     bom_data.append(make_row(frac))
-
+                    
                 if d.value:
-                    get_sub_assembly_items_split(
-                        d.value, bom_data, stock_qty, company, warehouse, indent=indent + 1
+                    get_sub_assembly_items(
+                        sub_assembly_items,
+                        bin_details,
+                        d.value,
+                        bom_data,
+                        stock_qty,
+                        company,
+                        warehouse,
+                        indent=indent + 1,
+                        skip_available_sub_assembly_item=skip_available_sub_assembly_item,
                     )
