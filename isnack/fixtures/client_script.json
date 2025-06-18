@@ -2,6 +2,28 @@
  {
   "docstatus": 0,
   "doctype": "Client Script",
+  "dt": "Production Plan",
+  "enabled": 1,
+  "modified": "2025-06-18 22:39:31.073469",
+  "module": "Isnack",
+  "name": "Production Cost Summary Report",
+  "script": "frappe.ui.form.on('Production Plan', {\n\trefresh(frm) {\n        // Add a custom button to the form under the \"View\" group\n        frm.add_custom_button(__('Production Cost Summary'), function() {\n            // Get the current Production Plan Id\n            var production_plan_id = frm.doc.name;\n\n            // Open the report with the filter applied\n            frappe.set_route('query-report', 'Production Cost Summary', {\n                'production_plan_id': production_plan_id\n            });\n        }, 'View'); // Changed 'Reports' to 'View'\n        \n        // Add a custom button to the form under the \"View\" group\n        frm.add_custom_button(__('Picking List'), function() {\n            // Get the current Production Plan Id\n            var production_plan_id = frm.doc.name;\n\n            // Open the report with the filter applied\n            frappe.set_route('query-report', 'Production Picking List', {\n                'production_plan_id': production_plan_id\n            });\n        }, 'View'); // Changed 'Reports' to 'View'\n    }\n})\n\n",
+  "view": "Form"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Production Plan",
+  "enabled": 1,
+  "modified": "2025-06-18 22:44:44.283559",
+  "module": "Isnack",
+  "name": "Production Plan Item filter",
+  "script": "frappe.ui.form.on(\"Production Plan\", {\n    refresh(frm) {\n        console.log(\"PRODUCTION PLAN CLIENT SCRIPT\");\n        // Override the item_code query for po_items with additional filter\n        frm.set_query(\"item_code\", \"po_items\", (doc, cdt, cdn) => {\n            return {\n                query: \"erpnext.controllers.queries.item_query\",\n                filters: {\n                    is_stock_item: 1,\n                    include_item_in_manufacturing: 1\n                }\n            };\n        });\n    }\n});",
+  "view": "Form"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
   "dt": "Purchase Order",
   "enabled": 1,
   "modified": "2025-05-27 22:17:25.705350",
