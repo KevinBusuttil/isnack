@@ -218,66 +218,94 @@ def get_sub_assembly_items_split(
     indent=0,
     skip_available_sub_assembly_item=False,
 ):
+    from frappe import _dict
     data = get_bom_children(parent=bom_no)
+    parent_item_code = frappe.get_cached_value("BOM", bom_no, "item")
+
     for d in data:
-        if d.expandable:
-            parent_item_code = frappe.get_cached_value("BOM", bom_no, "item")
-            stock_qty = (d.stock_qty / d.parent_bom_qty) * flt(to_produce_qty)
+        if not d.expandable:
+            continue
 
-            if skip_available_sub_assembly_item and d.item_code not in sub_assembly_items:
-                bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
+        total_qty = (d.stock_qty / d.parent_bom_qty) * flt(to_produce_qty)
 
-                for _bin_dict in bin_details[d.item_code]:
-                    if _bin_dict.projected_qty > 0:
-                        if _bin_dict.projected_qty >= stock_qty:
-                            _bin_dict.projected_qty -= stock_qty
-                            stock_qty = 0
-                            continue
-                        else:
-                            stock_qty = stock_qty - _bin_dict.projected_qty
-                            sub_assembly_items.append(d.item_code)
-            elif warehouse:
-                bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
+        print(f'SPLIT {d} {d.item_code} {d.stock_qty} {d.parent_bom_qty} {flt(to_produce_qty)}  TOTAL QTY: {total_qty}')
 
-            if stock_qty > 0:
-                def make_row(qty):
-                    return frappe._dict({
-                        "actual_qty": bin_details[d.item_code][0].get("actual_qty", 0)
-                        if bin_details.get(d.item_code)
-                        else 0,
-                        "parent_item_code":      parent_item_code,
-                        "description":           d.description,
-                        "production_item":       d.item_code,
-                        "item_name":             d.item_name,
-                        "stock_uom":             d.stock_uom,
-                        "uom":                   d.stock_uom,
-                        "bom_no":                d.value,
-                        "is_sub_contracted_item":d.is_sub_contracted_item,
-                        "bom_level":             indent,
-                        "indent":                indent,
-                        "stock_qty":             qty,
-                    })
-                
-                whole = int(stock_qty)
-                frac  = stock_qty - whole
+        if skip_available_sub_assembly_item and d.item_code not in sub_assembly_items:
+            bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
 
-                # append one row per full unit
-                for _ in range(whole):
-                    bom_data.append(make_row(1.0))
+            for _bin_dict in bin_details[d.item_code]:
+                if _bin_dict.projected_qty > 0:
+                    if _bin_dict.projected_qty >= total_qty:
+                        _bin_dict.projected_qty -= total_qty
+                        total_qty = 0
+                        continue
+                    else:
+                        total_qty = total_qty - _bin_dict.projected_qty
+                        sub_assembly_items.append(d.item_code)
+        elif warehouse:
+            bin_details.setdefault(d.item_code, get_bin_details(d, company, for_warehouse=warehouse))
 
-                # append the leftover fractional piece, if any
-                if frac > 0:
-                    bom_data.append(make_row(frac))
-                    
-                if d.value:
-                    get_sub_assembly_items(
-                        sub_assembly_items,
-                        bin_details,
-                        d.value,
-                        bom_data,
-                        stock_qty,
-                        company,
-                        warehouse,
-                        indent=indent + 1,
-                        skip_available_sub_assembly_item=skip_available_sub_assembly_item,
-                    )
+        if total_qty <= 0:
+            continue
+
+        # 3) Determine chunk_size from the child’s own BOM output qty
+        if d.value:
+            chunk_size = flt(frappe.db.get_value("BOM", d.value, "quantity") or 0)
+        else:
+            # if there is no further BOM, treat entire quantity as one chunk
+            chunk_size = total_qty
+
+        if chunk_size <= 0:
+            continue
+
+        # how many full chunks, and the leftover
+        num_full  = int(total_qty // chunk_size)
+        remainder = total_qty - (chunk_size * num_full)
+
+        def make_row(qty):
+            return frappe._dict({
+                "parent_item_code":       parent_item_code,
+                "description":            d.description,
+                "production_item":        d.item_code,
+                "item_name":              d.item_name,
+                "stock_uom":              d.stock_uom,
+                "uom":                    d.stock_uom,
+                "bom_no":                 d.value,
+                "is_sub_contracted_item": d.is_sub_contracted_item,
+                "bom_level":              indent,
+                "indent":                 indent,
+                "stock_qty":              qty,
+            })
+
+        # 4a) Append & recurse for each full chunk
+        for _ in range(num_full):
+            bom_data.append(make_row(chunk_size))
+            if d.value:
+                get_sub_assembly_items_split(
+                    sub_assembly_items,
+                    bin_details,
+                    d.value,
+                    bom_data,
+                    chunk_size,
+                    company,
+                    warehouse=warehouse,
+                    indent=indent + 1,
+                    skip_available_sub_assembly_item=skip_available_sub_assembly_item,
+                )
+
+        # 4b) Append & recurse for the final remainder (if any)
+        if remainder > 0:
+            bom_data.append(make_row(remainder))
+            if d.value:
+                get_sub_assembly_items_split(
+                    sub_assembly_items,
+                    bin_details,
+                    d.value,
+                    bom_data,
+                    remainder,
+                    company,
+                    warehouse=warehouse,
+                    indent=indent + 1,
+                    skip_available_sub_assembly_item=skip_available_sub_assembly_item,
+                )
+
