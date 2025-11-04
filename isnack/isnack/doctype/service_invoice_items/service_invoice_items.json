@@ -23,6 +23,7 @@
   "currency_section",
   "multi_currency",
   "account_currency",
+  "offset_account_currency",
   "invoice_section",
   "description",
   "vat_code",
@@ -205,12 +206,22 @@
    "fieldname": "currency_section",
    "fieldtype": "Section Break",
    "label": "Currency"
+  },
+  {
+   "fetch_from": "offset_account.account_currency",
+   "fieldname": "offset_account_currency",
+   "fieldtype": "Link",
+   "label": "Offset Account Currency",
+   "no_copy": 1,
+   "options": "Currency",
+   "print_hide": 1,
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-04 08:59:40.118048",
+ "modified": "2025-11-04 15:53:56.287667",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Service Invoice Items",
