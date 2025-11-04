@@ -20,6 +20,9 @@
   "debit",
   "credit",
   "offset_account",
+  "currency_section",
+  "multi_currency",
+  "account_currency",
   "invoice_section",
   "description",
   "vat_code",
@@ -108,14 +111,16 @@
    "fieldname": "debit",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Debit"
+   "label": "Debit",
+   "options": "account_currency"
   },
   {
    "columns": 1,
    "fieldname": "credit",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Credit"
+   "label": "Credit",
+   "options": "account_currency"
   },
   {
    "bold": 1,
@@ -180,17 +185,38 @@
    "label": "Journal",
    "options": "Journal Entry",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "multi_currency",
+   "fieldtype": "Check",
+   "label": "Multi Currency"
+  },
+  {
+   "fieldname": "account_currency",
+   "fieldtype": "Link",
+   "label": "Account Currency",
+   "no_copy": 1,
+   "options": "Currency",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "currency_section",
+   "fieldtype": "Section Break",
+   "label": "Currency"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-04-28 15:18:33.719797",
+ "modified": "2025-11-04 08:59:40.118048",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Service Invoice Items",
  "owner": "Administrator",
  "permissions": [],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

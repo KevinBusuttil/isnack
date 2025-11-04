@@ -24,6 +24,7 @@ class ServiceInvoice(Document):
             jv.naming_series = self.get("naming_series")
             jv.posting_date = invoice.date
             company = self.get("company") or get_default_company()
+            jv.multi_currency = invoice.multi_currency
             jv.company = company
             jv.user_remark = invoice.description
             jv.cheque_no = self.name
