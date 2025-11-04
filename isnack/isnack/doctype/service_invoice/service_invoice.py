@@ -173,14 +173,14 @@ class ServiceInvoice(Document):
                     )
 
             # --- Debug logging (toggle with `frappe.flags.debug = True`) --------
-            print("BEFORE SAVE (valid dict):")
-            print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
+            # print("BEFORE SAVE (valid dict):")
+            # print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
 
             # Persist & submit
             jv.save()
-            print("AFTER SAVE (valid dict):")
-            print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-            print()
+            # print("AFTER SAVE (valid dict):")
+            # print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
+            # print()
 
             jv.submit()
 
