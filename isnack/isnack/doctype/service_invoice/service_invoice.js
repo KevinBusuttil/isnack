@@ -6,6 +6,13 @@ frappe.provide("isnack.accounts.service_invoice")
 
 frappe.ui.form.on('Service Invoice', {
 	onload: function(frm) {
+		if (frm.is_new() && frm.doc.amended_from) {
+			(frm.doc.invoices || []).forEach(row => {
+				frappe.model.set_value(row.doctype, row.name, "journal_entry", null);
+			});
+			frm.refresh_field("invoices");
+		}
+		
 		frm.set_query("account", "invoices", function(doc){
 			return {
 				filters: {

@@ -184,6 +184,7 @@
    "in_list_view": 1,
    "in_preview": 1,
    "label": "Journal",
+   "no_copy": 1,
    "options": "Journal Entry",
    "read_only": 1
   },
@@ -221,7 +222,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-04 15:53:56.287667",
+ "modified": "2025-11-05 14:45:46.992838",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Service Invoice Items",
