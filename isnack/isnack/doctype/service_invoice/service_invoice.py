@@ -52,6 +52,8 @@ class ServiceInvoice(Document):
             account_exchange_rate = get_exchange_rate(inv.account_currency, company_currency, inv.date)
             offset_account_exchange_rate = get_exchange_rate(inv.offset_account_currency, company_currency, inv.date)
 
+            # print(f'A: {account_exchange_rate} O: {offset_account_exchange_rate}')
+
             # --- Inputs & basics -------------------------------------------------
             tax_detail = get_tax_rate(inv.vat_code)  # expects {"tax_rate": x, "tax_account": y}
             tax_rate = flt(tax_detail.get("tax_rate"))
@@ -180,7 +182,6 @@ class ServiceInvoice(Document):
             jv.save()
             # print("AFTER SAVE (valid dict):")
             # print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-            # print()
 
             jv.submit()
 
