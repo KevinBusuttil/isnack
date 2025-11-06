@@ -1,0 +1,158 @@
+/* ===== Operator Hub — Industrial Teal Theme (scoped to .op-teal) ===== */
+
+/* Palette */
+.op-teal{
+  --bg:#eef2f5;         /* page background */
+  --panel:#ffffff;      /* cards/panels */
+  --panel-2:#f7f9fb;    /* subtle sections */
+  --ink:#1b2733;        /* primary text */
+  --muted:#6b7b8c;      /* muted text */
+  --line:#e3e8ee;       /* thin borders */
+  --line-strong:#cfd7df;
+
+  --teal:#15b79e;       /* primary accent (teal) */
+  --teal-d:#109487;
+  --red:#ef4444;
+  --amber:#f59e0b;
+  --gray:#9aa6b2;
+
+  --header:#2c313a;     /* dark header/status bar */
+  --header-ink:#f3f6f9;
+
+  --shadow:0 10px 24px rgba(17,24,39,.08);
+  --shadow-sm:0 6px 16px rgba(17,24,39,.06);
+}
+
+/* Page background + type */
+.op-teal{
+  background:var(--bg);
+  color:var(--ink);
+}
+.op-teal a, .op-teal .text-muted{ color:var(--muted)!important; }
+
+/* Top status/header bar */
+.op-teal #status-bar{
+  background:var(--header);
+  color:var(--header-ink);
+  border-top:0;
+  border-bottom:2px solid #22262d;
+}
+.op-teal #status-connection{
+  padding:.2rem .6rem; border-radius:999px; font-weight:700;
+  background:rgba(21,183,158,.18); border:1px solid rgba(21,183,158,.45);
+}
+
+/* Kiosk mini header (line + operator) */
+.op-teal #kiosk-controls{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  box-shadow:var(--shadow-sm);
+}
+
+/* Panels */
+.op-teal #wo-banner,
+.op-teal .card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:12px;
+  box-shadow:var(--shadow);
+  padding:12px 16px;
+}
+
+/* Subpanels / light sections */
+.op-teal .subpanel{
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+}
+
+/* Queue items */
+.op-teal .list-group-item{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:12px;
+  margin-bottom:10px;
+  color:var(--ink);
+  transition:transform .08s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.op-teal .list-group-item:hover{
+  transform:translateY(-1px);
+  border-color:var(--teal);
+  box-shadow:0 10px 24px rgba(21,183,158,.12);
+}
+
+/* Chips: type + status */
+.op-teal .chip{
+  display:inline-flex; align-items:center; gap:.35rem;
+  padding:.25rem .6rem; border-radius:999px; font-weight:600; letter-spacing:.2px;
+  font-size:.72rem; text-transform:uppercase;
+  background:#f0f3f6; border:1px solid var(--line);
+  color:#334155;
+}
+.op-teal .chip-fg{ background:#e6fbf7; border-color:#bdf3ea; color:#0f766e; }
+.op-teal .chip-sf{ background:#eef2ff; border-color:#dfe6ff; color:#3730a3; }
+
+.op-teal .chip-ns{ background:#f2f4f7; color:#475569; }
+.op-teal .chip-running{ background:#e6fbf7; color:#0f766e; border-color:#bdf3ea; }
+.op-teal .chip-paused{ background:#fff7e6; color:#92400e; border-color:#fde68a; }
+.op-teal .chip-stopped{ background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+
+/* Scan input */
+.op-teal #scan{
+  background:#ffffff; color:var(--ink);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:.6rem .8rem; font-size:1.05rem;
+  transition:box-shadow .12s ease, border-color .12s ease;
+}
+.op-teal #scan:focus{
+  outline:none; border-color:var(--teal);
+  box-shadow:0 0 0 3px rgba(21,183,158,.2);
+}
+
+/* Buttons: flat industrial look */
+.op-teal .btn{
+  border-radius:10px;
+  border:1px solid var(--line-strong)!important;
+  background:#ffffff!important;
+  color:#0f172a;
+  transition:transform .08s ease, box-shadow .12s ease, border-color .12s ease, background .12s ease;
+}
+.op-teal .btn:hover{ transform:translateY(-1px); box-shadow:var(--shadow-sm); }
+.op-teal .btn:active{ transform:translateY(0); }
+
+.op-teal .btn-outline-primary,
+.op-teal .btn-primary{
+  background:var(--teal)!important;
+  color:#053b37!important;
+  border-color:var(--teal-d)!important;
+}
+.op-teal .btn-outline-secondary{ background:#f3f4f6!important; }
+.op-teal .btn-outline-danger{
+  background:#fff5f5!important; border-color:#fca5a5!important; color:#7f1d1d!important;
+}
+
+/* “Big action” tiles if you have them */
+.op-teal .action-tile{
+  background:var(--panel);
+  border:2px solid var(--line);
+  border-radius:14px;
+  padding:18px 16px;
+  text-align:center;
+  font-weight:700;
+  box-shadow:var(--shadow);
+}
+.op-teal .action-tile .caption{ color:var(--muted); font-weight:600; }
+
+/* Small utilities */
+.op-teal .mes-operator .badge { font-size:.8rem; }
+.op-teal .divider{ height:1px; background:var(--line); margin:6px 0; }
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce){
+  .op-teal .list-group-item{ transition:none!important; }
+  .op-teal .btn{ transition:none!important; }
+}
