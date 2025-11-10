@@ -39,7 +39,7 @@ function init_operator_hub($root) {
   const $statusMsg  = $('#status-message');
   const $statusConn = $('#status-connection');
 
-  // scope styles to this page & load page CSS
+  // ---- Theme (Industrial Teal) ----
   $root.addClass('op-teal');
   (() => {
     const cssURL = '/assets/isnack/page/operator_hub/operator_hub.css';
@@ -51,6 +51,83 @@ function init_operator_hub($root) {
     }
   })();
 
+  // ---- Kiosk chrome toggle (persisted) ----
+  function applyKioskChrome(enable){
+    document.body.classList.toggle('op-kiosk', !!enable);
+    localStorage.setItem('op_kiosk_chrome', enable ? '1' : '0');
+
+    // add/remove the small floating "Exit" button
+    let btn = document.getElementById('kiosk-exit');
+    if (enable && !btn) {
+      btn = document.createElement('button');
+      btn.id = 'kiosk-exit';
+      btn.className = 'btn btn-sm btn-outline-secondary';
+      btn.textContent = 'Exit Kiosk';
+      btn.onclick = () => applyKioskChrome(false);
+      document.body.appendChild(btn);
+    } else if (!enable && btn) {
+      btn.remove();
+    }
+  }
+  applyKioskChrome(localStorage.getItem('op_kiosk_chrome') === '1');
+
+  // ---- Wire header controls (fallback to inline strip if header missing) ----
+  (function wireKioskControls(){
+    const hasHeader = $('#op-toolbar', $root).length > 0;
+
+    if (hasHeader) {
+      // populate labels
+      $('#kiosk-line-label').text(state.current_line || '—');
+      $('#kiosk-emp-label').text(state.current_emp_name || '—');
+
+      // Fullscreen + hide header
+      $('#kiosk-fullscreen').off('click').on('click', () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+        else document.exitFullscreen().catch(()=>{});
+      });
+      $('#kiosk-toggle-chrome').off('click').on('click', () => {
+        const on = !document.body.classList.contains('op-kiosk');
+        applyKioskChrome(on);
+        $('#kiosk-toggle-chrome').text(on ? 'Show Header' : 'Hide Header');
+      });
+      // keyboard shortcut: Ctrl+Shift+K
+      window.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+          e.preventDefault();
+          $('#kiosk-toggle-chrome').trigger('click');
+        }
+      }, { passive: false });
+
+    } else {
+      // Fallback mini-strip (kept for backwards compatibility)
+      if (!$('#kiosk-controls', $root).length) {
+        const $row = $(`
+          <div id="kiosk-controls" class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge bg-info text-dark">Line: <span id="kiosk-line-label">—</span></span>
+            <button id="kiosk-choose-line" class="btn btn-sm btn-outline-primary">Set Line</button>
+            <span class="badge bg-secondary">Operator: <span id="kiosk-emp-label">—</span></span>
+            <button id="kiosk-choose-emp" class="btn btn-sm btn-outline-secondary">Set Operator</button>
+            <button id="kiosk-clear-emp" class="btn btn-sm btn-outline-danger">Clear</button>
+            <button id="kiosk-fullscreen" class="btn btn-sm btn-outline-primary">Full Screen</button>
+            <button id="kiosk-toggle-chrome" class="btn btn-sm btn-outline-secondary">Hide Header</button>
+          </div>
+        `);
+        $row.insertBefore($root.find('#wo-grid'));
+      }
+      // bind chrome buttons even in fallback
+      $('#kiosk-fullscreen').off('click').on('click', () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+        else document.exitFullscreen().catch(()=>{});
+      });
+      $('#kiosk-toggle-chrome').off('click').on('click', () => {
+        const on = !document.body.classList.contains('op-kiosk');
+        applyKioskChrome(on);
+        $('#kiosk-toggle-chrome').text(on ? 'Show Header' : 'Hide Header');
+      });
+    }
+  })();
+
+  // ---- Status helpers ----
   function setConnection(isOnline) {
     $statusConn.text(isOnline ? 'Online' : 'Offline');
     $statusBar.removeClass('bg-danger bg-warning bg-success bg-dark')
@@ -73,46 +150,35 @@ function init_operator_hub($root) {
   window.addEventListener('online',  () => setConnection(true));
   window.addEventListener('offline', () => setConnection(false));
 
-  // Live clock
+  // Live clock + shift calc
   const $clock = $('#op-time', $root);
-  function tick() {
+  const $shift = $('#shift-label', $root);
+  function updateClockShift() {
     const d = new Date();
     const hh = String(d.getHours()).padStart(2,'0');
     const mm = String(d.getMinutes()).padStart(2,'0');
     $clock.text(`${hh}:${mm}`);
+    if ($shift.length) {
+      const h = d.getHours();
+      $shift.text((h >= 6 && h < 14) ? 'A' : (h >= 14 && h < 22) ? 'B' : 'C');
+    }
   }
-  tick(); setInterval(tick, 30000);
+  updateClockShift(); setInterval(updateClockShift, 30_000);
 
   // Safe RPC
-  function rpc(path, args) {
-    return frappe.call(path, args).catch(err => {
+  async function rpc(path, args) {
+    try {
+      return await frappe.call(path, args);
+    } catch (err) {
       console.error('RPC error', path, err);
       flashStatus('Error: ' + (err?.message || path), 'error');
       throw err;
-    });
+    }
   }
 
   // Keep scanner focused
   const focus_scan = () => scan.trigger('focus');
   setInterval(focus_scan, 1500); focus_scan();
-
-  // Inject Kiosk controls if missing
-  (function ensureKioskControls(){
-    if (!$('#kiosk-controls', $root).length) {
-      const $row = $(`
-        <div id="kiosk-controls" class="d-flex align-items-center gap-2 mb-2">
-          <span class="badge bg-info text-dark">Line: <span id="kiosk-line-label">—</span></span>
-          <button id="kiosk-choose-line" class="btn btn-sm btn-outline-primary">Set Line</button>
-          <span class="badge bg-secondary">Operator: <span id="kiosk-emp-label">—</span></span>
-          <button id="kiosk-choose-emp" class="btn btn-sm btn-outline-secondary">Set Operator</button>
-          <button id="kiosk-clear-emp" class="btn btn-sm btn-outline-danger">Clear</button>
-        </div>
-      `);
-      $row.insertBefore($root.find('#wo-grid'));
-    }
-    $('#kiosk-line-label').text(state.current_line || '—');
-    $('#kiosk-emp-label').text(state.current_emp_name || '—');
-  })();
 
   // Realtime print listener (bind once)
   if (!window.__opHubRealtimeBound) {
@@ -141,7 +207,7 @@ function init_operator_hub($root) {
     d.show();
   });
 
-  // Choose operator
+  // Choose operator (dialog or badge scan)
   $('#kiosk-choose-emp', $root).on('click', () => {
     const d = new frappe.ui.Dialog({
       title: 'Set Operator',
@@ -239,45 +305,81 @@ function init_operator_hub($root) {
     }
   }
 
-  // Scanner input helpers
+  // ---------- Scanner handling ----------
+  const okTone  = new Audio('/assets/frappe/sounds/submit.mp3');
+  const errTone = new Audio('/assets/frappe/sounds/cancel.mp3');
+  const $scanStatus = $('#scan-status');
+
+  async function resolveBadge(badge){
+    const r = await frappe.call('isnack.api.mes_ops.resolve_employee', { badge });
+    if (r.message && r.message.ok) {
+      state.current_emp = r.message.employee;
+      state.current_emp_name = r.message.employee_name;
+      $('#kiosk-emp-label').text(state.current_emp_name);
+      $scanStatus.length && $scanStatus.text('Badge').removeClass().addClass('badge bg-info');
+      flashStatus(`Operator: ${state.current_emp_name}`, 'success');
+      try { okTone.play().catch(()=>{}); } catch(_) {}
+    } else {
+      $scanStatus.length && $scanStatus.text('Unknown').removeClass().addClass('badge bg-danger');
+      flashStatus('Unknown badge', 'error');
+      try { errTone.play().catch(()=>{}); } catch(_) {}
+    }
+  }
+
+  async function autoClaimIfNeeded(){
+    // Optional: auto-claim card for the set operator before first material scan
+    if (!state.current_emp || !state.current_card) return;
+    try {
+      const b = await frappe.call('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
+      const html = String(b.message?.html || '');
+      if (!html.includes(state.current_emp)) {
+        try {
+          await frappe.call('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card, employee: state.current_emp });
+        } catch {
+          await frappe.call('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card });
+        }
+        await load_queue();
+      }
+    } catch { /* ignore */ }
+  }
+
   async function handleScanValue(raw) {
     if (!raw) return;
 
-    // Badge fast-path: EMP:<code>
+    // 1) explicit EMP: prefix
     if (/^EMP:/i.test(raw)) {
-      const badge = raw.replace(/^EMP:/i, '');
-      const r = await frappe.call('isnack.api.mes_ops.resolve_employee', { badge });
-      if (r.message && r.message.ok) {
-        state.current_emp = r.message.employee;
-        state.current_emp_name = r.message.employee_name;
-        $('#kiosk-emp-label').text(state.current_emp_name);
-        flashStatus(`Operator: ${state.current_emp_name}`, 'success');
-      } else {
-        flashStatus('Unknown badge', 'error');
-      }
-      return;
+      return resolveBadge(raw.replace(/^EMP:/i, ''));
+    }
+
+    // 2) if no job card selected, auto-treat as badge by format (tune regex)
+    if (!state.current_card && /^[A-Z0-9\-]{4,20}$/i.test(raw)) {
+      return resolveBadge(raw);
     }
 
     // Material scan
-    if (!state.current_card) { flashStatus('Pick a Job Card first', 'warning'); return; }
+    if (!state.current_card) { flashStatus('Pick a Job Card first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
+    await autoClaimIfNeeded();
     setStatus('Processing scan…');
 
-    rpc('isnack.api.mes_ops.scan_material', {
-      job_card: state.current_card, code: raw
-    }).then(r => {
-      const { ok, msg } = r.message || {};
-      frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
-      if (ok) {
-        if (alerts.length) alerts.addClass('d-none').text('');
-        flashStatus(msg || 'Loaded material', 'success');
-      } else {
-        if (alerts.length) alerts.removeClass('d-none').text(msg || 'Scan failed');
-        flashStatus(msg || 'Scan failed', 'error');
-      }
-    });
+    rpc('isnack.api.mes_ops.scan_material', { job_card: state.current_card, code: raw })
+      .then(r => {
+        const { ok, msg } = r.message || {};
+        frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
+        if (ok) {
+          alerts.length && alerts.addClass('d-none').text('');
+          $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
+          flashStatus(msg || 'Loaded material', 'success');
+          try { okTone.play().catch(()=>{}); } catch(_) {}
+        } else {
+          alerts.length && alerts.removeClass('d-none').text(msg || 'Scan failed');
+          $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
+          flashStatus(msg || 'Scan failed', 'error');
+          try { errTone.play().catch(()=>{}); } catch(_) {}
+        }
+      });
   }
 
-  // Scanner handling — support Enter AND change events
+  // Support Enter AND change events
   scan.on('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -302,23 +404,31 @@ function init_operator_hub($root) {
     }
   })();
 
-  // Claim / Leave (must have operator set)
-  $('#btn-claim', $root).on('click', () => {
+  // Claim / Leave (try with employee param then fallback)
+  $('#btn-claim', $root).on('click', async () => {
     if (!state.current_card) return;
     if (!state.current_emp) { frappe.msgprint('Set Operator first.'); return; }
-    rpc('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card, employee: state.current_emp })
-      .then(() => rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card }))
-      .then(r => banner.html(r.message.html))
-      .then(load_queue);
+    try {
+      await frappe.call('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card, employee: state.current_emp });
+    } catch {
+      await frappe.call('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card });
+    }
+    const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
+    banner.html(r.message.html);
+    load_queue();
   });
 
-  $('#btn-leave', $root).on('click', () => {
+  $('#btn-leave', $root).on('click', async () => {
     if (!state.current_card) return;
     if (!state.current_emp) { frappe.msgprint('Set Operator first.'); return; }
-    rpc('isnack.api.mes_ops.leave_job_card', { job_card: state.current_card, employee: state.current_emp })
-      .then(() => rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card }))
-      .then(r => banner.html(r.message.html))
-      .then(load_queue);
+    try {
+      await frappe.call('isnack.api.mes_ops.leave_job_card', { job_card: state.current_card, employee: state.current_emp });
+    } catch {
+      await frappe.call('isnack.api.mes_ops.leave_job_card', { job_card: state.current_card });
+    }
+    const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
+    banner.html(r.message.html);
+    load_queue();
   });
 
   // Buttons (dialogs)
@@ -362,7 +472,6 @@ function init_operator_hub($root) {
       title:'Print Carton Label (FG only)',
       fields: [
         { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 },
-        // backend supports Label Template or Print Template
         { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Print Template', reqd:1 },
         { label:'Printer',    fieldname:'printer', fieldtype:'Data', reqd:1, default:'ZPL_PRN_1' }
       ],
@@ -404,26 +513,27 @@ function init_operator_hub($root) {
     d.show();
   });
 
-  $('#btn-close', $root).on('click', () => {
+  $('#btn-close', $root).on('click', async () => {
     if (!state.current_wo) return;
-    rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo })
-      .then(r => {
-        const p = r.message || {};
-        const d = new frappe.ui.Dialog({
-          title:'Close / End Work Order',
-          fields: [
-            { label:'Good Qty', fieldname:'good', fieldtype:'Float', reqd:1, default: p.remaining || 0 },
-            { label:'Rejects',  fieldname:'rejects', fieldtype:'Float', default: 0 },
-            { label:'Remarks',  fieldname:'remarks', fieldtype:'Small Text' }
-          ],
-          primary_action_label:'Complete',
-          primary_action: (v) => {
-            setStatus('Completing work order…');
-            rpc('isnack.api.mes_ops.complete_work_order', { work_order: state.current_wo, ...v })
-              .then(() => { d.hide(); flashStatus(`Completed — ${state.current_wo}`, 'success'); return load_queue(); });
-          }
-        });
-        d.show();
-      });
+    let remainingDefault = 0;
+    try {
+      const r = await rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo });
+      remainingDefault = (r.message && r.message.remaining) || 0;
+    } catch { /* fallback: 0 */ }
+    const d = new frappe.ui.Dialog({
+      title:'Close / End Work Order',
+      fields: [
+        { label:'Good Qty', fieldname:'good', fieldtype:'Float', reqd:1, default: remainingDefault },
+        { label:'Rejects',  fieldname:'rejects', fieldtype:'Float', default: 0 },
+        { label:'Remarks',  fieldname:'remarks', fieldtype:'Small Text' }
+      ],
+      primary_action_label:'Complete',
+      primary_action: (v) => {
+        setStatus('Completing work order…');
+        rpc('isnack.api.mes_ops.complete_work_order', { work_order: state.current_wo, ...v })
+          .then(() => { d.hide(); flashStatus(`Completed — ${state.current_wo}`, 'success'); return load_queue(); });
+      }
+    });
+    d.show();
   });
 }

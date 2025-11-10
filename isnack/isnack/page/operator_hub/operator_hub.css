@@ -24,13 +24,10 @@
 }
 
 /* Page background + type */
-.op-teal{
-  background:var(--bg);
-  color:var(--ink);
-}
+.op-teal{ background:var(--bg); color:var(--ink); }
 .op-teal a, .op-teal .text-muted{ color:var(--muted)!important; }
 
-/* Top status/header bar */
+/* Top status bar (bottom of the page UI) */
 .op-teal #status-bar{
   background:var(--header);
   color:var(--header-ink);
@@ -42,7 +39,55 @@
   background:rgba(21,183,158,.18); border:1px solid rgba(21,183,158,.45);
 }
 
-/* Kiosk mini header (line + operator) */
+/* =====================================
+   Header toolbar (Operator | Line | Shift + actions)
+   ===================================== */
+.op-teal .op-toolbar{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:8px 12px;
+  box-shadow:var(--shadow-sm);
+}
+.op-teal .op-toolbar .label{ color:var(--muted); font-weight:600; }
+.op-teal .op-toolbar .vr{ width:1px; height:18px; background:var(--line); margin:0 8px; }
+
+/* Header action buttons spacing */
+.op-teal .op-toolbar .btn{ margin:0; }                 /* reset */
+.op-teal .op-toolbar .btn + .btn{ margin-left:.5rem; } /* minimal gap */
+@media (max-width:768px){
+  .op-teal .op-toolbar .btn + .btn{ margin-left:.4rem; }
+}
+
+/* Header time: larger & spaced */
+.op-teal .op-toolbar #op-time{
+  margin-left:.75rem;             /* space from the buttons */
+  padding:.2rem .6rem;            /* subtle pill */
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel-2);
+  color:var(--ink);
+
+  font-weight:700;
+  font-size:1.125rem;             /* ~18px */
+  line-height:1.1;
+  letter-spacing:.3px;
+
+  /* keep digits aligned */
+  font-variant-numeric: tabular-nums lining-nums;
+  -webkit-font-feature-settings:"tnum" 1, "lnum" 1;
+  -moz-font-feature-settings:"tnum" 1, "lnum" 1;
+  font-feature-settings:"tnum" 1, "lnum" 1;
+}
+@media (max-width:768px){
+  .op-teal .op-toolbar #op-time{
+    margin-left:.5rem;
+    font-size:1rem;
+    padding:.15rem .5rem;
+  }
+}
+
+/* Fallback mini header (only if JS injects #kiosk-controls) */
 .op-teal #kiosk-controls{
   background:var(--panel);
   border:1px solid var(--line);
@@ -51,7 +96,9 @@
   box-shadow:var(--shadow-sm);
 }
 
-/* Panels */
+/* =====================================
+   Panels & Job Card list
+   ===================================== */
 .op-teal #wo-banner,
 .op-teal .card{
   background:var(--panel);
@@ -60,16 +107,6 @@
   box-shadow:var(--shadow);
   padding:12px 16px;
 }
-
-/* Subpanels / light sections */
-.op-teal .subpanel{
-  background:var(--panel-2);
-  border:1px solid var(--line);
-  border-radius:10px;
-  padding:10px 12px;
-}
-
-/* Queue items */
 .op-teal .list-group-item{
   background:var(--panel);
   border:1px solid var(--line);
@@ -84,7 +121,7 @@
   box-shadow:0 10px 24px rgba(21,183,158,.12);
 }
 
-/* Chips: type + status */
+/* Chips */
 .op-teal .chip{
   display:inline-flex; align-items:center; gap:.35rem;
   padding:.25rem .6rem; border-radius:999px; font-weight:600; letter-spacing:.2px;
@@ -94,7 +131,6 @@
 }
 .op-teal .chip-fg{ background:#e6fbf7; border-color:#bdf3ea; color:#0f766e; }
 .op-teal .chip-sf{ background:#eef2ff; border-color:#dfe6ff; color:#3730a3; }
-
 .op-teal .chip-ns{ background:#f2f4f7; color:#475569; }
 .op-teal .chip-running{ background:#e6fbf7; color:#0f766e; border-color:#bdf3ea; }
 .op-teal .chip-paused{ background:#fff7e6; color:#92400e; border-color:#fde68a; }
@@ -135,17 +171,56 @@
   background:#fff5f5!important; border-color:#fca5a5!important; color:#7f1d1d!important;
 }
 
-/* “Big action” tiles if you have them */
-.op-teal .action-tile{
-  background:var(--panel);
-  border:2px solid var(--line);
-  border-radius:14px;
-  padding:18px 16px;
-  text-align:center;
-  font-weight:700;
-  box-shadow:var(--shadow);
+/* =====================================
+   Sticky Bottom Action Bar
+   ===================================== */
+.op-teal .mes-operator-bottom{
+  position:fixed;
+  left:0; right:0; bottom:0;
+  z-index:1040;
 }
-.op-teal .action-tile .caption{ color:var(--muted); font-weight:600; }
+
+/* bar visuals */
+.op-teal .mes-operator-bottom .action-bar{
+  background:var(--panel);
+  border-top:1px solid var(--line);
+  box-shadow:0 -6px 18px rgba(17,24,39,.08);
+  backdrop-filter:saturate(120%) blur(2px);
+}
+
+/* keep content clear of the fixed bar */
+.op-teal .mes-operator{
+  padding-bottom:140px; /* ~height of the action bar + status bar */
+}
+
+/* spacing between bottom buttons */
+.op-teal .mes-operator-bottom .action-bar .d-flex{
+  gap:.75rem;                 /* clean flex spacing */
+}
+.op-teal .tile-btn{
+  min-height:96px;
+  border-radius:12px;
+  font-weight:700;
+  letter-spacing:.2px;
+}
+
+/* optional: container gutters for the bar */
+.op-teal .mes-operator-bottom .action-bar .container-fluid{
+  padding-left:1rem;
+  padding-right:1rem;
+}
+
+/* Status bar sits under the action buttons */
+.op-teal #status-bar{
+  min-height:36px;
+}
+
+/* iOS/modern safe area */
+@supports(padding:max(0px)){
+  .op-teal .mes-operator-bottom{
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+}
 
 /* Small utilities */
 .op-teal .mes-operator .badge { font-size:.8rem; }
@@ -156,3 +231,30 @@
   .op-teal .list-group-item{ transition:none!important; }
   .op-teal .btn{ transition:none!important; }
 }
+
+/* =====================================
+   Kiosk mode: hide ERPNext chrome on Operator Hub only
+   ===================================== */
+body[data-route="operator-hub"].op-kiosk .navbar,
+body[data-route="operator-hub"].op-kiosk .navbar-container,
+body[data-route="operator-hub"].op-kiosk .desk-sidebar,
+body[data-route="operator-hub"].op-kiosk .page-head,
+body[data-route="operator-hub"].op-kiosk .page-head-content,
+body[data-route="operator-hub"].op-kiosk .breadcrumb-container,
+body[data-route="operator-hub"].op-kiosk .layout-side-section,
+body[data-route="operator-hub"].op-kiosk .page-actions{
+  display:none!important;
+}
+body[data-route="operator-hub"].op-kiosk .page-container,
+body[data-route="operator-hub"].op-kiosk .page-body,
+body[data-route="operator-hub"].op-kiosk .layout-main-section,
+body[data-route="operator-hub"].op-kiosk .page-content-wrapper{
+  margin:0!important; padding:0!important; max-width:none!important;
+}
+body[data-route="operator-hub"].op-kiosk .container{
+  max-width:none!important; width:100%!important;
+}
+body[data-route="operator-hub"].op-kiosk #kiosk-exit{
+  position:fixed; top:10px; right:12px; z-index:3000; opacity:.6;
+}
+body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }

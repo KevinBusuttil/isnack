@@ -1,17 +1,34 @@
 <!-- Operator Hub — Single-Screen Layout (Bootstrap 5) -->
 <div class="mes-operator p-3 p-md-4">
 
-  <!-- Top Banner -->
+  <!-- Header toolbar: Operator / Line / Shift + actions -->
   <div class="card shadow-sm border-0 mb-3">
-    <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-2">
-      <div class="fw-semibold">
-        <span class="text-muted me-2">Operator:</span><span id="op-name">—</span>
-        <span class="mx-2">•</span>
-        <span class="text-muted me-2">Line:</span><span id="op-line">—</span>
-        <span class="mx-2">•</span>
-        <span class="text-muted me-2">Shift:</span><span id="op-shift">—</span>
+    <div class="card-body">
+      <div id="op-toolbar" class="op-toolbar d-flex align-items-center justify-content-between">
+        <div class="d-flex flex-wrap align-items-center gap-3">
+          <span class="label">Operator:</span>
+          <span id="kiosk-emp-label">—</span>
+          <button id="kiosk-choose-emp" class="btn btn-sm btn-outline-secondary">Set</button>
+
+          <span class="vr"></span>
+
+          <span class="label">Line:</span>
+          <span id="kiosk-line-label">—</span>
+          <button id="kiosk-choose-line" class="btn btn-sm btn-outline-primary">Set</button>
+
+          <span class="vr"></span>
+
+          <span class="label">Shift:</span>
+          <span id="shift-label">—</span>
+        </div>
+
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <button id="kiosk-clear-emp" class="btn btn-sm btn-outline-danger">Clear</button>
+          <button id="kiosk-fullscreen" class="btn btn-sm btn-outline-primary">Full Screen</button>
+          <button id="kiosk-toggle-chrome" class="btn btn-sm btn-outline-secondary">Hide Header</button>
+          <div class="text-muted ms-2" id="op-time">--:--</div>
+        </div>
       </div>
-      <div class="text-muted" id="op-time">--:--</div>
     </div>
   </div>
 
@@ -21,14 +38,16 @@
       <div class="h6 mb-0">Current Work Order</div>
     </div>
     <div class="card-body" id="wo-banner">
-      <div class="text-muted">Select a Work Order…</div>
+      <div class="text-muted">Select a Job Card…</div>
     </div>
   </div>
 
-  <!-- Assigned Work Orders -->
+  <!-- Assigned Job Cards -->
   <div class="mb-2 d-flex align-items-center justify-content-between">
     <div class="h6 mb-0">Assigned Work Orders</div>
-    <div id="wo_filters" class="small text-muted"></div>
+    <div class="small text-muted">
+      <span id="scan-status" class="badge bg-light text-muted">Ready</span>
+    </div>
   </div>
 
   <div class="card shadow-sm border-0 mb-4">
@@ -62,209 +81,3 @@
     <span id="status-connection">Online</span>
   </div>
 </div>
-
-<!-- Styling -->
-<style>
-/* =========================
-   Operator Hub — Design Tokens
-   ========================= */
-:root {
-  --brand-600: #2F6FEB;
-  --brand-500: #4A86F7;
-  --brand-50:  #EDF3FF;
-
-  --accent-600:#F59E0B;
-  --accent-50: #FFF7E6;
-
-  --bg-page:   #FFFFFF;
-  --bg-card:   #FFFFFF;
-  --border:    #E6E8EF;
-  --text-900:  #111827;
-  --text-600:  #6B7280;
-
-  --ok-600:    #16A34A;
-  --ok-50:     #ECFDF3;
-  --warn-600:  #D97706;
-  --warn-50:   #FFF7ED;
-  --stop-600:  #DC2626;
-  --stop-50:   #FEF2F2;
-  --info-600:  #0EA5E9;
-  --info-50:   #F0F9FF;
-  --idle-600:  #6B7280;
-  --idle-50:   #F9FAFB;
-
-  --bar-bg:    #FFFFFF;
-  --status-bg: #1F2937;
-
-  --focus-ring: 0 0 0 3px rgba(79, 70, 229, 0.35);
-
-  /* Single source of truth for horizontal gutter */
-  --hub-gutter: 1rem;
-}
-
-/* =========================
-   Global Page & Layout
-   ========================= */
-#page-operator-hub,
-#page-operator-hub .page-body,
-#page-operator-hub .page-content {
-  background: var(--bg-page) !important;
-  color: var(--text-900);
-}
-
-/* Stretch layout full width */
-#page-operator-hub.page-container,
-#page-operator-hub .page-body,
-#page-operator-hub .page-body.container,
-#page-operator-hub .page-wrapper,
-#page-operator-hub .layout-main,
-#page-operator-hub .layout-main-section-wrapper,
-#page-operator-hub .layout-main-section {
-  max-width: 100% !important;
-  width: 100% !important;
-}
-#page-operator-hub .layout-main-section-wrapper[class*="col-"] {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-#page-operator-hub .row.layout-main {
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-}
-
-/* Page Content Padding Fix */
-#page-operator-hub > .page-body > .page-wrapper > .page-content {
-  padding-left: var(--hub-gutter) !important;
-  padding-right: var(--hub-gutter) !important;
-}
-
-/* Remove extra LR padding from mes-operator */
-#page-operator-hub .mes-operator {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-
-/* Match action bar gutter */
-#page-operator-hub .mes-operator-bottom .action-bar .container-fluid {
-  padding-left: var(--hub-gutter) !important;
-  padding-right: var(--hub-gutter) !important;
-}
-
-/* =========================
-   Hide ERPNext Page Head Completely
-   ========================= */
-#page-operator-hub .page-head {
-  display: none !important;
-}
-
-/* Hide breadcrumbs */
-#navbar-breadcrumbs { display: none !important; }
-
-/* =========================
-   Cards, Text & Lists
-   ========================= */
-.mes-operator { padding-bottom: 12rem; }
-.mes-operator .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgba(17,24,39,0.04);
-  color: var(--text-900);
-}
-.mes-operator .text-muted { color: var(--text-600) !important; }
-.mes-operator .list-group-item {
-  border: none;
-  border-top: 1px solid var(--border);
-  background: var(--bg-card);
-}
-.mes-operator .list-group-item:first-child { border-top: none; }
-
-/* Status Chips */
-.mes-operator .chip {
-  border-radius: 999px;
-  padding: .35rem .6rem;
-  font-weight: 700;
-  letter-spacing: .2px;
-}
-.chip-running { background: var(--ok-600);   color: #fff; }
-.chip-paused  { background: var(--warn-600); color: #111; }
-.chip-stopped { background: var(--stop-600); color: #fff; }
-.chip-ns      { background: var(--idle-600); color: #fff; }
-.chip-fg      { background: var(--brand-600); color: #fff; }
-.chip-sf      { background: var(--text-600);  color: #fff; }
-
-/* =========================
-   Action Bar & Buttons
-   ========================= */
-.mes-operator-bottom {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 1040;
-}
-.mes-operator-bottom .action-bar {
-  background: var(--bar-bg);
-  box-shadow: 0 -6px 18px rgba(17,24,39,0.08);
-  backdrop-filter: saturate(120%) blur(2px);
-}
-.mes-operator .tile-btn {
-  min-height: 110px;
-  line-height: 1.25;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  letter-spacing: .2px;
-  border: none;
-}
-.mes-operator .tile-btn:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-/* Space between buttons */
-.mes-operator-bottom .tile-btn { margin: 0 0.5rem; }
-.mes-operator-bottom .d-flex.flex-nowrap { margin: 0 -0.5rem; }
-/* Feedback */
-.mes-operator .tile-btn:hover { filter: brightness(1.03); }
-.mes-operator .tile-btn:active { transform: translateY(1px); filter: brightness(0.98); }
-
-/* Button colors */
-.btn-primary   { background: var(--brand-600); border-color: var(--brand-600); }
-.btn-info      { background: var(--info-600);  border-color: var(--info-600);  }
-.btn-success   { background: var(--ok-600);    border-color: var(--ok-600);    }
-.btn-warning   { background: var(--warn-600);  border-color: var(--warn-600);  color: #111; }
-.btn-secondary { background: var(--idle-600);  border-color: var(--idle-600);  }
-.btn:disabled, .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
-
-/* =========================
-   Status Bar
-   ========================= */
-#status-bar {
-  background: var(--status-bg);
-  color: #E5E7EB;
-  min-height: 36px;
-  border-top: 1px solid rgba(255,255,255,0.06);
-}
-
-/* =========================
-   Focus & Scanner
-   ========================= */
-#scan { opacity: 0; position: absolute; left: -9999px; }
-
-/* =========================
-   Modals above sticky bar
-   ========================= */
-.modal, .modal.show { z-index: 1060; }
-.modal-backdrop { z-index: 1055; }
-</style>
-
-<!-- Optional: kiosk flag to hide global navbar via ?kiosk=1 -->
-<script>
-(function(){
-  const params = new URLSearchParams(location.search);
-  if (params.get('kiosk') === '1') document.body.classList.add('kiosk');
-})();
-</script>
-<style>
-  body.kiosk header.navbar { display:none !important; }
-</style>
