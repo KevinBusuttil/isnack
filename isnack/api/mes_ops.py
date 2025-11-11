@@ -63,6 +63,9 @@ def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[s
 # Generic helpers
 # ============================================================
 
+# Roles that can operate the hub (broadened to include 'Operator')
+ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
+
 def _is_fg(item_code: str) -> bool:
     """Treat sales items as FG by policy (adjust to Item Group if you prefer)."""
     return bool(frappe.db.get_value("Item", item_code, "is_sales_item"))
@@ -229,9 +232,7 @@ def _job_card_info(name: str) -> dict:
 
 @frappe.whitelist()
 def get_assigned_work_orders():
-    """
-    Old list: active WOs (kept while migrating to Job Cards).
-    """
+    """Old list: active WOs (kept while migrating to Job Cards)."""
     user = frappe.session.user
     line = _get_user_line(user)
 
@@ -388,7 +389,7 @@ def get_card_banner(job_card: str):
 @frappe.whitelist()
 def claim_job_card(job_card: str, employee: Optional[str] = None):
     """Open a time log for the given Employee (kiosk passes employee explicitly)."""
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
 
     emp = _employee_or_user_default(employee)
     if not emp:
@@ -425,7 +426,7 @@ def claim_job_card(job_card: str, employee: Optional[str] = None):
 @frappe.whitelist()
 def leave_job_card(job_card: str, employee: Optional[str] = None):
     """Close the specified Employee's open time log (kiosk passes employee)."""
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
 
     emp = _employee_or_user_default(employee)
     if not emp:
@@ -453,10 +454,8 @@ def leave_job_card(job_card: str, employee: Optional[str] = None):
 
 @frappe.whitelist()
 def set_card_status(job_card: str, action: str, reason: Optional[str] = None, remarks: Optional[str] = None):
-    """
-    Operator intent for a Job Card (Start/Pause/Stop).
-    """
-    _require_roles(["Operator", "Production Manager"])
+    """Operator intent for a Job Card (Start/Pause/Stop)."""
+    _require_roles(ROLES_OPERATOR)
     jc = frappe.get_doc("Job Card", job_card)
 
     action = (action or "").strip()
@@ -464,11 +463,7 @@ def set_card_status(job_card: str, action: str, reason: Optional[str] = None, re
         if not _open_time_logs(job_card):
             jc.append("time_logs", {"from_time": frappe.utils.now_datetime()})
         jc.status = "Work In Progress"
-    elif action == "Pause":
-        for r in _open_time_logs(job_card):
-            frappe.db.set_value("Job Card Time Log", r["name"], "to_time", frappe.utils.now_datetime(), update_modified=False)
-        jc.status = "On Hold"
-    elif action == "Stop":
+    elif action in ("Pause", "Stop"):
         for r in _open_time_logs(job_card):
             frappe.db.set_value("Job Card Time Log", r["name"], "to_time", frappe.utils.now_datetime(), update_modified=False)
         jc.status = "On Hold"
@@ -496,7 +491,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
     Scan barcode/QR; validate vs BOM; gate by LINE (workstation) using item groups.
     Accepts either job_card or work_order; if job_card is sent, WO is derived.
     """
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
 
     try:
         # Resolve WO
@@ -580,7 +575,7 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
     Create Material Request (Transfer if stock is available, else Purchase if purchaseable).
     Accepts job_card or work_order.
     """
-    _require_roles(["Operator", "Stores User", "Production Manager"])
+    _require_roles(["Stores User", *ROLES_OPERATOR])  # allow Stores OR Operators
 
     qty = float(qty or 0)
     if qty <= 0:
@@ -612,7 +607,7 @@ def set_wo_status(work_order, action, reason=None, remarks=None):
     """
     (Legacy) Operator intent on WO. Prefer set_card_status for Job Cards.
     """
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
     wo = frappe.get_doc("Work Order", work_order)
 
     updates = {}
@@ -654,25 +649,37 @@ def get_wo_progress(work_order):
 def complete_work_order(work_order, good, rejects=0, remarks=None):
     """
     Manufacture entry for finished good quantity (FG only on the entry in v15).
+    Sets fg_completed_qty and marks FG row as finished item so validation passes.
     """
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
 
     good = float(good or 0)
     rejects = float(rejects or 0)
-    if good < 0 or rejects < 0:
-        frappe.throw(_("Quantities cannot be negative"))
+    if good <= 0:
+        frappe.throw(_("Good quantity must be greater than zero"))
+    if rejects < 0:
+        frappe.throw(_("Rejects cannot be negative"))
 
     wo = frappe.get_doc("Work Order", work_order)
+    fg_wh = wo.fg_warehouse or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
 
     se = frappe.new_doc("Stock Entry")
+    se.company = wo.company
     se.purpose = "Manufacture"
     se.work_order = work_order
-    se.to_warehouse = wo.fg_warehouse or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    se.to_warehouse = fg_wh
+    se.fg_completed_qty = good  # REQUIRED in v15
+
+    # Finished item row
     se.append("items", {
         "item_code": wo.production_item,
         "qty": good,
-        "uom": frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos",
+        "uom": uom,
+        "is_finished_item": 1,
+        "t_warehouse": fg_wh,
     })
+
     se.flags.ignore_permissions = True
     se.insert(); se.submit()
 
@@ -700,7 +707,7 @@ def print_label(carton_qty, template, printer, work_order: Optional[str] = None,
     Render ZPL/TSPL from a custom 'Label Template' (field 'template') or fall back to 'Print Template'.
     FG-only safeguard. Accepts job_card or work_order.
     """
-    _require_roles(["Operator", "Production Manager"])
+    _require_roles(ROLES_OPERATOR)
 
     if job_card and not work_order:
         work_order = frappe.db.get_value("Job Card", job_card, "work_order")
