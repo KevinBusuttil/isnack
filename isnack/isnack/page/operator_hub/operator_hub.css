@@ -258,3 +258,19 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit{
   position:fixed; top:10px; right:12px; z-index:3000; opacity:.6;
 }
 body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
+
+/* =====================================
+   Optional hardening overrides (take precedence)
+   ===================================== */
+
+/* 1) Force the footer to stick even if other CSS interferes */
+.op-teal .mes-operator-bottom{ position: fixed !important; }
+
+/* 2) Give bottom buttons a touch more air */
+.op-teal .mes-operator-bottom .action-bar .d-flex{ gap: 1rem !important; }
+
+/* 3) Make the header time more prominent */
+.op-teal .op-toolbar #op-time{
+  font-size: 1.25rem !important;
+  padding: .25rem .7rem !important;
+}
