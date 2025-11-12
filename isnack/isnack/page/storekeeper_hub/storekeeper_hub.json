@@ -4,7 +4,7 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2025-11-09 01:47:41.898926",
+ "modified": "2025-11-12 07:00:27.280387",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "storekeeper-hub",
@@ -14,5 +14,6 @@
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 0
+ "system_page": 0,
+ "title": "Storekeeper Hub"
 }

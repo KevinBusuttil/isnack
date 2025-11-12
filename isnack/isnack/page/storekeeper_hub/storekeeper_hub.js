@@ -5,7 +5,8 @@ storekeeper.WIP_BY_LINE = {
   'Execution': 'WIP - Execution'
 };
 
-frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
+
+frappe.pages['storekeeper_hub'].on_page_load = function(wrapper) {
   const page = frappe.ui.make_app_page({
     parent: wrapper,
     title: 'Storekeeper Hub',
@@ -56,7 +57,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     // Pallet ID (Stock Entry Item name) → find parent Stock Entry
     let resp = await frappe.call({
-      method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.find_se_by_item_row',
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.find_se_by_item_row',
       args: { rowname: code }
     });
     if (resp && resp.message) {
@@ -89,7 +90,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   async function load_queue(){
     $queue.empty().append('<div class="text-muted">Loading…</div>');
     const r = await frappe.call({
-      method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.get_queue',
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_queue',
       args: { company: state.company, line: line.get_value() }
     });
     $queue.empty();
@@ -98,7 +99,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         .on('click', async () => {
           const target_wip = wip_for(wo);
           const res = await frappe.call({
-            method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.create_pick_list',
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.create_pick_list',
             args: { work_order: wo.name, target_wip }
           });
           frappe.set_route('Form', 'Pick List', res.message);
@@ -123,7 +124,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   async function load_picks(){
     $picks.empty().append('<div class="text-muted">Loading…</div>');
     const r = await frappe.call({
-      method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.get_picks',
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_picks',
       args: { my_only: 1 }
     });
     $picks.empty();
@@ -141,7 +142,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   async function load_staged(){
     $staged.empty().append('<div class="text-muted">Loading…</div>');
     const r = await frappe.call({
-      method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
       args: { line: state.line, hours: state.hours }
     });
     $staged.empty();
@@ -150,7 +151,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const print_btn = $(`<button class="btn btn-xs btn-secondary">Reprint</button>`)
         .on('click', async ()=> {
           await frappe.call({
-            method: 'your_app.your_app.page.storekeeper_hub.storekeeper_hub.print_labels',
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
             args: { stock_entry: se.name }
           });
           frappe.show_alert({message: __('Sent to printer'), indicator: 'green'});
