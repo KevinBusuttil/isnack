@@ -73,7 +73,7 @@ class ServiceInvoice(Document):
             jv.naming_series = self.get("naming_series")
             jv.posting_date = inv.date
             jv.company = company
-            jv.multi_currency = bool(inv.account_currency and inv.offset_account_currency and inv.account_currency != inv.offset_account_currency)
+            jv.multi_currency = bool(inv.account_currency and inv.offset_account_currency and (inv.account_currency != company_currency or (inv.offset_account_currency != company_currency)))
             jv.user_remark = inv.description
             jv.cheque_no = self.name
             jv.cheque_date = inv.date
