@@ -1,0 +1,252 @@
+
+/* storekeeper_hub.css — Deep Cerulean theme */
+:root {
+  --cerulean-700: #006684;
+  --cerulean-600: #007BA7; /* Deep Cerulean */
+  --cerulean-500: #1996c4;
+  --cerulean-100: #d6eef7;
+  --text-900: #0f172a;
+  --text-600: #475569;
+  --bg-50: #f8fafc;
+  --bg-100: #f1f5f9;
+  --success-600: #16a34a;
+  --warning-600: #d97706;
+  --danger-600: #dc2626;
+  --border-200: #e2e8f0;
+  --card-bg: #ffffff;
+}
+
+.storekeeper-hub {
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  color: var(--text-900);
+}
+
+.storekeeper-hub .hub-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+  background: linear-gradient(180deg, var(--cerulean-600), var(--cerulean-700));
+  padding: 16px;
+  border-radius: 12px;
+  color: white;
+  margin-bottom: 16px;
+}
+
+.storekeeper-hub .filters,
+.storekeeper-hub .scan {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.storekeeper-hub .hub-columns {
+  display: grid;
+  grid-template-columns: 320px 1fr 360px;
+  gap: 16px;
+}
+
+.storekeeper-hub .col {
+  background: var(--card-bg);
+  border: 1px solid var(--border-200);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.storekeeper-hub h5 {
+  font-size: 14px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--cerulean-700);
+  margin: 0 0 8px 0;
+}
+
+.storekeeper-hub .list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storekeeper-hub .hub-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-200);
+  border-radius: 10px;
+  background: var(--bg-50);
+}
+
+.storekeeper-hub .cell { font-size: 13px; }
+
+.storekeeper-hub .indicator {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg-100);
+  border: 1px solid var(--border-200);
+  color: var(--text-600);
+}
+.storekeeper-hub .indicator.green { background: #e8f7ee; color: #166534; border-color: #86efac; }
+.storekeeper-hub .indicator.orange { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+.storekeeper-hub .indicator.red { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+
+/* Buttons */
+.storekeeper-hub .btn-primary,
+.btn.btn-primary {
+  background: var(--cerulean-600);
+  border-color: var(--cerulean-600);
+  color: white;
+}
+.storekeeper-hub .btn-primary:hover,
+.btn.btn-primary:hover {
+  background: var(--cerulean-700);
+  border-color: var(--cerulean-700);
+}
+
+/* Consolidated pick cart */
+.storekeeper-hub .cart {
+  border: 1px dashed var(--cerulean-500);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfdff;
+}
+
+.storekeeper-hub .cart-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.storekeeper-hub .cart-table th,
+.storekeeper-hub .cart-table td {
+  border-bottom: 1px solid var(--border-200);
+  padding: 6px 8px;
+}
+.storekeeper-hub .cart-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Buckets list */
+.storekeeper-hub .bucket {
+  border: 1px solid var(--border-200);
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--bg-50);
+}
+.storekeeper-hub .bucket .title {
+  font-weight: 600;
+  color: var(--text-900);
+}
+.storekeeper-hub .bucket .meta {
+  color: var(--text-600);
+  font-size: 12px;
+}
+
+.storekeeper-hub .wo-list {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border-top: 1px dashed var(--border-200);
+  padding-top: 6px;
+}
+.storekeeper-hub .wo-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+/* Right column cards */
+.storekeeper-hub .card {
+  border: 1px solid var(--border-200);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--card-bg);
+  margin-bottom: 8px;
+}
+.storekeeper-hub .muted { color: var(--text-600); }
+
+/* Scan input */
+.storekeeper-hub .scan .scan-input {
+  min-width: 320px;
+  border-radius: 8px;
+  border: 1px solid #d1e9f5;
+  padding: 8px 10px;
+}
+
+/* selection & allocation cues */
+.storekeeper-hub .bucket.selected {
+  border-color: var(--cerulean-600);
+  box-shadow: 0 0 0 2px rgba(0, 123, 167, .12);
+}
+.storekeeper-hub .wo-row.selected {
+  background: #e6f4fa;
+  border-left: 3px solid var(--cerulean-600);
+}
+.storekeeper-hub .wo-row.unselected {
+  opacity: .65;
+}
+.storekeeper-hub .wo-row .chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  margin-left: 6px;
+  background: var(--bg-100);
+  border: 1px solid var(--border-200);
+  color: var(--text-600);
+}
+.storekeeper-hub .wo-row .chip.allocated {
+  background: #e8f7ee; /* green */
+  border-color: #86efac;
+  color: #166534;
+}
+
+/* --- Right column cards: keep original stacked text, pin actions bottom-right --- */
+
+/* Undo any previous grid/flex on these rows */
+.storekeeper-hub .staged .hub-row,
+.storekeeper-hub .pallets .hub-row {
+  display: block !important;
+  position: relative;           /* anchor for absolutely positioned actions */
+  padding: 10px 12px 44px 12px; /* extra bottom padding so buttons don't overlap text */
+}
+
+/* Normal wrapping for long codes/remarks */
+.storekeeper-hub .staged .hub-row .cell,
+.storekeeper-hub .pallets .hub-row .cell {
+  white-space: normal;
+  word-break: break-word;
+  margin: 0 0 2px 0;            /* slight spacing between lines */
+}
+
+/* Pin the action buttons inside the card (bottom-right) */
+.storekeeper-hub .staged .hub-row .cell:last-child,
+.storekeeper-hub .pallets .hub-row .cell:last-child {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  margin: 0;                    /* prevent layout bumps */
+}
+
+/* Keep the button group stable */
+.storekeeper-hub .btn-group {
+  display: inline-flex;
+  gap: 6px;
+  position: static !important;  /* we're positioning the *cell*, not the group */
+  white-space: nowrap;
+}
+
+/* Prevent any horizontal scrollbars */
+.storekeeper-hub .staged,
+.storekeeper-hub .pallets {
+  overflow-x: hidden;
+}

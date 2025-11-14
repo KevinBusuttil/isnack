@@ -1,24 +1,71 @@
+
 <div class="storekeeper-hub">
-    <div class="hub-toolbar">
-      <div class="filters"></div>
-      <div class="scan">
-        <input class="scan-input" placeholder="Scan WO / Stock Entry / Pallet ID" />
-        <button class="btn btn-sm btn-secondary clear-scan">Clear</button>
+  <div class="hub-toolbar">
+    <div class="filters">
+      <div class="control routing"></div>
+      <div class="control src-warehouse"></div>
+      <div class="control pallet-id"></div>
+      <button class="btn btn-sm btn-primary refresh">Refresh</button>
+    </div>
+    <div class="scan">
+      <input class="scan-input" placeholder="Scan Item / WO / Stock Entry / Pallet ID" />
+      <button class="btn btn-sm btn-secondary clear-scan">Clear</button>
+    </div>
+  </div>
+
+  <div class="hub-columns">
+    <!-- Left: Buckets (same-BOM groups) -->
+    <div class="col col-buckets">
+      <h5>WO Buckets (Same BOM)</h5>
+      <div class="list buckets"></div>
+    </div>
+
+    <!-- Middle: Consolidated Pick Cart -->
+    <div class="col col-cart">
+      <h5>Consolidated Pick Cart</h5>
+      <div class="cart">
+        <div class="cart-inputs">
+          <input class="form-control form-control-sm cart-scan" placeholder="Scan Item Barcode / Item Code and hit Enter" />
+          <button class="btn btn-sm btn-default add-manual">Add Row</button>
+          <button class="btn btn-sm btn-secondary clear-cart">Clear Cart</button>
+        </div>
+        <table class="cart-table">
+          <thead>
+            <tr>
+              <th style="width: 28%;">Item</th>
+              <th style="width: 18%;">Batch</th>
+              <th style="width: 14%;">UoM</th>
+              <th style="width: 14%;">Qty</th>
+              <th>Notes</th>
+              <th style="width: 48px;"></th>
+            </tr>
+          </thead>
+          <tbody class="cart-rows"></tbody>
+        </table>
+        <div class="cart-actions">
+          <div class="muted">Allocate to selected WOs (FIFO by WO start time).</div>
+          <div>
+            <button class="btn btn-sm btn-primary allocate-create">Allocate &amp; Create Transfers</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card alloc-out">
+        <div class="muted">Created transfers will appear here.</div>
+        <div class="alloc-results"></div>
       </div>
     </div>
-  
-    <div class="hub-columns">
-      <div class="col col-queue">
-        <h5>To Stage</h5>
-        <div class="list queue"></div>
-      </div>
-      <div class="col col-picks">
-        <h5>In Picking</h5>
-        <div class="list picks"></div>
-      </div>
-      <div class="col col-staged">
+
+    <!-- Right: Recently Staged + Pallet tracker -->
+    <div class="col col-right">
+      <div class="card">
         <h5>Recently Staged</h5>
         <div class="list staged"></div>
       </div>
+      <div class="card">
+        <h5>Pallet Tracker (Last 24h)</h5>
+        <div class="list pallets"></div>
+      </div>
     </div>
   </div>
+</div>
