@@ -106,6 +106,30 @@ frappe.ui.form.on('Service Invoice Items', {
 			});
 		}
 	},
+	account: function (frm, dt, dn) {
+		var d = frappe.get_doc(dt, dn);
+		if (d.account) {
+			if (!frm.doc.company) frappe.throw(__("Please select Company first"));
+			if (!d.date) frappe.throw(__("Please select Posting Date first"));
+
+			return frappe.call({
+				method: "erpnext.accounts.doctype.journal_entry.journal_entry.get_account_details_and_party_type",
+				args: {
+					account: d.account,
+					date: d.date,
+					company: frm.doc.company,
+					debit: flt(d.debit),
+					credit: flt(d.credit),
+				},
+				callback: function (r) {
+					if (r.message) {
+						frappe.model.set_value(dt, dn, "account_currency", r.message.account_currency);
+						refresh_field("invoices");
+					}
+				},
+			});
+		}
+	},
 	invoice_add(frm, cdt, cdn) {
 		var invoice = frappe.get_doc(cdt, cdn);
 		frappe.call({
