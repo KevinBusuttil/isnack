@@ -62,15 +62,36 @@
 
 <!-- Sticky Bottom Bars -->
 <div class="mes-operator-bottom">
-  <!-- Action Bar -->
+  <!-- Action Bar (grouped with separators) -->
   <div class="action-bar py-3">
     <div class="container-fluid">
-      <div class="d-flex flex-nowrap overflow-auto">
-        <button id="btn-load"    class="btn btn-lg btn-primary tile-btn flex-fill">Load Materials</button>
-        <button id="btn-prod"    class="btn btn-lg btn-info tile-btn flex-fill">Production Control</button>
-        <button id="btn-label"   class="btn btn-lg btn-success tile-btn flex-fill" disabled>Print Label</button>
-        <button id="btn-request" class="btn btn-lg btn-warning tile-btn flex-fill">Request More Material</button>
-        <button id="btn-close"   class="btn btn-lg btn-secondary tile-btn flex-fill">Close / End</button>
+      <div class="op-bottom d-flex flex-nowrap align-items-stretch">
+
+        <!-- Group 1: Run controls -->
+        <div class="bar-group">
+          <button id="btn-start" class="btn btn-lg btn-primary tile-btn">Start</button>
+          <button id="btn-pause" class="btn btn-lg btn-warning tile-btn">Pause</button>
+          <button id="btn-stop"  class="btn btn-lg btn-secondary tile-btn">Stop</button>
+        </div>
+
+        <div class="bar-sep" role="separator" aria-hidden="true"></div>
+
+        <!-- Group 2: Crew -->
+        <div class="bar-group">
+          <button id="btn-claim" class="btn btn-lg btn-success tile-btn">Claim</button>
+          <button id="btn-leave" class="btn btn-lg btn-outline-secondary tile-btn">Leave</button>
+        </div>
+
+        <div class="bar-sep" role="separator" aria-hidden="true"></div>
+
+        <!-- Group 3: Materials & Output -->
+        <div class="bar-group">
+          <button id="btn-load"    class="btn btn-lg btn-info tile-btn">Load Materials</button>
+          <button id="btn-request" class="btn btn-lg btn-warning tile-btn">Request More Material</button>
+          <button id="btn-label"   class="btn btn-lg btn-success tile-btn" disabled>Print Label</button>
+          <button id="btn-close"   class="btn btn-lg btn-secondary tile-btn">Close / End</button>
+        </div>
+
       </div>
     </div>
   </div>

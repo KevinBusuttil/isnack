@@ -1,0 +1,215 @@
+/* Lab Quality Hub - modern laboratory look */
+
+.quality-hub-wrapper {
+    min-height: calc(100vh - 120px);
+    padding: 1.5rem 1.75rem 2rem;
+    background: radial-gradient(circle at 0 0, #1d2b64 0, #020617 55%, #020617 100%);
+    color: #e5e7eb;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+        sans-serif;
+}
+
+/* Inputs on the page */
+.quality-hub-wrapper .form-control,
+.quality-hub-wrapper .input-with-feedback {
+    background-color: rgba(15, 23, 42, 0.9);
+    border-color: rgba(148, 163, 184, 0.5);
+    color: #e5e7eb;
+}
+
+/* Header */
+.qh-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    gap: 1rem;
+}
+
+.qh-header-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.qh-header-subtitle {
+    margin-top: 0.25rem;
+    opacity: 0.8;
+    font-size: 0.85rem;
+}
+
+.qh-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.qh-pill-live {
+    background: rgba(22, 163, 74, 0.18);
+    border-color: rgba(22, 163, 74, 0.9);
+    color: #bbf7d0;
+}
+
+/* Stat cards */
+.qh-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+@media (max-width: 1200px) {
+    .qh-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.qh-card {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 64, 175, 0.9));
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    padding: 1rem 1.1rem;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.7);
+}
+
+.qh-card-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    opacity: 0.75;
+}
+
+.qh-card-value {
+    margin-top: 0.45rem;
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+
+/* Layout for panels */
+.qh-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr);
+    gap: 1.2rem;
+}
+
+@media (max-width: 1200px) {
+    .qh-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.qh-panel {
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    padding: 1rem 1.1rem;
+}
+
+.qh-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.qh-panel-title {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* Badges */
+.qh-badge {
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.qh-badge-red {
+    border: 1px solid rgba(248, 113, 113, 0.9);
+    color: #fecaca;
+    background: rgba(127, 29, 29, 0.45);
+}
+
+.qh-badge-amber {
+    border: 1px solid rgba(252, 211, 77, 0.9);
+    color: #fef3c7;
+    background: rgba(146, 64, 14, 0.45);
+}
+
+.qh-badge-emerald {
+    border: 1px solid rgba(52, 211, 153, 0.9);
+    color: #d1fae5;
+    background: rgba(6, 95, 70, 0.5);
+}
+
+/* Tables */
+.qh-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.qh-table th,
+.qh-table td {
+    padding: 0.4rem 0.35rem;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.8);
+    vertical-align: middle;
+}
+
+.qh-table th {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.65;
+    font-size: 0.72rem;
+}
+
+.qh-row-overdue {
+    background: rgba(127, 29, 29, 0.45);
+}
+
+.qh-row-due-now {
+    background: rgba(30, 64, 175, 0.35);
+}
+
+/* Chips & dot */
+.qh-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    border: 1px solid rgba(148, 163, 184, 0.6);
+}
+
+.qh-chip-out-of-range {
+    border-color: rgba(248, 113, 113, 0.95);
+    color: #fecaca;
+}
+
+.qh-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    margin-right: 0.35rem;
+    background: #22c55e;
+    box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.35);
+}
+
+.qh-blink {
+    animation: qh-blink 1s infinite;
+}
+
+@keyframes qh-blink {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}

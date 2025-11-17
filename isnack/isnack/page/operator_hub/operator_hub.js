@@ -28,6 +28,7 @@ function init_operator_hub($root) {
   const state  = {
     current_card: null,
     current_wo: null,
+    current_status: null,
     cards: [],
     current_line: localStorage.getItem('kiosk_line') || null,
     current_emp: null,
@@ -71,16 +72,14 @@ function init_operator_hub($root) {
   }
   applyKioskChrome(localStorage.getItem('op_kiosk_chrome') === '1');
 
-  // ---- Wire header controls (fallback to inline strip if header missing) ----
+  // ---- Wire header controls or fallback strip ----
   (function wireKioskControls(){
     const hasHeader = $('#op-toolbar', $root).length > 0;
 
     if (hasHeader) {
-      // populate labels
       $('#kiosk-line-label').text(state.current_line || '—');
       $('#kiosk-emp-label').text(state.current_emp_name || '—');
 
-      // Fullscreen + hide header
       $('#kiosk-fullscreen').off('click').on('click', () => {
         if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
         else document.exitFullscreen().catch(()=>{});
@@ -90,16 +89,13 @@ function init_operator_hub($root) {
         applyKioskChrome(on);
         $('#kiosk-toggle-chrome').text(on ? 'Show Header' : 'Hide Header');
       });
-      // keyboard shortcut: Ctrl+Shift+K
       window.addEventListener('keydown', (e) => {
         if (e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
           e.preventDefault();
           $('#kiosk-toggle-chrome').trigger('click');
         }
       }, { passive: false });
-
     } else {
-      // Fallback mini-strip (kept for backwards compatibility)
       if (!$('#kiosk-controls', $root).length) {
         const $row = $(`
           <div id="kiosk-controls" class="d-flex align-items-center gap-2 mb-2">
@@ -114,7 +110,6 @@ function init_operator_hub($root) {
         `);
         $row.insertBefore($root.find('#wo-grid'));
       }
-      // bind chrome buttons even in fallback
       $('#kiosk-fullscreen').off('click').on('click', () => {
         if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
         else document.exitFullscreen().catch(()=>{});
@@ -176,7 +171,7 @@ function init_operator_hub($root) {
     }
   }
 
-  // Keep scanner focused
+  // Keep scanner focused (USB scanners)
   const focus_scan = () => scan.trigger('focus');
   setInterval(focus_scan, 1500); focus_scan();
 
@@ -201,7 +196,7 @@ function init_operator_hub($root) {
         localStorage.setItem('kiosk_line', v.line);
         $('#kiosk-line-label').text(v.line);
         d.hide();
-        load_queue(); // reload queue for this line
+        load_queue();
       }
     });
     d.show();
@@ -226,6 +221,7 @@ function init_operator_hub($root) {
           state.current_emp_name = r.message.employee_name;
           $('#kiosk-emp-label').text(state.current_emp_name);
           d.hide();
+          updateControls();
         } else {
           frappe.msgprint('Could not resolve employee.');
         }
@@ -237,6 +233,7 @@ function init_operator_hub($root) {
   $('#kiosk-clear-emp', $root).on('click', () => {
     state.current_emp = null; state.current_emp_name = null;
     $('#kiosk-emp-label').text('—');
+    updateControls();
   });
 
   // Load queue for current line
@@ -288,21 +285,27 @@ function init_operator_hub($root) {
   function set_active_card(card_name) {
     state.current_card = card_name;
 
-    // derive the WO from our cached list
     const row = (state.cards || []).find(x => x.name === card_name);
     state.current_wo = row ? row.work_order : null;
 
     rpc('isnack.api.mes_ops.get_card_banner', { job_card: card_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
 
-    // enable label button only if FG
+    // Get fresh status from DB and update controls
+    frappe.db.get_value('Job Card', card_name, 'status').then(rv => {
+      state.current_status = rv?.message?.status || (row ? row.status : null);
+      applyRunState();
+    });
+
+    // label button only for FG
     if (row) {
-      const isFG = row.type === 'FG';
-      $('#btn-label', $root).prop('disabled', !isFG);
-      flashStatus(`Selected ${card_name} (${isFG ? 'FG' : 'SF'})`, 'neutral');
+      $('#btn-label', $root).prop('disabled', !(row.type === 'FG'));
+      flashStatus(`Selected ${card_name} (${row.type})`, 'neutral');
     } else {
       $('#btn-label', $root).prop('disabled', true);
     }
+
+    updateControls();
   }
 
   // ---------- Scanner handling ----------
@@ -319,6 +322,7 @@ function init_operator_hub($root) {
       $scanStatus.length && $scanStatus.text('Badge').removeClass().addClass('badge bg-info');
       flashStatus(`Operator: ${state.current_emp_name}`, 'success');
       try { okTone.play().catch(()=>{}); } catch(_) {}
+      updateControls();
     } else {
       $scanStatus.length && $scanStatus.text('Unknown').removeClass().addClass('badge bg-danger');
       flashStatus('Unknown badge', 'error');
@@ -327,7 +331,6 @@ function init_operator_hub($root) {
   }
 
   async function autoClaimIfNeeded(){
-    // Optional: auto-claim card for the set operator before first material scan
     if (!state.current_emp || !state.current_card) return;
     try {
       const b = await frappe.call('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
@@ -339,6 +342,7 @@ function init_operator_hub($root) {
           await frappe.call('isnack.api.mes_ops.claim_job_card', { job_card: state.current_card });
         }
         await load_queue();
+        flashStatus('Auto-claimed job', 'success');
       }
     } catch { /* ignore */ }
   }
@@ -346,17 +350,13 @@ function init_operator_hub($root) {
   async function handleScanValue(raw) {
     if (!raw) return;
 
-    // 1) explicit EMP: prefix
     if (/^EMP:/i.test(raw)) {
       return resolveBadge(raw.replace(/^EMP:/i, ''));
     }
-
-    // 2) if no job card selected, auto-treat as badge by format (tune regex)
     if (!state.current_card && /^[A-Z0-9\-]{4,20}$/i.test(raw)) {
       return resolveBadge(raw);
     }
 
-    // Material scan
     if (!state.current_card) { flashStatus('Pick a Job Card first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
     await autoClaimIfNeeded();
     setStatus('Processing scan…');
@@ -394,17 +394,7 @@ function init_operator_hub($root) {
     handleScanValue(raw);
   });
 
-  // Ensure Claim/Leave buttons exist (if not in your HTML)
-  (function ensureClaimLeaveButtons(){
-    if (!$('#btn-claim', $root).length) {
-      $('<button id="btn-claim" class="btn btn-outline-primary ms-2">Claim</button>').insertAfter($('#btn-prod', $root));
-    }
-    if (!$('#btn-leave', $root).length) {
-      $('<button id="btn-leave" class="btn btn-outline-secondary ms-2">Leave</button>').insertAfter($('#btn-claim', $root));
-    }
-  })();
-
-  // Claim / Leave (try with employee param then fallback)
+  // ---------- Claim / Leave ----------
   $('#btn-claim', $root).on('click', async () => {
     if (!state.current_card) return;
     if (!state.current_emp) { frappe.msgprint('Set Operator first.'); return; }
@@ -415,6 +405,8 @@ function init_operator_hub($root) {
     }
     const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
     banner.html(r.message.html);
+    flashStatus('Claimed job', 'success');
+    updateControls();
     load_queue();
   });
 
@@ -428,10 +420,31 @@ function init_operator_hub($root) {
     }
     const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
     banner.html(r.message.html);
+    flashStatus('Left job', 'neutral');
+    updateControls();
     load_queue();
   });
 
-  // Buttons (dialogs)
+  // ---------- Start / Pause / Stop (no dialog) ----------
+  function runAction(action){
+    if (!state.current_card) return;
+    rpc('isnack.api.mes_ops.set_card_status', { job_card: state.current_card, action })
+      .then(async () => {
+        flashStatus(`${action} — ${state.current_card}`, action === 'Start' ? 'success' : (action === 'Pause' ? 'warning' : 'error'));
+        // refresh banner and status
+        const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card });
+        banner.html(r.message.html);
+        const rv = await frappe.db.get_value('Job Card', state.current_card, 'status');
+        state.current_status = rv?.message?.status || state.current_status;
+        applyRunState();
+        load_queue();
+      });
+  }
+  $('#btn-start',  $root).on('click', () => runAction('Start'));
+  $('#btn-pause',  $root).on('click', () => runAction('Pause'));
+  $('#btn-stop',   $root).on('click', () => runAction('Stop'));
+
+  // ---------- Other buttons ----------
   $('#btn-load', $root).on('click', () => {
     if (!state.current_card) return;
     new frappe.ui.Dialog({
@@ -440,30 +453,6 @@ function init_operator_hub($root) {
     }).show();
     flashStatus(`Ready to scan for ${state.current_card}`);
     focus_scan();
-  });
-
-  $('#btn-prod', $root).on('click', () => {
-    if (!state.current_card) return;
-    const d = new frappe.ui.Dialog({
-      title:'Production Control (Job Card)',
-      fields: [
-        { label:'Action', fieldname:'action', fieldtype:'Select', options:['Start','Pause','Stop'], reqd:1 },
-        { label:'Reason (if Pause/Stop)', fieldname:'reason', fieldtype:'Select', options:['Changeover','Material Shortage','Breakdown','Quality Check','Other'] },
-        { label:'Remarks', fieldname:'remarks', fieldtype:'Small Text' }
-      ],
-      primary_action_label:'Apply',
-      primary_action: (v) => {
-        rpc('isnack.api.mes_ops.set_card_status', { job_card: state.current_card, ...v })
-          .then(() => {
-            d.hide();
-            set_active_card(state.current_card);
-            const tone = v.action === 'Start' ? 'success' : (v.action === 'Pause' ? 'warning' : 'error');
-            flashStatus(`${v.action} — ${state.current_card}`, tone);
-            return load_queue();
-          });
-      }
-    });
-    d.show();
   });
 
   $('#btn-label', $root).on('click', () => {
@@ -519,7 +508,7 @@ function init_operator_hub($root) {
     try {
       const r = await rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo });
       remainingDefault = (r.message && r.message.remaining) || 0;
-    } catch { /* fallback: 0 */ }
+    } catch { /* ignore */ }
     const d = new frappe.ui.Dialog({
       title:'Close / End Work Order',
       fields: [
@@ -536,4 +525,27 @@ function init_operator_hub($root) {
     });
     d.show();
   });
+
+  // ---------- UI state helpers ----------
+  function applyRunState(){
+    const s = state.current_status || 'Open';
+    $('#btn-start').prop('disabled', s === 'Work In Progress')
+                   .text(s === 'On Hold' ? 'Resume' : 'Start');
+    $('#btn-pause').prop('disabled', s !== 'Work In Progress');
+    $('#btn-stop').prop('disabled',  s !== 'Work In Progress');
+  }
+
+  function updateControls(){
+    const hasCard = !!state.current_card;
+    const hasEmp  = !!state.current_emp;
+
+    // common enables
+    $('#btn-claim,#btn-leave,#btn-start,#btn-pause,#btn-stop,#btn-load,#btn-request,#btn-label,#btn-close')
+      .prop('disabled', !hasCard);
+
+    // claim/leave depend on employee
+    $('#btn-claim,#btn-leave').prop('disabled', !hasCard || !hasEmp);
+
+    applyRunState();
+  }
 }

@@ -193,12 +193,31 @@
   padding-bottom:140px; /* ~height of the action bar + status bar */
 }
 
-/* spacing between bottom buttons */
-.op-teal .mes-operator-bottom .action-bar .d-flex{
-  gap:.75rem;                 /* clean flex spacing */
+/* NEW: grouped bottom bar + separators */
+.op-teal .op-bottom{
+  gap:.75rem;                      /* space between groups/separators */
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  padding:0 .25rem;
 }
+.op-teal .bar-group{
+  display:flex;
+  gap:.75rem;                      /* space between buttons in a group */
+  flex-wrap:nowrap;
+}
+.op-teal .bar-sep{
+  width:2px;
+  min-height:96px;                 /* align with tiles */
+  align-self:stretch;
+  background:linear-gradient(to bottom, transparent, var(--line-strong), transparent);
+  border-radius:2px;
+  opacity:.9;
+  margin:0 .25rem;
+}
+
 .op-teal .tile-btn{
   min-height:96px;
+  min-width:180px;
   border-radius:12px;
   font-weight:700;
   letter-spacing:.2px;
@@ -230,6 +249,10 @@
 @media (prefers-reduced-motion: reduce){
   .op-teal .list-group-item{ transition:none!important; }
   .op-teal .btn{ transition:none!important; }
+}
+
+@media (max-width: 768px){
+  .op-teal .bar-sep{ width:1px; min-height:80px; opacity:.7; }
 }
 
 /* =====================================
@@ -266,7 +289,7 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
 /* 1) Force the footer to stick even if other CSS interferes */
 .op-teal .mes-operator-bottom{ position: fixed !important; }
 
-/* 2) Give bottom buttons a touch more air */
+/* 2) Give bottom buttons a touch more air (legacy row support) */
 .op-teal .mes-operator-bottom .action-bar .d-flex{ gap: 1rem !important; }
 
 /* 3) Make the header time more prominent */
@@ -279,24 +302,14 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
 .op-teal .op-toolbar .label { 
   margin-right: .45rem;                 /* space after "Operator:" / "Line:" / "Shift:" */
 }
-
 /* space between the value (— / name) and its Set button */
-.op-teal .op-toolbar .label + span { 
-  margin-right: .9rem; 
-}
-
+.op-teal .op-toolbar .label + span { margin-right: .9rem; }
 /* give the Set buttons a little breathing room */
 .op-teal .op-toolbar #kiosk-choose-emp,
-.op-teal .op-toolbar #kiosk-choose-line {
-  margin-left: .55rem;
-}
-
+.op-teal .op-toolbar #kiosk-choose-line { margin-left: .55rem; }
 /* widen the vertical separators */
-.op-teal .op-toolbar .vr { 
-  margin: 0 14px; 
-}
+.op-teal .op-toolbar .vr { margin: 0 14px; }
 
-/* slightly tighter on smaller screens */
 @media (max-width: 992px){
   .op-teal .op-toolbar .label + span { margin-right: .6rem; }
   .op-teal .op-toolbar .vr { margin: 0 10px; }
