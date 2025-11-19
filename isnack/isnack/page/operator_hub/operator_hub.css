@@ -27,12 +27,15 @@
 .op-teal{ background:var(--bg); color:var(--ink); }
 .op-teal a, .op-teal .text-muted{ color:var(--muted)!important; }
 
-/* Top status bar (bottom of the page UI) */
+/* =======================
+   Status bar (bottom bar)
+   ======================= */
 .op-teal #status-bar{
   background:var(--header);
   color:var(--header-ink);
   border-top:0;
   border-bottom:2px solid #22262d;
+  min-height:36px;
 }
 .op-teal #status-connection{
   padding:.2rem .6rem; border-radius:999px; font-weight:700;
@@ -50,41 +53,39 @@
   box-shadow:var(--shadow-sm);
 }
 .op-teal .op-toolbar .label{ color:var(--muted); font-weight:600; }
-.op-teal .op-toolbar .vr{ width:1px; height:18px; background:var(--line); margin:0 8px; }
+.op-teal .op-toolbar .vr{ width:1px; height:18px; background:var(--line); margin:0 14px; }
+
+/* Header spacing: Operator | Line | Shift */
+.op-teal .op-toolbar .label{ margin-right:.45rem; }
+.op-teal .op-toolbar .label + span{ margin-right:.9rem; }
+.op-teal .op-toolbar #kiosk-choose-emp,
+.op-teal .op-toolbar #kiosk-choose-line{ margin-left:.55rem; }
 
 /* Header action buttons spacing */
 .op-teal .op-toolbar .btn{ margin:0; }                 /* reset */
 .op-teal .op-toolbar .btn + .btn{ margin-left:.5rem; } /* minimal gap */
-@media (max-width:768px){
-  .op-teal .op-toolbar .btn + .btn{ margin-left:.4rem; }
-}
 
 /* Header time: larger & spaced */
 .op-teal .op-toolbar #op-time{
-  margin-left:.75rem;             /* space from the buttons */
-  padding:.2rem .6rem;            /* subtle pill */
+  margin-left:.75rem;
+  padding:.25rem .7rem;
   border:1px solid var(--line);
   border-radius:8px;
   background:var(--panel-2);
   color:var(--ink);
-
   font-weight:700;
-  font-size:1.125rem;             /* ~18px */
+  font-size:1.25rem;
   line-height:1.1;
   letter-spacing:.3px;
-
-  /* keep digits aligned */
   font-variant-numeric: tabular-nums lining-nums;
   -webkit-font-feature-settings:"tnum" 1, "lnum" 1;
   -moz-font-feature-settings:"tnum" 1, "lnum" 1;
   font-feature-settings:"tnum" 1, "lnum" 1;
 }
-@media (max-width:768px){
-  .op-teal .op-toolbar #op-time{
-    margin-left:.5rem;
-    font-size:1rem;
-    padding:.15rem .5rem;
-  }
+@media (max-width:992px){
+  .op-teal .op-toolbar .label + span { margin-right:.6rem; }
+  .op-teal .op-toolbar .vr { margin:0 10px; }
+  .op-teal .op-toolbar #op-time{ font-size:1.05rem; padding:.2rem .55rem; }
 }
 
 /* Fallback mini header (only if JS injects #kiosk-controls) */
@@ -159,7 +160,6 @@
 }
 .op-teal .btn:hover{ transform:translateY(-1px); box-shadow:var(--shadow-sm); }
 .op-teal .btn:active{ transform:translateY(0); }
-
 .op-teal .btn-outline-primary,
 .op-teal .btn-primary{
   background:var(--teal)!important;
@@ -182,62 +182,96 @@
 
 /* bar visuals */
 .op-teal .mes-operator-bottom .action-bar{
+  position:relative;
   background:var(--panel);
   border-top:1px solid var(--line);
   box-shadow:0 -6px 18px rgba(17,24,39,.08);
   backdrop-filter:saturate(120%) blur(2px);
+  padding-top:.75rem;
+  padding-bottom:.75rem;
 }
 
 /* keep content clear of the fixed bar */
 .op-teal .mes-operator{
-  padding-bottom:140px; /* ~height of the action bar + status bar */
+  padding-bottom:160px; /* height of action bar + status bar */
 }
 
-/* NEW: grouped bottom bar + separators */
+/* container behaviours */
+.op-teal .mes-operator-bottom .action-bar .container-fluid{ overflow-x:auto; }
+
+/* =========================
+   Bottom bar: grouped style
+   ========================= */
 .op-teal .op-bottom{
-  gap:.75rem;                      /* space between groups/separators */
-  overflow-x:auto;
-  -webkit-overflow-scrolling:touch;
-  padding:0 .25rem;
-}
-.op-teal .bar-group{
   display:flex;
-  gap:.75rem;                      /* space between buttons in a group */
   flex-wrap:nowrap;
+  align-items:stretch;
+  gap:1rem;                 /* gap between groups and separators */
+  overflow-x:auto;
 }
-.op-teal .bar-sep{
-  width:2px;
-  min-height:96px;                 /* align with tiles */
+
+/* Capsule group with inner spacing */
+.op-teal .op-bottom .bar-group{
+  display:inline-flex;
+  align-items:stretch;
+  gap:.75rem;               /* gap between buttons inside a group */
+  padding:.45rem .55rem;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:14px;
+  box-shadow:var(--shadow-sm);
+}
+
+/* Visual separator between groups */
+.op-teal .op-bottom .bar-sep{
   align-self:stretch;
-  background:linear-gradient(to bottom, transparent, var(--line-strong), transparent);
+  width:2px;
+  background:var(--line);
   border-radius:2px;
   opacity:.9;
-  margin:0 .25rem;
 }
 
+/* compact tile buttons */
 .op-teal .tile-btn{
-  min-height:96px;
-  min-width:180px;
-  border-radius:12px;
+  min-height:78px;
+  padding:.65rem .8rem;
+  font-size:.95rem;
+  border-radius:10px;
+  letter-spacing:.12px;
   font-weight:700;
-  letter-spacing:.2px;
+  white-space:normal;   /* allow wrap */
+  line-height:1.2;
+  min-width:140px;
+  text-align:center;
 }
 
-/* optional: container gutters for the bar */
-.op-teal .mes-operator-bottom .action-bar .container-fluid{
-  padding-left:1rem;
-  padding-right:1rem;
+/* Double-width for run controls (Start / Pause / Stop) */
+.op-teal .op-bottom .bar-group .tile-btn.wide-2x{
+  flex:2 1 0;
+  min-width:220px;
+}
+
+/* Fallback: ensure spacing if buttons are not wrapped in a .bar-group */
+.op-teal .mes-operator-bottom .action-bar > .container-fluid > .d-flex > .tile-btn + .tile-btn{
+  margin-left:.6rem;
+}
+
+/* Optional visual divider between groups (legacy helper) */
+.op-teal .tile-split{
+  align-self:stretch;
+  width:1px;
+  background:var(--line);
+  opacity:.9;
+  border-radius:1px;
 }
 
 /* Status bar sits under the action buttons */
-.op-teal #status-bar{
-  min-height:36px;
-}
+.op-teal #status-bar{ min-height:36px; }
 
 /* iOS/modern safe area */
 @supports(padding:max(0px)){
   .op-teal .mes-operator-bottom{
-    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+    padding-bottom:max(env(safe-area-inset-bottom), 0px);
   }
 }
 
@@ -249,10 +283,6 @@
 @media (prefers-reduced-motion: reduce){
   .op-teal .list-group-item{ transition:none!important; }
   .op-teal .btn{ transition:none!important; }
-}
-
-@media (max-width: 768px){
-  .op-teal .bar-sep{ width:1px; min-height:80px; opacity:.7; }
 }
 
 /* =====================================
@@ -283,34 +313,17 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit{
 body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
 
 /* =====================================
-   Optional hardening overrides (take precedence)
+   Hardening overrides (take precedence)
    ===================================== */
+.op-teal .mes-operator-bottom{ position: fixed !important; } /* keep footer stuck */
 
-/* 1) Force the footer to stick even if other CSS interferes */
-.op-teal .mes-operator-bottom{ position: fixed !important; }
-
-/* 2) Give bottom buttons a touch more air (legacy row support) */
-.op-teal .mes-operator-bottom .action-bar .d-flex{ gap: 1rem !important; }
-
-/* 3) Make the header time more prominent */
-.op-teal .op-toolbar #op-time{
-  font-size: 1.25rem !important;
-  padding: .25rem .7rem !important;
-}
-
-/* --- Header spacing: Operator | Line | Shift --- */
-.op-teal .op-toolbar .label { 
-  margin-right: .45rem;                 /* space after "Operator:" / "Line:" / "Shift:" */
-}
-/* space between the value (— / name) and its Set button */
-.op-teal .op-toolbar .label + span { margin-right: .9rem; }
-/* give the Set buttons a little breathing room */
-.op-teal .op-toolbar #kiosk-choose-emp,
-.op-teal .op-toolbar #kiosk-choose-line { margin-left: .55rem; }
-/* widen the vertical separators */
-.op-teal .op-toolbar .vr { margin: 0 14px; }
-
-@media (max-width: 992px){
-  .op-teal .op-toolbar .label + span { margin-right: .6rem; }
-  .op-teal .op-toolbar .vr { margin: 0 10px; }
+/* Fix low-contrast badges on dark backgrounds */
+.op-teal .badge.bg-primary,
+.op-teal .badge.bg-secondary,
+.op-teal .badge.bg-success,
+.op-teal .badge.bg-info,
+.op-teal .badge.bg-warning,
+.op-teal .badge.bg-danger,
+.op-teal .badge.bg-dark {
+  color: #fff !important;
 }

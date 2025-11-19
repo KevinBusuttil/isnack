@@ -453,22 +453,69 @@ def leave_job_card(job_card: str, employee: Optional[str] = None):
     return True
 
 @frappe.whitelist()
-def set_card_status(job_card: str, action: str, reason: Optional[str] = None, remarks: Optional[str] = None):
-    """Operator intent for a Job Card (Start/Pause/Stop)."""
-    _require_roles(ROLES_OPERATOR)
+def set_card_status(
+    job_card: str,
+    action: str,
+    reason: Optional[str] = None,
+    remarks: Optional[str] = None,
+    employee: Optional[str] = None,
+):
+    """
+    Operator intent for a Job Card (Start/Pause/Stop).
+
+    Behavior:
+    - Start: if `employee` is provided, ensures there's an OPEN time log for that employee
+             (creates it if missing). No more generic/open-without-employee logs.
+    - Pause/Stop: if `employee` is provided, closes ONLY that employee's open log; otherwise closes all.
+    """
+    _require_roles(["Factory Operator", "Production Manager"])
     jc = frappe.get_doc("Job Card", job_card)
+    now = frappe.utils.now_datetime()
+
+    # Resolve employee (if given or linked to session user)
+    emp = _employee_or_user_default(employee)
 
     action = (action or "").strip()
+
     if action == "Start":
-        if not _open_time_logs(job_card):
-            jc.append("time_logs", {"from_time": frappe.utils.now_datetime()})
-        jc.status = "Work In Progress"
+      # require a crew slot for this employee
+      if emp:
+          # already on this job?
+          open_for_emp = frappe.db.exists(
+              "Job Card Time Log",
+              {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
+          )
+          if not open_for_emp:
+              # crew size guard
+              if _open_log_count(job_card) >= _max_active_ops():
+                  frappe.throw(_("This job already has {0} active operators").format(_max_active_ops()))
+              jc.append("time_logs", {"employee": emp, "from_time": now})
+      else:
+          # UI should always provide emp; keep a tiny fallback for compatibility
+          if not _open_time_logs(job_card):
+              jc.append("time_logs", {"from_time": now})
+
+      jc.status = "Work In Progress"
+
     elif action in ("Pause", "Stop"):
-        for r in _open_time_logs(job_card):
-            frappe.db.set_value("Job Card Time Log", r["name"], "to_time", frappe.utils.now_datetime(), update_modified=False)
-        jc.status = "On Hold"
+      # close logs
+      if emp:
+          name = frappe.db.get_value(
+              "Job Card Time Log",
+              {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
+              "name",
+          )
+          if name:
+              frappe.db.set_value("Job Card Time Log", name, "to_time", now, update_modified=False)
+      else:
+          # fallback: close everyone
+          for r in _open_time_logs(job_card):
+              frappe.db.set_value("Job Card Time Log", r["name"], "to_time", now, update_modified=False)
+
+      jc.status = "On Hold" if action == "Pause" else "On Hold"
+
     else:
-        frappe.throw(_("Unknown action"))
+      frappe.throw(_("Unknown action"))
 
     if remarks:
         try: jc.db_set("mes_remarks", remarks, commit=False)
@@ -480,6 +527,7 @@ def set_card_status(job_card: str, action: str, reason: Optional[str] = None, re
     jc.flags.ignore_permissions = True
     jc.save()
     return True
+
 
 # ============================================================
 # Scanning, requests, labels, completion  (JC-aware)
@@ -752,3 +800,196 @@ def print_label(carton_qty, template, printer, work_order: Optional[str] = None,
         pc.flags.ignore_permissions = True
         pc.insert()
     return True
+
+# --- Add near other helpers ---
+def _line_from_job_or_wo(job_card: Optional[str], work_order: Optional[str]) -> Optional[str]:
+    if job_card:
+        return frappe.db.get_value("Job Card", job_card, "workstation")
+    if work_order:
+        return frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+    return None
+
+# --- NEW: lightweight code parser (no posting) ---
+@frappe.whitelist()
+def parse_scan(code: str):
+    """
+    Resolve a scanned code to {item_code, batch_no, uom}.
+    Uses the same GS1/basic parser; does NOT post anything.
+    """
+    out = _parse_gs1_or_basic(code or "")
+    item_code = out.get("item_code")
+    if not item_code:
+        return {"ok": False, "msg": _("Cannot parse item from code")}
+    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+    return {"ok": True, "item_code": item_code, "batch_no": out.get("batch_no"), "uom": uom}
+
+
+@frappe.whitelist()
+def return_materials(lines, job_card: Optional[str] = None, work_order: Optional[str] = None):
+    """
+    Return leftover materials from line WIP back to staging/central.
+    `lines` = JSON list of {item_code, qty, batch_no?}
+    """
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+
+    if job_card and not work_order:
+        work_order = frappe.db.get_value("Job Card", job_card, "work_order")
+    if not work_order:
+        frappe.throw(_("Missing work_order / job_card"))
+
+    try:
+        rows = frappe.parse_json(lines) or []
+    except Exception:
+        frappe.throw(_("Invalid payload"))
+
+    if not rows:
+        frappe.throw(_("No items to return"))
+
+    # Resolve WIP and Staging from line mapping (fallback to Stock Settings)
+    wip_wh = _default_line_wip(work_order)
+    staging_wh = _default_line_staging(work_order)
+    default_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    wip_wh = wip_wh or default_wh
+    staging_wh = staging_wh or default_wh
+
+    se = frappe.new_doc("Stock Entry")
+    se.purpose = "Material Transfer for Manufacture"
+    se.work_order = work_order
+
+    for r in rows:
+        item = r.get("item_code")
+        qty  = float(r.get("qty") or 0)
+        if not item or qty <= 0:
+            continue
+        se.append("items", {
+            "item_code": item,
+            "qty": qty,
+            "uom": frappe.db.get_value("Item", item, "stock_uom") or "Nos",
+            "s_warehouse": wip_wh,
+            "t_warehouse": staging_wh,
+            "batch_no": r.get("batch_no") or None,
+        })
+
+    if not se.items:
+        frappe.throw(_("Nothing to post"))
+
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+    return True
+
+# --- NEW: small helper import at top of file ---
+import json
+
+# --- NEW: list_workstations (replaces client get_list) ---
+@frappe.whitelist()
+def list_workstations():
+    _require_roles(["Factory Operator", "Production Manager"])
+    rows = frappe.get_all("Workstation", fields=["name"], order_by="name asc", limit=500)
+    return [r.name for r in rows]
+
+# --- NEW: materials snapshot for a WO (BOM requirements + issued/transfered) ---
+@frappe.whitelist()
+def get_materials_snapshot(work_order: str):
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+
+    wo = frappe.get_doc("Work Order", work_order)
+    if not wo.get("bom_no"):
+        return {"ok": False, "msg": "Work Order has no BOM", "rows": [], "scans": []}
+
+    bom = frappe.get_doc("BOM", wo.bom_no)
+    bom_qty = float(bom.get("quantity") or 1) or 1
+    wo_qty  = float(wo.get("qty") or 0)
+    factor  = wo_qty / bom_qty if bom_qty else 1.0
+
+    # Build 'required' from BOM items; prefer stock_uom, else uom
+    rows = []
+    for it in bom.items:
+        required = float(it.qty or 0) * factor
+        rows.append({
+            "item_code": it.item_code,
+            "item_name": it.item_name or "",
+            "uom": (it.stock_uom or it.uom or ""),
+            "required": required,
+            "issued": 0.0,
+            "remain": required,
+        })
+
+    # Issued / transferred to WO (sum of SED.qty)
+    issued = frappe.db.sql("""
+        select sed.item_code, sum(sed.qty) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus=1
+          and se.work_order=%s
+          and se.purpose in ('Material Consumption for Manufacture','Material Transfer for Manufacture')
+        group by sed.item_code
+    """, (work_order,), as_dict=True)
+    issued_map = {r.item_code: float(r.qty or 0) for r in issued}
+
+    for r in rows:
+        iss = issued_map.get(r["item_code"], 0.0)
+        r["issued"] = iss
+        r["remain"] = max(float(r["required"]) - iss, 0.0)
+
+    # Recent item rows for the side list (order by detail creation; no posting_datetime)
+    scans = frappe.db.sql("""
+        select sed.item_code, sed.batch_no, sed.qty, sed.uom, sed.parent, sed.creation
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus=1
+          and se.work_order=%s
+          and se.purpose in ('Material Consumption for Manufacture','Material Transfer for Manufacture')
+        order by sed.creation desc
+        limit 12
+    """, (work_order,), as_dict=True)
+
+    return {"ok": True, "wo": wo.name, "rows": rows, "scans": scans}
+
+# --- NEW: Return Materials (transfer from WIP back to staging/central) ---
+@frappe.whitelist()
+def return_materials(job_card: Optional[str] = None, work_order: Optional[str] = None, lines: Optional[str] = None):
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+
+    if job_card and not work_order:
+        work_order = frappe.db.get_value("Job Card", job_card, "work_order")
+    if not work_order:
+        frappe.throw(_("Missing work_order / job_card"))
+
+    try:
+        items = json.loads(lines or "[]")
+    except Exception:
+        items = []
+    if not items:
+        frappe.throw(_("No items to return"))
+
+    s_wh = _default_line_wip(work_order) or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    t_wh = _default_line_staging(work_order) or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+
+    se = frappe.new_doc("Stock Entry")
+    se.purpose = "Material Transfer"
+    se.work_order = work_order
+
+    for it in items:
+        item_code = (it.get("item_code") or "").strip()
+        qty = float(it.get("qty") or 0)
+        if not item_code or qty <= 0:
+            continue
+        row = {
+            "item_code": item_code,
+            "qty": qty,
+            "uom": frappe.db.get_value("Item", item_code, "stock_uom") or "Nos",
+            "s_warehouse": s_wh,
+            "t_warehouse": t_wh,
+        }
+        if it.get("batch_no"):
+            row["batch_no"] = it["batch_no"]
+        se.append("items", row)
+
+    if not se.items:
+        frappe.throw(_("No valid items to transfer"))
+
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+    return {"ok": True, "stock_entry": se.name}

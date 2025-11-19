@@ -42,6 +42,42 @@
     </div>
   </div>
 
+  <!-- Materials panel -->
+  <div class="card shadow-sm border-0 mb-3">
+    <div class="card-header bg-white border-0 pt-3 pb-0 d-flex justify-content-between align-items-center">
+      <div class="h6 mb-0">Materials for WO: <span id="mat-wo-label">—</span></div>
+    </div>
+    <div class="card-body">
+      <div id="mat-empty" class="text-muted">Select a Job Card to load materials.</div>
+
+      <div id="mat-content" class="d-none">
+        <div class="row g-3">
+          <div class="col-lg-8">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th style="min-width:180px">Name</th>
+                    <th class="text-end">UoM</th>
+                    <th class="text-end">Required</th>
+                    <th class="text-end">Issued</th>
+                    <th class="text-end">Remaining</th>
+                  </tr>
+                </thead>
+                <tbody id="mat-req-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="h6">Recent Issues/Transfers</div>
+            <ul class="list-group" id="mat-scans"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Assigned Job Cards -->
   <div class="mb-2 d-flex align-items-center justify-content-between">
     <div class="h6 mb-0">Assigned Work Orders</div>
@@ -65,31 +101,26 @@
   <!-- Action Bar (grouped with separators) -->
   <div class="action-bar py-3">
     <div class="container-fluid">
-      <div class="op-bottom d-flex flex-nowrap align-items-stretch">
+      <div class="op-bottom d-flex flex-nowrap align-items-stretch" style="gap:1rem">
 
         <!-- Group 1: Run controls -->
-        <div class="bar-group">
+        <div class="tile-group">
           <button id="btn-start" class="btn btn-lg btn-primary tile-btn">Start</button>
           <button id="btn-pause" class="btn btn-lg btn-warning tile-btn">Pause</button>
           <button id="btn-stop"  class="btn btn-lg btn-secondary tile-btn">Stop</button>
         </div>
 
-        <div class="bar-sep" role="separator" aria-hidden="true"></div>
-
-        <!-- Group 2: Crew -->
-        <div class="bar-group">
-          <button id="btn-claim" class="btn btn-lg btn-success tile-btn">Claim</button>
-          <button id="btn-leave" class="btn btn-lg btn-outline-secondary tile-btn">Leave</button>
-        </div>
-
-        <div class="bar-sep" role="separator" aria-hidden="true"></div>
-
-        <!-- Group 3: Materials & Output -->
-        <div class="bar-group">
+        <!-- Group 2: Materials -->
+        <div class="tile-group">
           <button id="btn-load"    class="btn btn-lg btn-info tile-btn">Load Materials</button>
           <button id="btn-request" class="btn btn-lg btn-warning tile-btn">Request More Material</button>
-          <button id="btn-label"   class="btn btn-lg btn-success tile-btn" disabled>Print Label</button>
-          <button id="btn-close"   class="btn btn-lg btn-secondary tile-btn">Close / End</button>
+          <button id="btn-return"  class="btn btn-lg btn-outline-secondary tile-btn">Return Materials</button>
+        </div>
+
+        <!-- Group 3: Output -->
+        <div class="tile-group">
+          <button id="btn-label" class="btn btn-lg btn-success tile-btn" disabled>Print Label</button>
+          <button id="btn-close" class="btn btn-lg btn-secondary tile-btn">Close / End</button>
         </div>
 
       </div>
