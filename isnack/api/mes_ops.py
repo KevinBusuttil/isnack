@@ -520,33 +520,50 @@ def set_card_status(
 
 @frappe.whitelist()
 def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str] = None):
+    """
+    Handle a material scan for a job:
+      - Parses GS1 (01,10,17,30/37) or fallback "ITEM|BATCH|QTY"
+      - Enforces batch when Item has_batch_no = 1
+      - Optionally restricts by global Allowed Item Groups (Factory Settings)
+      - Skips BOM-membership validation for Packaging Item Groups (Factory Settings)
+      - Posts either:
+          * "Material Consumption for Manufacture" (consume_on_scan = 1), or
+          * "Material Transfer for Manufacture"   (consume_on_scan = 0)
+        with warehouses derived from Factory Settings → Line Warehouse Map, falling
+        back to Stock Settings default warehouse.
+      - Soft idempotency: ignores duplicates within the configured TTL.
+    Returns: {"ok": bool, "msg": str}
+    """
     _require_roles(ROLES_OPERATOR)
 
     try:
+        # Resolve target Work Order
         if job_card and not work_order:
             work_order = frappe.db.get_value("Job Card", job_card, "work_order")
         if not work_order:
             frappe.throw(_("Missing work_order / job_card"))
 
+        # Duplicate-scan guard
         if _has_recent_duplicate(work_order, code):
             return {"ok": False, "msg": _("Duplicate scan ignored")}
 
+        # Parse the scanned payload
         parsed = _parse_gs1_or_basic(code)
         item_code = parsed.get("item_code")
         if not item_code:
             return {"ok": False, "msg": _("Cannot parse item from code")}
 
-        # Batch guard
+        # Require batch if the item is batch-tracked
         if frappe.db.get_value("Item", item_code, "has_batch_no") and not parsed.get("batch_no"):
             return {"ok": False, "msg": _("Batch number required for {0}").format(item_code)}
 
-        # Global allowlist (optional)
+        # Global Item Group allowlist (Factory Settings → Allowed Item Groups)
         group = (_get_item_group(item_code) or "").strip().lower()
-        allow = _allowed_groups_global()
-        if allow and group not in allow:
+        allowed_groups = _allowed_groups_global()
+        if allowed_groups and group not in allowed_groups:
             return {"ok": False, "msg": _("Item group {0} not allowed").format(group or "?")}
 
-        # Packaging relax: do NOT block if packaging item group and not present in BOM
+        # Packaging relax: if this item is in Packaging Item Groups, we don't insist it's on the WO BOM
         packaging_groups = _packaging_groups_global()
         is_packaging = group in packaging_groups
 
@@ -555,9 +572,15 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
             if not ok:
                 return {"ok": False, "msg": msg}
 
+        # Quantities & UoM
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-        qty = parsed.get("qty") or 1
+        qty = float(parsed.get("qty") or 1)
 
+        # Warehouses from line-map (falls back to Stock Settings default)
+        s_wh = parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging)
+        t_wh = _default_line_wip(work_order)
+
+        # Post either Consumption or Transfer for Manufacture (based on Factory Settings)
         if _consume_on_scan():
             se = frappe.new_doc("Stock Entry")
             se.purpose = "Material Consumption for Manufacture"
@@ -566,11 +589,12 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 "item_code": item_code,
                 "qty": qty,
                 "uom": uom,
-                "s_warehouse": parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging),
+                "s_warehouse": s_wh,
                 "batch_no": parsed.get("batch_no"),
             })
             se.flags.ignore_permissions = True
-            se.insert(); se.submit()
+            se.insert()
+            se.submit()
             msg_txt = _("Consumed {0} × {1} (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
         else:
             se = frappe.new_doc("Stock Entry")
@@ -580,12 +604,13 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 "item_code": item_code,
                 "qty": qty,
                 "uom": uom,
-                "s_warehouse": parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging),
-                "t_warehouse": _default_line_wip(work_order),
+                "s_warehouse": s_wh,
+                "t_warehouse": t_wh,
                 "batch_no": parsed.get("batch_no"),
             })
             se.flags.ignore_permissions = True
-            se.insert(); se.submit()
+            se.insert()
+            se.submit()
             msg_txt = _("Staged {0} × {1} to WIP (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
 
         return {"ok": True, "msg": msg_txt}
@@ -593,6 +618,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
     except Exception:
         frappe.log_error(frappe.get_traceback(), "iSnack scan_material")
         return {"ok": False, "msg": _("Scan failed")}
+
 
 @frappe.whitelist()
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
