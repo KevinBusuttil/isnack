@@ -474,14 +474,22 @@ function init_operator_hub($root) {
     d.show(); redraw(); setTimeout(() => d.get_field('scan').$input && d.get_field('scan').$input.focus(), 60);
   });
 
-  $('#btn-label',$root).on('click', () => {
+  // Print Label (FG) — uses Factory Settings defaults for template/printer
+  $('#btn-label',$root).on('click', async () => {
     if (!state.current_card || !state.current_emp || !state.current_is_fg) return;
+
+    // Pull defaults from Factory Settings
+    const [tplDefault, prnDefault] = await Promise.all([
+      frappe.db.get_single_value('Factory Settings', 'default_label_template'),
+      frappe.db.get_single_value('Factory Settings', 'default_label_printer'),
+    ]);
+
     const d = new frappe.ui.Dialog({
       title:'Print Carton Label (FG only)',
       fields: [
         { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 },
-        { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Print Template', reqd:1 },
-        { label:'Printer',    fieldname:'printer', fieldtype:'Data', reqd:1, default:'ZPL_PRN_1' }
+        { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Label Template', reqd:1, default: tplDefault || '' },
+        { label:'Printer',    fieldname:'printer', fieldtype:'Data', reqd:1, default: prnDefault || '' }
       ],
       primary_action_label:'Print',
       primary_action: (v) => {

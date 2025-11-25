@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from string import Template
 from typing import Optional, Tuple
 
@@ -9,61 +10,88 @@ import frappe
 from frappe import _
 
 # ============================================================
-# Config helpers
+# Factory Settings helpers (Single doctype)
 # ============================================================
 
+def _fs():
+    """Cached Factory Settings doc (Single)."""
+    try:
+        return frappe.get_cached_doc("Factory Settings")
+    except Exception:
+        # If not installed yet, return a dummy object with attributes returning None
+        class _Dummy:
+            def __getattr__(self, _): return None
+        return _Dummy()
+
 def _consume_on_scan() -> bool:
-    """
-    If True  -> scan makes 'Material Consumption for Manufacture'
-    If False -> scan makes 'Material Transfer for Manufacture' (staging -> WIP)
-    """
-    val = frappe.conf.get("isnack_consume_on_scan")
-    return bool(1 if val is None else int(val))
+    fs = _fs()
+    return bool(int((getattr(fs, "consume_on_scan", None) or 1)))
 
 def _scan_dup_ttl() -> int:
-    return int(frappe.conf.get("isnack_scan_dup_ttl_sec") or 45)
+    fs = _fs()
+    val = getattr(fs, "scan_dup_ttl_sec", None)
+    return int(val or 45)
 
 def _max_active_ops() -> int:
-    return int(frappe.conf.get("isnack_max_active_operators") or 2)
+    fs = _fs()
+    val = getattr(fs, "max_active_operators", None)
+    return int(val or 2)
 
-def _require_packaging_in_bom() -> bool:
-    # 1 = packaging must be listed in BOM; 0 = allow packaging even if not in BOM
-    return bool(int(frappe.conf.get("isnack_require_packaging_in_bom") or 1))
+def _allowed_groups_global() -> set[str]:
+    """
+    From Factory Settings -> Allowed Item Groups (Table MultiSelect).
+    Child rows expected to have field 'item_group'.
+    """
+    fs = _fs()
+    rows = getattr(fs, "allowed_item_groups", []) or []
+    out = set()
+    for r in rows:
+        ig = getattr(r, "item_group", None)
+        if ig:
+            out.add(str(ig).strip().lower())
+    return out
 
-def _allowed_groups_for_line(line: Optional[str]) -> set[str]:
-    """
-    site_config.json example:
-    {
-      "isnack_line_allowed_item_groups": {
-        "Line – Frying":    ["Semi Finished", "Oils & Fats", "Seasoning"],
-        "Line – Extrusion": ["Raw Materials", "Cereals & Grains", "Seasoning", "Additives"],
-        "Line – Packing":   ["Packaging"]
-      }
-    }
-    """
-    cfg = frappe.conf.get("isnack_line_allowed_item_groups") or {}
-    groups = (cfg.get(line) or []) if line else []
-    return {str(g).lower() for g in groups}
+def _packaging_groups_global() -> set[str]:
+    """From Factory Settings -> Packaging Item Groups (Table MultiSelect)."""
+    fs = _fs()
+    rows = getattr(fs, "packaging_item_groups", []) or []
+    out = set()
+    for r in rows:
+        ig = getattr(r, "item_group", None)
+        if ig:
+            out.add(str(ig).strip().lower())
+    return out
+
+def _backflush_groups_global() -> set[str]:
+    """From Factory Settings -> Backflush Item Groups (Table MultiSelect)."""
+    fs = _fs()
+    rows = getattr(fs, "backflush_item_groups", []) or []
+    out = set()
+    for r in rows:
+        ig = getattr(r, "item_group", None)
+        if ig:
+            out.add(str(ig).strip().lower())
+    return out
 
 def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """
-    Optional per-line WH mapping in site_config.json (falls back to Stock Settings):
-    {
-      "isnack_line_warehouses": {
-        "Line – Frying":    {"staging":"Staging – Frying", "wip":"WIP – Frying"},
-        "Line – Extrusion": {"staging":"Staging – Extrusion", "wip":"WIP – Extrusion"}
-      }
-    }
+    Factory Settings -> Line Warehouse Map child table.
+    Child rows expected: line (Workstation), staging_warehouse, wip_warehouse
     """
-    cfg = frappe.conf.get("isnack_line_warehouses") or {}
-    row = cfg.get(line or "") or {}
-    return row.get("staging"), row.get("wip")
+    if not line:
+        return None, None
+    fs = _fs()
+    rows = getattr(fs, "line_warehouse_map", []) or []
+    for r in rows:
+        if (getattr(r, "line", None) or "").strip().lower() == str(line).strip().lower():
+            return (getattr(r, "staging_warehouse", None) or None,
+                    getattr(r, "wip_warehouse", None) or None)
+    return None, None
 
 # ============================================================
 # Generic helpers
 # ============================================================
 
-# Roles that can operate the hub (broadened to include 'Operator')
 ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
 
 def _is_fg(item_code: str) -> bool:
@@ -74,7 +102,6 @@ def _get_item_group(item_code: str) -> Optional[str]:
     return frappe.db.get_value("Item", item_code, "item_group")
 
 def _get_user_line(user: str) -> Optional[str]:
-    """Prefer explicit line from UI. Only use session default if present; never assume custom fields."""
     line = frappe.defaults.get_user_default("manufacturing_line")
     return line or None
 
@@ -85,35 +112,27 @@ def _user_employee(user: str) -> Optional[str]:
     return frappe.db.get_value("User", user, "employee")
 
 def _employee_by_badge(badge: str) -> Optional[str]:
-    """Find Employee by a badge/id in a few common fields."""
     if not badge:
         return None
     meta = frappe.get_meta("Employee")
-    candidates = []
     for fname in ("badge_code", "attendance_device_id", "employee_number", "barcode"):
         if meta.has_field(fname):
-            candidates.append(fname)
-    for f in candidates:
-        emp = frappe.db.get_value("Employee", {f: badge}, "name")
-        if emp:
-            return emp
+            emp = frappe.db.get_value("Employee", {fname: badge}, "name")
+            if emp:
+                return emp
     return None
 
 def _employee_or_user_default(employee: Optional[str]) -> Optional[str]:
-    """Prefer explicit employee (kiosk), else linked Employee of the session user."""
     if employee:
         return employee
     return _user_employee(frappe.session.user)
 
 def _default_line_staging(work_order: str, *, is_packaging: bool = False) -> Optional[str]:
-    """Stage FROM here; can be line-aware via site_config."""
-    # Try line from any JC for this WO (first match)
     line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
     staging, _wip = _warehouses_for_line(line)
     return staging or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_wip(work_order: str) -> Optional[str]:
-    """WIP destination (for Material Transfer for Manufacture)."""
     line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
     _staging, wip = _warehouses_for_line(line)
     return wip or frappe.db.get_single_value("Stock Settings", "default_warehouse")
@@ -128,13 +147,8 @@ def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     return True, "OK"
 
 def _parse_gs1_or_basic(code: str) -> dict:
-    """
-    Very small parser:
-    - GS1 AIs: (01)gtin (10)batch (17)expiry (30)/(37)qty
-    - Fallback: ITEM|BATCH|QTY
-    """
-    out, s = {}, code
-    if s.startswith(("]d2", "]C1", "]Q3")):  # AIM prefix
+    out, s = {}, code or ""
+    if s.startswith(("]d2", "]C1", "]Q3")):
         s = s[3:]
 
     def grab(ai, ln=None):
@@ -152,7 +166,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     batch = grab("(10)")
     if batch: out["batch_no"] = batch
     exp = grab("(17)", 6)
-    if exp: out["expiry"] = exp  # YYMMDD
+    if exp: out["expiry"] = exp
     qty = grab("(30)") or grab("(37)")
     if qty:
         try: out["qty"] = float(qty)
@@ -176,7 +190,6 @@ def _scan_cache_key(work_order: str, raw_code: str) -> str:
     return f"isnack:mes:scan:{work_order}:{h}"
 
 def _has_recent_duplicate(work_order: str, raw_code: str, ttl_sec: Optional[int] = None) -> bool:
-    """Soft idempotency to avoid double-scans."""
     key = _scan_cache_key(work_order, raw_code)
     cache = frappe.cache()
     if cache.get_value(key):
@@ -196,7 +209,6 @@ def _require_roles(roles: list[str]):
 # ============================================================
 
 def _open_time_logs(job_card: str) -> list[dict]:
-    """Return open time logs (to_time is null)."""
     rows = frappe.db.sql("""
         select name, employee
         from `tabJob Card Time Log`
@@ -232,13 +244,11 @@ def _job_card_info(name: str) -> dict:
 
 @frappe.whitelist()
 def get_assigned_work_orders():
-    """Old list: active WOs (kept while migrating to Job Cards)."""
     user = frappe.session.user
     line = _get_user_line(user)
 
     filters = {"docstatus": 1, "status": ["in", ["Not Started", "In Process", "On Hold"]]}
     if line:
-        # Only apply if you actually have such a field; otherwise ignore
         meta = frappe.get_meta("Work Order")
         if meta.has_field("custom_line"):
             filters["custom_line"] = line
@@ -294,7 +304,6 @@ def get_wo_banner(work_order):
 
 @frappe.whitelist()
 def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None):
-    """Return canonical Employee id + name for a badge or explicit employee link."""
     emp = None
     if employee:
         emp = employee
@@ -309,15 +318,11 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
     }
 
 # ============================================================
-# New: Line queue + quick claim on Job Cards
+# Line queue + card banner
 # ============================================================
 
 @frappe.whitelist()
 def get_line_queue(line: Optional[str] = None):
-    """
-    Return current line queue (Job Cards).
-    Status in Open / Work In Progress / On Hold.
-    """
     if not line:
         line = _get_user_line(frappe.session.user)
 
@@ -328,7 +333,6 @@ def get_line_queue(line: Optional[str] = None):
     if line:
         filters["workstation"] = line
 
-    # Guard optional 'priority' custom field
     meta = frappe.get_meta("Job Card")
     has_priority = any(df.fieldname == "priority" for df in meta.fields)
     fields = ["name","work_order","operation","workstation","for_quantity","status","modified"]
@@ -386,9 +390,12 @@ def get_card_banner(job_card: str):
     """
     return {"html": html}
 
+# ============================================================
+# Job control (Start / Pause / Stop) — employee-specific logs
+# ============================================================
+
 @frappe.whitelist()
 def claim_job_card(job_card: str, employee: Optional[str] = None):
-    """Open a time log for the given Employee (kiosk passes employee explicitly)."""
     _require_roles(ROLES_OPERATOR)
 
     emp = _employee_or_user_default(employee)
@@ -410,7 +417,6 @@ def claim_job_card(job_card: str, employee: Optional[str] = None):
     jc.flags.ignore_permissions = True
     jc.save()
 
-    # Concurrency guard
     if _open_log_count(job_card) > _max_active_ops():
         last = frappe.db.get_value(
             "Job Card Time Log",
@@ -425,7 +431,6 @@ def claim_job_card(job_card: str, employee: Optional[str] = None):
 
 @frappe.whitelist()
 def leave_job_card(job_card: str, employee: Optional[str] = None):
-    """Close the specified Employee's open time log (kiosk passes employee)."""
     _require_roles(ROLES_OPERATOR)
 
     emp = _employee_or_user_default(employee)
@@ -460,62 +465,43 @@ def set_card_status(
     remarks: Optional[str] = None,
     employee: Optional[str] = None,
 ):
-    """
-    Operator intent for a Job Card (Start/Pause/Stop).
-
-    Behavior:
-    - Start: if `employee` is provided, ensures there's an OPEN time log for that employee
-             (creates it if missing). No more generic/open-without-employee logs.
-    - Pause/Stop: if `employee` is provided, closes ONLY that employee's open log; otherwise closes all.
-    """
     _require_roles(["Factory Operator", "Production Manager"])
     jc = frappe.get_doc("Job Card", job_card)
     now = frappe.utils.now_datetime()
-
-    # Resolve employee (if given or linked to session user)
     emp = _employee_or_user_default(employee)
-
     action = (action or "").strip()
 
     if action == "Start":
-      # require a crew slot for this employee
-      if emp:
-          # already on this job?
-          open_for_emp = frappe.db.exists(
-              "Job Card Time Log",
-              {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
-          )
-          if not open_for_emp:
-              # crew size guard
-              if _open_log_count(job_card) >= _max_active_ops():
-                  frappe.throw(_("This job already has {0} active operators").format(_max_active_ops()))
-              jc.append("time_logs", {"employee": emp, "from_time": now})
-      else:
-          # UI should always provide emp; keep a tiny fallback for compatibility
-          if not _open_time_logs(job_card):
-              jc.append("time_logs", {"from_time": now})
-
-      jc.status = "Work In Progress"
+        if emp:
+            open_for_emp = frappe.db.exists(
+                "Job Card Time Log",
+                {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
+            )
+            if not open_for_emp:
+                if _open_log_count(job_card) >= _max_active_ops():
+                    frappe.throw(_("This job already has {0} active operators").format(_max_active_ops()))
+                jc.append("time_logs", {"employee": emp, "from_time": now})
+        else:
+            if not _open_time_logs(job_card):
+                jc.append("time_logs", {"from_time": now})
+        jc.status = "Work In Progress"
 
     elif action in ("Pause", "Stop"):
-      # close logs
-      if emp:
-          name = frappe.db.get_value(
-              "Job Card Time Log",
-              {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
-              "name",
-          )
-          if name:
-              frappe.db.set_value("Job Card Time Log", name, "to_time", now, update_modified=False)
-      else:
-          # fallback: close everyone
-          for r in _open_time_logs(job_card):
-              frappe.db.set_value("Job Card Time Log", r["name"], "to_time", now, update_modified=False)
-
-      jc.status = "On Hold" if action == "Pause" else "On Hold"
+        if emp:
+            name = frappe.db.get_value(
+                "Job Card Time Log",
+                {"parent": job_card, "employee": emp, "to_time": ["in", ("", None)]},
+                "name",
+            )
+            if name:
+                frappe.db.set_value("Job Card Time Log", name, "to_time", now, update_modified=False)
+        else:
+            for r in _open_time_logs(job_card):
+                frappe.db.set_value("Job Card Time Log", r["name"], "to_time", now, update_modified=False)
+        jc.status = "On Hold"
 
     else:
-      frappe.throw(_("Unknown action"))
+        frappe.throw(_("Unknown action"))
 
     if remarks:
         try: jc.db_set("mes_remarks", remarks, commit=False)
@@ -528,21 +514,15 @@ def set_card_status(
     jc.save()
     return True
 
-
 # ============================================================
 # Scanning, requests, labels, completion  (JC-aware)
 # ============================================================
 
 @frappe.whitelist()
 def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str] = None):
-    """
-    Scan barcode/QR; validate vs BOM; gate by LINE (workstation) using item groups.
-    Accepts either job_card or work_order; if job_card is sent, WO is derived.
-    """
     _require_roles(ROLES_OPERATOR)
 
     try:
-        # Resolve WO
         if job_card and not work_order:
             work_order = frappe.db.get_value("Job Card", job_card, "work_order")
         if not work_order:
@@ -560,20 +540,17 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         if frappe.db.get_value("Item", item_code, "has_batch_no") and not parsed.get("batch_no"):
             return {"ok": False, "msg": _("Batch number required for {0}").format(item_code)}
 
-        # Determine line (workstation on the JC), item group, and apply per-line allowlist
-        line = frappe.db.get_value("Job Card", job_card, "workstation") if job_card else None
-        group = (_get_item_group(item_code) or "").lower()
-        allowed = _allowed_groups_for_line(line)
-        if allowed and group not in allowed:
-            return {"ok": False, "msg": _("Item group {0} not allowed on {1}").format(group or "?", line or "this line")}
+        # Global allowlist (optional)
+        group = (_get_item_group(item_code) or "").strip().lower()
+        allow = _allowed_groups_global()
+        if allow and group not in allow:
+            return {"ok": False, "msg": _("Item group {0} not allowed").format(group or "?")}
 
-        # Optional: FG/packaging safeguard (kept compatible)
-        is_fg_wo = is_finished_good(work_order)
-        packaging_groups = {"packaging", "cartons", "films", "labels"}
-        is_packaging = any(g in group for g in packaging_groups)
+        # Packaging relax: do NOT block if packaging item group and not present in BOM
+        packaging_groups = _packaging_groups_global()
+        is_packaging = group in packaging_groups
 
-        # Validate BOM membership (unless you decided to relax for packaging)
-        if not (is_packaging and not _require_packaging_in_bom()):
+        if not is_packaging:
             ok, msg = _validate_item_in_bom(work_order, item_code)
             if not ok:
                 return {"ok": False, "msg": msg}
@@ -619,11 +596,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
 
 @frappe.whitelist()
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
-    """
-    Create Material Request (Transfer if stock is available, else Purchase if purchaseable).
-    Accepts job_card or work_order.
-    """
-    _require_roles(["Stores User", *ROLES_OPERATOR])  # allow Stores OR Operators
+    _require_roles(["Stores User", *ROLES_OPERATOR])
 
     qty = float(qty or 0)
     if qty <= 0:
@@ -652,9 +625,6 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
 
 @frappe.whitelist()
 def set_wo_status(work_order, action, reason=None, remarks=None):
-    """
-    (Legacy) Operator intent on WO. Prefer set_card_status for Job Cards.
-    """
     _require_roles(ROLES_OPERATOR)
     wo = frappe.get_doc("Work Order", work_order)
 
@@ -679,7 +649,6 @@ def set_wo_status(work_order, action, reason=None, remarks=None):
 
 @frappe.whitelist()
 def get_wo_progress(work_order):
-    """Helper for pre-filling remaining qty on 'Complete WO'."""
     actual = frappe.db.sql(
         """
         select coalesce(sum(sed.qty),0)
@@ -695,10 +664,6 @@ def get_wo_progress(work_order):
 
 @frappe.whitelist()
 def complete_work_order(work_order, good, rejects=0, remarks=None):
-    """
-    Manufacture entry for finished good quantity (FG only on the entry in v15).
-    Sets fg_completed_qty and marks FG row as finished item so validation passes.
-    """
     _require_roles(ROLES_OPERATOR)
 
     good = float(good or 0)
@@ -717,9 +682,8 @@ def complete_work_order(work_order, good, rejects=0, remarks=None):
     se.purpose = "Manufacture"
     se.work_order = work_order
     se.to_warehouse = fg_wh
-    se.fg_completed_qty = good  # REQUIRED in v15
+    se.fg_completed_qty = good
 
-    # Finished item row
     se.append("items", {
         "item_code": wo.production_item,
         "qty": good,
@@ -750,10 +714,11 @@ def complete_work_order(work_order, good, rejects=0, remarks=None):
     return True
 
 @frappe.whitelist()
-def print_label(carton_qty, template, printer, work_order: Optional[str] = None, job_card: Optional[str] = None):
+def print_label(carton_qty, template: Optional[str] = None, printer: Optional[str] = None,
+                work_order: Optional[str] = None, job_card: Optional[str] = None):
     """
-    Render ZPL/TSPL from a custom 'Label Template' (field 'template') or fall back to 'Print Template'.
-    FG-only safeguard. Accepts job_card or work_order.
+    Render ZPL/TSPL from 'Label Template' (preferred) or fall back to 'Print Template'.
+    Defaults (template/printer) are taken from Factory Settings if not provided.
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -766,14 +731,22 @@ def print_label(carton_qty, template, printer, work_order: Optional[str] = None,
     if not _is_fg(wo.production_item):
         frappe.throw(_("Label printing allowed only for finished goods"))
 
-    # Try custom Label Template first; fall back to Print Template if you’re already using it
+    fs = _fs()
+    template = template or getattr(fs, "default_label_template", None)
+    printer  = printer  or getattr(fs, "default_label_printer", None)
+
+    if not template:
+        frappe.throw(_("No label template provided and no default set in Factory Settings"))
+    if not printer:
+        frappe.throw(_("No printer provided and no default set in Factory Settings"))
+
     tpl = frappe.db.get_value("Label Template", template, "template")
     if not tpl:
+        # Fall back to Print Template (if you're still using those)
         tpl = frappe.db.get_value("Print Template", template, "template_body")
     if not tpl:
         frappe.throw(_("Template not found"))
 
-    # If template uses $PLACEHOLDERS use string.Template; otherwise treat as .format() style
     if "$" in tpl:
         payload = Template(tpl).safe_substitute(
             ITEM=wo.production_item, ITEM_NAME=wo.item_name, WO=wo.name,
@@ -785,11 +758,9 @@ def print_label(carton_qty, template, printer, work_order: Optional[str] = None,
             BATCH=wo.get("batch_no") or "", QTY=carton_qty,
         )
 
-    # Realtime: scope to caller & after commit so only the user’s agent prints
     frappe.publish_realtime("isnack_print", {"printer": printer, "raw": payload},
                             user=frappe.session.user, after_commit=True)
 
-    # Optional: log to your own doctype if present
     if frappe.db.exists("DocType", "Packed Carton"):
         pc = frappe.new_doc("Packed Carton")
         pc.work_order = wo.name
@@ -801,94 +772,16 @@ def print_label(carton_qty, template, printer, work_order: Optional[str] = None,
         pc.insert()
     return True
 
-# --- Add near other helpers ---
-def _line_from_job_or_wo(job_card: Optional[str], work_order: Optional[str]) -> Optional[str]:
-    if job_card:
-        return frappe.db.get_value("Job Card", job_card, "workstation")
-    if work_order:
-        return frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
-    return None
+# ============================================================
+# Small helpers used by UI (replace client get_list)
+# ============================================================
 
-# --- NEW: lightweight code parser (no posting) ---
-@frappe.whitelist()
-def parse_scan(code: str):
-    """
-    Resolve a scanned code to {item_code, batch_no, uom}.
-    Uses the same GS1/basic parser; does NOT post anything.
-    """
-    out = _parse_gs1_or_basic(code or "")
-    item_code = out.get("item_code")
-    if not item_code:
-        return {"ok": False, "msg": _("Cannot parse item from code")}
-    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-    return {"ok": True, "item_code": item_code, "batch_no": out.get("batch_no"), "uom": uom}
-
-
-@frappe.whitelist()
-def return_materials(lines, job_card: Optional[str] = None, work_order: Optional[str] = None):
-    """
-    Return leftover materials from line WIP back to staging/central.
-    `lines` = JSON list of {item_code, qty, batch_no?}
-    """
-    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
-
-    if job_card and not work_order:
-        work_order = frappe.db.get_value("Job Card", job_card, "work_order")
-    if not work_order:
-        frappe.throw(_("Missing work_order / job_card"))
-
-    try:
-        rows = frappe.parse_json(lines) or []
-    except Exception:
-        frappe.throw(_("Invalid payload"))
-
-    if not rows:
-        frappe.throw(_("No items to return"))
-
-    # Resolve WIP and Staging from line mapping (fallback to Stock Settings)
-    wip_wh = _default_line_wip(work_order)
-    staging_wh = _default_line_staging(work_order)
-    default_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
-    wip_wh = wip_wh or default_wh
-    staging_wh = staging_wh or default_wh
-
-    se = frappe.new_doc("Stock Entry")
-    se.purpose = "Material Transfer for Manufacture"
-    se.work_order = work_order
-
-    for r in rows:
-        item = r.get("item_code")
-        qty  = float(r.get("qty") or 0)
-        if not item or qty <= 0:
-            continue
-        se.append("items", {
-            "item_code": item,
-            "qty": qty,
-            "uom": frappe.db.get_value("Item", item, "stock_uom") or "Nos",
-            "s_warehouse": wip_wh,
-            "t_warehouse": staging_wh,
-            "batch_no": r.get("batch_no") or None,
-        })
-
-    if not se.items:
-        frappe.throw(_("Nothing to post"))
-
-    se.flags.ignore_permissions = True
-    se.insert()
-    se.submit()
-    return True
-
-# --- NEW: small helper import at top of file ---
-import json
-
-# --- NEW: list_workstations (replaces client get_list) ---
 @frappe.whitelist()
 def list_workstations():
     _require_roles(["Factory Operator", "Production Manager"])
     rows = frappe.get_all("Workstation", fields=["name"], order_by="name asc", limit=500)
     return [r.name for r in rows]
 
-# --- NEW: materials snapshot for a WO (BOM requirements + issued/transfered) ---
 @frappe.whitelist()
 def get_materials_snapshot(work_order: str):
     _require_roles(["Factory Operator", "Stores User", "Production Manager"])
@@ -902,7 +795,6 @@ def get_materials_snapshot(work_order: str):
     wo_qty  = float(wo.get("qty") or 0)
     factor  = wo_qty / bom_qty if bom_qty else 1.0
 
-    # Build 'required' from BOM items; prefer stock_uom, else uom
     rows = []
     for it in bom.items:
         required = float(it.qty or 0) * factor
@@ -915,7 +807,6 @@ def get_materials_snapshot(work_order: str):
             "remain": required,
         })
 
-    # Issued / transferred to WO (sum of SED.qty)
     issued = frappe.db.sql("""
         select sed.item_code, sum(sed.qty) as qty
         from `tabStock Entry` se
@@ -932,7 +823,6 @@ def get_materials_snapshot(work_order: str):
         r["issued"] = iss
         r["remain"] = max(float(r["required"]) - iss, 0.0)
 
-    # Recent item rows for the side list (order by detail creation; no posting_datetime)
     scans = frappe.db.sql("""
         select sed.item_code, sed.batch_no, sed.qty, sed.uom, sed.parent, sed.creation
         from `tabStock Entry` se
@@ -946,9 +836,21 @@ def get_materials_snapshot(work_order: str):
 
     return {"ok": True, "wo": wo.name, "rows": rows, "scans": scans}
 
-# --- NEW: Return Materials (transfer from WIP back to staging/central) ---
+@frappe.whitelist()
+def parse_scan(code: str):
+    out = _parse_gs1_or_basic(code or "")
+    item_code = out.get("item_code")
+    if not item_code:
+        return {"ok": False, "msg": _("Cannot parse item from code")}
+    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+    return {"ok": True, "item_code": item_code, "batch_no": out.get("batch_no"), "uom": uom}
+
 @frappe.whitelist()
 def return_materials(job_card: Optional[str] = None, work_order: Optional[str] = None, lines: Optional[str] = None):
+    """
+    Return leftover materials from line WIP back to staging/central.
+    lines = JSON list of {item_code, qty, batch_no?}
+    """
     _require_roles(["Factory Operator", "Stores User", "Production Manager"])
 
     if job_card and not work_order:
