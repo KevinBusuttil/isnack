@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-11-25 17:26:47.003160",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_section",
+  "consume_on_scan",
+  "scan_dup_ttl_sec",
+  "max_active_operators",
+  "item_group_policies_section",
+  "packaging_item_groups",
+  "backflush_item_groups",
+  "allowed_item_groups",
+  "per_line_rules_section",
+  "line_warehouse_map",
+  "label_printing_section",
+  "default_label_template",
+  "default_label_printer"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "consume_on_scan",
+   "fieldtype": "Check",
+   "label": "Consume On Scan"
+  },
+  {
+   "default": "45",
+   "fieldname": "scan_dup_ttl_sec",
+   "fieldtype": "Int",
+   "label": "Duplicate Scan Window (sec)",
+   "non_negative": 1
+  },
+  {
+   "default": "2",
+   "fieldname": "max_active_operators",
+   "fieldtype": "Int",
+   "label": "Max Active Operators per Job"
+  },
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break",
+   "label": "Scanning and Consumption"
+  },
+  {
+   "fieldname": "backflush_item_groups",
+   "fieldtype": "Table MultiSelect",
+   "label": "Backflush Item Groups",
+   "options": "Line Backflush Item Groups"
+  },
+  {
+   "fieldname": "item_group_policies_section",
+   "fieldtype": "Section Break",
+   "label": "Item Group Policies"
+  },
+  {
+   "fieldname": "per_line_rules_section",
+   "fieldtype": "Section Break",
+   "label": "Per Line Rules"
+  },
+  {
+   "fieldname": "line_warehouse_map",
+   "fieldtype": "Table MultiSelect",
+   "label": "Line Warehouse Map",
+   "options": "Line Warehouse Map"
+  },
+  {
+   "fieldname": "packaging_item_groups",
+   "fieldtype": "Table MultiSelect",
+   "label": "Packaging Item Groups",
+   "options": "Line Packaging Item Groups"
+  },
+  {
+   "fieldname": "allowed_item_groups",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Item Groups",
+   "options": "Line Allowed Item Groups"
+  },
+  {
+   "fieldname": "label_printing_section",
+   "fieldtype": "Section Break",
+   "label": "Label Printing"
+  },
+  {
+   "fieldname": "default_label_template",
+   "fieldtype": "Link",
+   "label": "Default Label Template",
+   "options": "Label Template"
+  },
+  {
+   "fieldname": "default_label_printer",
+   "fieldtype": "Data",
+   "label": "Default Label Printer"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-11-25 21:30:48.572414",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Factory Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
