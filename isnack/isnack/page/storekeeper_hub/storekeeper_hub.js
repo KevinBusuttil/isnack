@@ -1,4 +1,4 @@
-frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
+frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   'use strict';
 
   const page = frappe.ui.make_app_page({
@@ -8,8 +8,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   });
 
   // Load theme CSS (Deep Cerulean)
-  $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">')
-    .appendTo(document.head);
+  $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">').appendTo(document.head);
 
   // Render static HTML template
   $(frappe.render_template('storekeeper_hub', {})).appendTo(page.body);
@@ -27,29 +26,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   };
 
   // ---------- Toolbar Controls ----------
-
   const $filters = $hub.find('.filters');
 
   const routing = frappe.ui.form.make_control({
-    df: {
-      fieldtype: 'Link',
-      label: 'Routing',
-      fieldname: 'routing',
-      options: 'Routing',
-      reqd: 0
-    },
+    df: { fieldtype: 'Link', label: 'Routing', fieldname: 'routing', options: 'Routing', reqd: 0 },
     parent: $filters.find('.routing'),
     render_input: true
   });
 
   const src_wh = frappe.ui.form.make_control({
-    df: {
-      fieldtype: 'Link',
-      label: 'Source Warehouse',
-      fieldname: 'src_warehouse',
-      options: 'Warehouse',
-      reqd: 1
-    },
+    df: { fieldtype: 'Link', label: 'Source Warehouse', fieldname: 'src_warehouse', options: 'Warehouse', reqd: 1 },
     parent: $filters.find('.src-warehouse'),
     render_input: true
   });
@@ -62,12 +48,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   });
 
   const pallet_id = frappe.ui.form.make_control({
-    df: {
-      fieldtype: 'Data',
-      label: 'Pallet ID',
-      fieldname: 'pallet_id',
-      placeholder: 'Scan or type Pallet barcode'
-    },
+    df: { fieldtype: 'Data', label: 'Pallet ID', fieldname: 'pallet_id', placeholder: 'Scan or type Pallet barcode' },
     parent: $filters.find('.pallet-id'),
     render_input: true
   });
@@ -88,10 +69,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   if (routing.$input) routing.$input.on('change', refresh);
 
   // ---------- Global Scan ----------
-
   const $scan = $hub.find('.scan-input');
   const $clear = $hub.find('.clear-scan');
-
   const route_to = (doctype, name) => frappe.set_route('Form', doctype, name);
 
   const open_by_scan = async (code) => {
@@ -101,10 +80,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
     // Treat non-WO/STE as Pallet ID
     if (!/^WO-|^MAT-STE-|^STE-/.test(code)) {
       pallet_id.set_value(code);
-      frappe.show_alert({
-        message: __('Pallet set: {0}', [frappe.utils.escape_html(code)]),
-        indicator: 'blue'
-      });
+      frappe.show_alert({ message: __('Pallet set: {0}', [frappe.utils.escape_html(code)]), indicator: 'blue' });
       return;
     }
 
@@ -128,18 +104,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
     frappe.show_alert({ message: __('Not recognized'), indicator: 'orange' });
   };
 
-  $scan.on('keydown', (e) => {
-    if (e.key === 'Enter') open_by_scan($scan.val());
-  });
-  $clear.on('click', () => {
-    $scan.val('');
-    $scan.focus();
-  });
+  $scan.on('keydown', (e) => { if (e.key === 'Enter') open_by_scan($scan.val()); });
+  $clear.on('click', () => { $scan.val(''); $scan.focus(); });
 
   // ---------- DOM: Buckets & Right Panels ----------
-
   const $buckets = $hub.find('.buckets');
-  const $staged = $hub.find('.staged');
+  const $staged  = $hub.find('.staged');
   const $pallets = $hub.find('.pallets');
 
   // Visual cues for WO selection within a bucket
@@ -163,17 +133,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   }
 
   // ---------- Load Buckets (Same-BOM groups) ----------
-
-  async function load_buckets() {
+  async function load_buckets(){
     $buckets.empty().append('<div class="muted">Loading…</div>');
-
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_buckets',
       args: { routing: routing.get_value() || null }
     });
 
     $buckets.empty();
-
     (r.message || []).forEach(b => {
       const $bucket = $(`
         <div class="bucket">
@@ -188,25 +155,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
           </div>
           <div class="wo-list"></div>
           <div class="mt-2">
-            <button class="btn btn-xs btn-primary select-bucket">
-              ${__('Select for Allocation')}
-            </button>
+            <button class="btn btn-xs btn-primary select-bucket">Select for Allocation</button>
           </div>
         </div>
       `);
 
+      // Render WO rows
       const $wol = $bucket.find('.wo-list');
-
       b.wos.forEach(wo => {
-        const planned = wo.planned_start_date
-          ? frappe.datetime.str_to_user(wo.planned_start_date)
-          : '';
+        const planned = wo.planned_start_date ? frappe.datetime.str_to_user(wo.planned_start_date) : '';
 
         let statusChip = '';
-        if (wo.stage_status === 'Staged') {
-          statusChip = `<span class="chip allocated">${__('Allocated')}</span>`;
-        } else if (wo.stage_status === 'Partial') {
-          statusChip = `<span class="chip partly-allocated">${__('Partly Allocated')}</span>`;
+        const status = (wo.stage_status || '').toLowerCase();
+        if (status === 'staged') {
+          statusChip = '<span class="chip allocated">Allocated</span>';
+        } else if (status === 'partial') {
+          statusChip = '<span class="chip partly-allocated">Partly Allocated</span>';
         }
 
         const $row = $(`
@@ -215,15 +179,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
             <div>
               <b>${frappe.utils.escape_html(wo.name)}</b>
               ${statusChip}
-              <div class="muted">
-                ${frappe.utils.escape_html(wo.item_name)} · ${wo.qty}
-                ${frappe.utils.escape_html(wo.uom || '')}
-              </div>
+              <div class="muted">${frappe.utils.escape_html(wo.item_name)} · ${wo.qty} ${frappe.utils.escape_html(wo.uom || '')}</div>
             </div>
             <div class="muted">${planned}</div>
           </div>
         `);
-
         $wol.append($row);
       });
 
@@ -261,7 +221,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   }
 
   // ---------- Cart ----------
-
   const $cart_scan = $hub.find('.cart-scan');
   const $cart_rows = $hub.find('.cart-rows');
 
@@ -277,12 +236,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
 
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_consolidated_remaining',
-      args: {
-        selected_wos: state.selected_wos,
-        item_code: row.item_code
-      }
+      args: { selected_wos: state.selected_wos, item_code: row.item_code }
     });
-
     if (r && r.message) {
       const want = parseFloat(r.message.qty || 0);
       if (want > 0) row.qty = want;
@@ -291,39 +246,23 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
     }
   }
 
-  function redraw_cart() {
+  function redraw_cart(){
     $cart_rows.empty();
     if (!state.cart.length) {
-      $cart_rows.append(
-        '<tr><td colspan="6" class="muted">Scan items to add to cart…</td></tr>'
-      );
+      $cart_rows.append(`<tr><td colspan="6" class="muted">Scan items to add to cart…</td></tr>`);
       return;
     }
-
     state.cart.forEach((r, idx) => {
       const $tr = $(`
         <tr>
-          <td><input class="form-control form-control-sm c-item"
-                     value="${frappe.utils.escape_html(r.item_code || '')}">
-          </td>
-          <td><input class="form-control form-control-sm c-batch"
-                     value="${frappe.utils.escape_html(r.batch_no || '')}">
-          </td>
-          <td><input class="form-control form-control-sm c-uom"
-                     style="max-width: 80px;"
-                     value="${frappe.utils.escape_html(r.uom || '')}">
-          </td>
-          <td><input type="number"
-                     class="form-control form-control-sm c-qty"
-                     style="max-width: 100px;"
-                     value="${r.qty || 0}">
-          </td>
-          <td><input class="form-control form-control-sm c-notes"
-                     value="${frappe.utils.escape_html(r.note || '')}">
-          </td>
+          <td><input class="form-control form-control-sm c-item"  value="${frappe.utils.escape_html(r.item_code || '')}"></td>
+          <td><input class="form-control form-control-sm c-batch" value="${frappe.utils.escape_html(r.batch_no || '')}"></td>
+          <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
+          <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${r.qty || 0}"></td>
+          <td><input class="form-control form-control-sm c-notes" value="${frappe.utils.escape_html(r.note || '')}"></td>
           <td>
             <div class="btn-group">
-              <button class="btn btn-xs btn-default fill">${__('Fill')}</button>
+              <button class="btn btn-xs btn-default fill">Fill</button>
               <button class="btn btn-xs btn-default del">✕</button>
             </div>
           </td>
@@ -331,32 +270,19 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
       `);
 
       // Bind row handlers
-      $tr.find('.c-item').on('change', e => {
-        r.item_code = e.target.value;
-      });
-      $tr.find('.c-batch').on('change', e => {
-        r.batch_no = e.target.value;
-      });
-      $tr.find('.c-uom').on('change', e => {
-        r.uom = e.target.value;
-      });
-      $tr.find('.c-qty').on('change', e => {
-        r.qty = parseFloat(e.target.value || 0);
-      });
-      $tr.find('.c-notes').on('change', e => {
-        r.note = e.target.value;
-      });
-      $tr.find('.del').on('click', () => {
-        state.cart.splice(idx, 1);
-        redraw_cart();
-      });
+      $tr.find('.c-item').on('change', e => { r.item_code = e.target.value; });
+      $tr.find('.c-batch').on('change', e => { r.batch_no = e.target.value; });
+      $tr.find('.c-uom').on('change',   e => { r.uom = e.target.value; });
+      $tr.find('.c-qty').on('change',   e => { r.qty = parseFloat(e.target.value || 0); });
+      $tr.find('.c-notes').on('change', e => { r.note = e.target.value; });
+      $tr.find('.del').on('click', () => { state.cart.splice(idx, 1); redraw_cart(); });
       $tr.find('.fill').on('click', () => set_auto_qty_for_row(idx));
 
       $cart_rows.append($tr);
     });
   }
 
-  async function add_item_to_cart(code) {
+  async function add_item_to_cart(code){
     code = (code || '').trim();
     if (!code) return;
 
@@ -394,22 +320,19 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
     set_auto_qty_for_row(idx);
   }
 
+
   $hub.find('.add-manual').on('click', () => {
     state.cart.push({ item_code: '', batch_no: '', uom: '', qty: 0, note: '' });
     redraw_cart();
   });
 
-  $hub.find('.clear-cart').on('click', () => {
-    state.cart = [];
-    redraw_cart();
-  });
+  $hub.find('.clear-cart').on('click', () => { state.cart = []; redraw_cart(); });
 
   $hub.find('.fill-cart').on('click', async () => {
     if (!state.selected_wos || !state.selected_wos.length) {
       frappe.msgprint(__('Select a WO bucket first.'));
       return;
     }
-
     const codes = state.cart.map(r => r.item_code).filter(Boolean);
     if (!codes.length) return;
 
@@ -419,17 +342,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
     });
 
     const map = {};
-    (r.message || []).forEach(x => {
-      if (x && x.item_code) map[x.item_code] = x;
-    });
-
+    (r.message || []).forEach(x => { if (x && x.item_code) map[x.item_code] = x; });
     state.cart.forEach(row => {
       const m = map[row.item_code];
       if (!m) return;
       if (m.qty > 0) row.qty = m.qty;
       if (!row.uom && m.uom) row.uom = m.uom;
     });
-
     redraw_cart();
   });
 
@@ -441,17 +360,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
   });
 
   // ---------- Allocate & Create Transfers (Option C) ----------
-
   $hub.find('.allocate-create').on('click', async () => {
-    if (!state.cart.length) {
-      return frappe.msgprint(__('Cart is empty.'));
-    }
-    if (!state.selected_bucket || !state.selected_wos.length) {
-      return frappe.msgprint(__('Select a WO bucket and at least one Work Order.'));
-    }
-    if (!src_wh.get_value()) {
-      return frappe.msgprint(__('Please select Source Warehouse.'));
-    }
+    if (!state.cart.length) return frappe.msgprint(__('Cart is empty.'));
+    if (!state.selected_bucket || !state.selected_wos.length) return frappe.msgprint(__('Select a WO bucket and at least one Work Order.'));
+    if (!src_wh.get_value()) return frappe.msgprint(__('Please select Source Warehouse.'));
 
     const args = {
       pallet_id: pallet_id.get_value() || '',
@@ -472,7 +384,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
         const $out = $hub.find('.alloc-results').empty();
 
         if (!transfers || !transfers.length) {
-          $out.append('<div class="muted">Nothing was created (no remaining quantities?).</div>');
+          $out.append(`<div class="muted">Nothing was created (no remaining quantities?).</div>`);
         } else {
           transfers.forEach(se => {
             const $row = $(`
@@ -483,21 +395,17 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
                 </div>
                 <div class="cell">
                   ${frappe.utils.escape_html(se.to_warehouse || '')}<br>
-                  <span class="muted">
-                    ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}
-                  </span>
+                  <span class="muted">${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}</span>
                 </div>
                 <div class="cell">
                   <div class="btn-group">
-                    <button class="btn btn-xs btn-default open">${__('Open')}</button>
-                    <button class="btn btn-xs btn-secondary print">${__('Print')}</button>
+                    <button class="btn btn-xs btn-default open">Open</button>
+                    <button class="btn btn-xs btn-secondary print">Print</button>
                   </div>
                 </div>
               </div>
             `);
-            $row.find('.open').on('click', () =>
-              frappe.set_route('Form', 'Stock Entry', se.name)
-            );
+            $row.find('.open').on('click', () => frappe.set_route('Form', 'Stock Entry', se.name));
             $row.find('.print').on('click', async () => {
               await frappe.call({
                 method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
@@ -508,89 +416,27 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
             $out.append($row);
           });
 
-          // Highlight WOs that actually received transfers with
-          // Allocated (all items) vs Partly Allocated (some items).
-          if (state.selected_bucket) {
-            const woNames = Array.from(
-              new Set(transfers.map(t => t.work_order).filter(Boolean))
-            );
-
-            if (woNames.length) {
-              frappe.call({
-                method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_stage_status_for_wos',
-                args: { wo_names: woNames },
-                callback: (res) => {
-                  const statusMap = {};
-                  (res.message || []).forEach(row => {
-                    statusMap[row.work_order] = row.stage_status;
-                  });
-
-                  const $activeBucket = $hub.find('.bucket.selected');
-                  if (!$activeBucket.length) return;
-
-                  $activeBucket.find('.wo-row').each((_, el) => {
-                    const $row = $(el);
-                    const name = $row.find('.wo-check').data('name');
-                    const stage = statusMap[name];
-
-                    // Clear previous chips
-                    $row
-                      .find('.chip.allocated, .chip.partly-allocated')
-                      .remove();
-
-                    if (!stage) return;
-
-                    let label;
-                    let cls;
-
-                    if (stage === 'Staged') {
-                      label = __('Allocated');
-                      cls = 'allocated';
-                    } else if (stage === 'Partial') {
-                      label = __('Partly Allocated');
-                      cls = 'partly-allocated';
-                    } else {
-                      return;
-                    }
-
-                    const $chip = $(
-                      `<span class="chip ${cls}">${frappe.utils.escape_html(label)}</span>`
-                    );
-                    $row.find('b').after($chip);
-                    $row.addClass('selected').removeClass('unselected');
-                  });
-                }
-              });
-            }
-          }
-
-          // Reset cart after success and refresh side panels
+          // Reset cart after success and refresh buckets + side panels
           state.cart = [];
           redraw_cart();
-          load_staged();
-          load_pallets();
+          refresh();
         }
       }
     });
   });
 
   // ---------- Recently Staged ----------
-
-  async function load_staged() {
+  async function load_staged(){
     $staged.empty().append('<div class="muted">Loading…</div>');
-
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
       args: { routing: state.routing || null, hours: state.hours }
     });
-
     $staged.empty();
-
     (r.message || []).forEach(se => {
-      const open_btn = $(`<button class="btn btn-xs btn-default">${__('Open')}</button>`)
+      const open_btn = $(`<button class="btn btn-xs btn-default">Open</button>`)
         .on('click', () => frappe.set_route('Form', 'Stock Entry', se.name));
-
-      const print_btn = $(`<button class="btn btn-xs btn-secondary">${__('Reprint')}</button>`)
+      const print_btn = $(`<button class="btn btn-xs btn-secondary">Reprint</button>`)
         .on('click', async () => {
           await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
@@ -598,81 +444,41 @@ frappe.pages['storekeeper-hub'].on_page_load = function (wrapper) {
           });
           frappe.show_alert({ message: __('Sent to printer'), indicator: 'green' });
         });
-
-      const info = (se.remarks || '').includes('Pallet:')
-        ? se.remarks
-        : (se.to_warehouse || '');
-
-      $staged.append(
-        $(`
-          <div class="hub-row">
-            <div class="cell">
-              <b>${se.name}</b><br>
-              <span class="muted">${frappe.utils.escape_html(info || '')}</span>
-            </div>
-            <div class="cell">
-              ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}
-            </div>
-            <div class="cell"><div class="btn-group"></div></div>
-          </div>
-        `)
-          .find('.btn-group')
-          .append(open_btn, print_btn)
-          .end()
-      );
+      const info = (se.remarks || '').includes('Pallet:') ? se.remarks : (se.to_warehouse || '');
+      $staged.append($(`
+        <div class="hub-row">
+          <div class="cell"><b>${se.name}</b><br><span class="muted">${frappe.utils.escape_html(info || '')}</span></div>
+          <div class="cell">${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}</div>
+          <div class="cell"><div class="btn-group"></div></div>
+        </div>
+      `).find('.btn-group').append(open_btn, print_btn).end());
     });
-
-    if (!$staged.children().length) {
-      $staged.append('<div class="muted">Nothing staged recently</div>');
-    }
+    if (!$staged.children().length) $staged.append('<div class="muted">Nothing staged recently</div>');
   }
 
   // ---------- Pallet Tracker ----------
-
-  async function load_pallets() {
+  async function load_pallets(){
     $pallets.empty().append('<div class="muted">Loading…</div>');
-
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_pallets',
       args: { routing: state.routing || null, hours: state.hours }
     });
-
     $pallets.empty();
-
     (r.message || []).forEach(p => {
-      const open_btn = $(`<button class="btn btn-xs btn-default">${__('Open')}</button>`)
+      const open_btn = $(`<button class="btn btn-xs btn-default">Open</button>`)
         .on('click', () => frappe.set_route('Form', 'Stock Entry', p.name));
-
-      $pallets.append(
-        $(`
-          <div class="hub-row">
-            <div class="cell">
-              <b>${frappe.utils.escape_html(p.pallet_id || '')}</b><br>
-              <span class="muted">${frappe.utils.escape_html(p.to_warehouse || '')}</span>
-            </div>
-            <div class="cell">
-              ${frappe.datetime.str_to_user(p.posting_date)} ${p.posting_time || ''}
-            </div>
-            <div class="cell"></div>
-          </div>
-        `)
-          .find('.cell:last')
-          .append(open_btn)
-          .end()
-      );
+      $pallets.append($(`
+        <div class="hub-row">
+          <div class="cell"><b>${frappe.utils.escape_html(p.pallet_id || '')}</b><br><span class="muted">${frappe.utils.escape_html(p.to_warehouse || '')}</span></div>
+          <div class="cell">${frappe.datetime.str_to_user(p.posting_date)} ${p.posting_time || ''}</div>
+          <div class="cell"></div>
+        </div>
+      `).find('.cell:last').append(open_btn).end());
     });
-
-    if (!$pallets.children().length) {
-      $pallets.append('<div class="muted">No pallets in the last 24h</div>');
-    }
+    if (!$pallets.children().length) $pallets.append('<div class="muted">No pallets in the last 24h</div>');
   }
 
   // ---------- Initial Paint ----------
-
-  const redraw_and_refresh = () => {
-    redraw_cart();
-    refresh();
-  };
-
+  const redraw_and_refresh = () => { redraw_cart(); refresh(); };
   redraw_and_refresh();
 };

@@ -13,7 +13,7 @@ def _default_company():
 
 
 def _wip_for(wo: dict) -> str:
-    # Prefer WO's wip_warehouse.
+    """Prefer WO's wip_warehouse field."""
     if isinstance(wo, dict):
         wip = wo.get("wip_warehouse")
     else:
@@ -26,9 +26,7 @@ def _required_map_for_wo(wo_name: str) -> dict:
     wo = frappe.get_doc("Work Order", wo_name)
     rows = frappe.db.sql(
         """
-        select bi.item_code,
-               bi.stock_uom,
-               sum(coalesce(bi.qty_consumed_per_unit, 0)) as qty_per_unit
+        select bi.item_code, bi.stock_uom, sum(coalesce(bi.qty_consumed_per_unit, 0)) as qty_per_unit
         from `tabBOM Explosion Item` bi
         where bi.parent = %s
         group by bi.item_code, bi.stock_uom
@@ -46,7 +44,7 @@ def _required_map_for_wo(wo_name: str) -> dict:
 
 
 def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
-    """Return already-transferred qty per item_code to given target warehouse for this WO."""
+    """Return already-transferred qty per item_code into the staging/WIP warehouse for this WO."""
     if not target_wh:
         return {}
     rows = frappe.db.sql(
@@ -67,63 +65,49 @@ def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
 
 
 def _staging_for(wo_doc):
-    """
-    Return staging warehouse from Line Warehouse Map.
-
-    Line Warehouse Map has:
-      - workstation (can store either a Workstation or Routing name)
-      - staging_warehouse
-      - target_warehouse
-    """
-    keys = []
-
-    routing = getattr(wo_doc, "routing", None)
-    if routing:
-        keys.append(routing)
-
-    ops = getattr(wo_doc, "operations", None) or []
-    for op in ops:
-        ws = getattr(op, "workstation", None)
-        if ws:
-            keys.append(ws)
-            break
-
-    if not keys:
-        return None
-
+    """Return staging warehouse from Factory Settings -> Line Warehouse Map (by workstation)."""
+    # Child table for Factory Settings line_warehouse_map
     rows = frappe.get_all(
         "Line Warehouse Map",
-        fields=["workstation", "staging_warehouse", "target_warehouse"],
-        filters={"workstation": ["in", keys]},
+        fields=["workstation", "staging_warehouse"],
+        filters={},
     )
     if not rows:
         return None
 
-    row = rows[0]
-    # Prefer explicit staging_warehouse, otherwise fall back to target_warehouse if set
-    return row.get("staging_warehouse") or row.get("target_warehouse")
+    # Determine workstation / line for this WO:
+    workstation = None
 
+    # If you use a custom_line field on Work Order, prefer that
+    if getattr(wo_doc, "custom_line", None):
+        workstation = wo_doc.custom_line
 
-def _target_wh_for(wo_doc) -> str:
-    """
-    Warehouse used for Storekeeper staging/transfer:
-    - Staging Warehouse from Line Warehouse Map, if mapped
-    - else WO's WIP Warehouse
-    """
-    staging = _staging_for(wo_doc)
-    wip = _wip_for(wo_doc)
-    return staging or wip or ""
+    # Fallback to first operation's workstation
+    if not workstation and getattr(wo_doc, "operations", None):
+        try:
+            if wo_doc.operations:
+                workstation = wo_doc.operations[0].workstation
+        except Exception:
+            workstation = None
+
+    if not workstation:
+        return None
+
+    for r in rows:
+        if r.workstation == workstation:
+            return r.staging_warehouse or None
+
+    return None
 
 
 def _remaining_map_for_wo(wo_name: str) -> dict:
-    """
-    Remaining qty per item_code for staging (never negative).
+    """Remaining qty per item_code for staging (never negative).
 
-    Uses the same target warehouse as Storekeeper transfers:
-    Staging (if mapped) else WIP.
+    We look at transfers into the WO's staging warehouse (from Factory Settings
+    Line Warehouse Map) if configured, otherwise its WIP warehouse.
     """
     wo = frappe.get_doc("Work Order", wo_name)
-    target_wh = _target_wh_for(wo)
+    target_wh = _staging_for(wo) or _wip_for(wo)
     req = _required_map_for_wo(wo_name)
     have = _transferred_map_for_wo(wo_name, target_wh) if target_wh else {}
     out = {}
@@ -134,24 +118,38 @@ def _remaining_map_for_wo(wo_name: str) -> dict:
     return out
 
 
-def _stage_status(work_order_name: str, target_wh: str) -> str:
+def _stage_status(work_order_name: str) -> str:
+    """Return 'Not Staged' | 'Partial' | 'Staged' for this WO.
+
+    We consider transfers into the WO's staging warehouse (Factory Settings →
+    Line Warehouse Map) if present, otherwise its WIP warehouse.
     """
-    Return 'Not Staged' | 'Partial' | 'Staged' based on Material Transfers
-    to the Storekeeper's target warehouse (Staging or WIP).
-    """
+    wo = frappe.get_doc("Work Order", work_order_name)
+    target_wh = _staging_for(wo) or _wip_for(wo)
     if not target_wh:
         return "Not Staged"
 
+    rows = frappe.db.sql(
+        """
+        select sei.item_code, sum(sei.qty) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sei on sei.parent = se.name
+        where se.docstatus = 1
+          and se.purpose = 'Material Transfer for Manufacture'
+          and se.work_order = %s
+          and coalesce(sei.t_warehouse, se.to_warehouse) = %s
+        group by sei.item_code
+        """,
+        (work_order_name, target_wh),
+        as_dict=True,
+    )
+    if not rows:
+        return "Not Staged"
+
     req = _required_map_for_wo(work_order_name)
-    if not req:
-        return "Not Staged"
-
-    have_map = _transferred_map_for_wo(work_order_name, target_wh)
-    if not have_map:
-        return "Not Staged"
-
+    have_map = {r.item_code: float(r.qty or 0) for r in rows}
     partial = any(
-        float(have_map.get(item, 0.0)) < float(info["qty"]) - 1e-9
+        have_map.get(item, 0.0) < float(info["qty"]) - 1e-9
         for item, info in req.items()
     )
     return "Partial" if partial else "Staged"
@@ -193,10 +191,7 @@ def _filter_wos_by_routing(wos, routing):
 
 @frappe.whitelist()
 def get_queue(routing: str | None = None):
-    """
-    Work Orders Not Started/In Process; normalized for UI;
-    optional filter by BOM.routing.
-    """
+    """Work Orders Not Started/In Process; normalized for UI; optional filter by BOM.routing."""
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
     if company:
@@ -224,10 +219,9 @@ def get_queue(routing: str | None = None):
         w["item_code"] = w.get("production_item")
         w["uom"] = w.get("stock_uom")
         try:
-            wo_doc = frappe.get_doc("Work Order", w["name"])
-            target_wh = _target_wh_for(wo_doc)
-            w["stage_status"] = _stage_status(w["name"], target_wh) if target_wh else "Not Staged"
+            w["stage_status"] = _stage_status(w["name"])
         except Exception:
+            # Fallback: if anything has ever been transferred, treat as Partial
             w["stage_status"] = (
                 "Partial"
                 if frappe.db.exists(
@@ -270,26 +264,6 @@ def get_buckets(routing: str | None = None):
 
     wos = _filter_wos_by_routing(wos, routing)
 
-    # Annotate each WO with stage_status so UI can show Allocated / Partly Allocated
-    for w in wos:
-        try:
-            wo_doc = frappe.get_doc("Work Order", w["name"])
-            target_wh = _target_wh_for(wo_doc)
-            w["stage_status"] = _stage_status(w["name"], target_wh) if target_wh else "Not Staged"
-        except Exception:
-            w["stage_status"] = (
-                "Partial"
-                if frappe.db.exists(
-                    "Stock Entry",
-                    {
-                        "work_order": w["name"],
-                        "purpose": "Material Transfer for Manufacture",
-                        "docstatus": 1,
-                    },
-                )
-                else "Not Staged"
-            )
-
     buckets = {}
     for w in wos:
         key = w["bom_no"]
@@ -304,6 +278,23 @@ def get_buckets(routing: str | None = None):
             }
         w["item_code"] = w["production_item"]
         w["uom"] = w.get("stock_uom")
+
+        try:
+            w["stage_status"] = _stage_status(w["name"])
+        except Exception:
+            w["stage_status"] = (
+                "Partial"
+                if frappe.db.exists(
+                    "Stock Entry",
+                    {
+                        "work_order": w["name"],
+                        "purpose": "Material Transfer for Manufacture",
+                        "docstatus": 1,
+                    },
+                )
+                else "Not Staged"
+            )
+
         buckets[key]["wos"].append(w)
         buckets[key]["total_qty"] += float(w["qty"] or 0)
 
@@ -317,12 +308,7 @@ def create_consolidated_transfers(
     selected_wos=None,
     items=None,
 ):
-    """
-    Option C: fan-out one physical pick into multiple WO-linked Stock Entries.
-
-    Uses Staging warehouse from Line Warehouse Map for the WO's workstation/routing
-    if available, otherwise the WO's WIP warehouse.
-    """
+    """Option C: fan-out one physical pick into multiple WO-linked Stock Entries."""
     # Parse inputs (may arrive as JSON strings)
     if isinstance(selected_wos, str):
         selected_wos = json.loads(selected_wos or "[]")
@@ -370,7 +356,10 @@ def create_consolidated_transfers(
             continue
         wo_doc = frappe.get_doc("Work Order", wo)
 
-        target_wh = _target_wh_for(wo_doc)
+        target_staging = _staging_for(wo_doc)
+        target_wip = _wip_for(wo_doc)
+        target_wh = target_staging or target_wip
+
         if not target_wh:
             frappe.throw(_("No Staging or WIP warehouse configured for WO {0}").format(wo))
 
@@ -419,17 +408,11 @@ def get_recent_transfers(routing: str | None = None, hours: int = 24):
     since = add_to_date(now_datetime(), hours=-int(hours))
     if routing:
         q = """
-            select se.name,
-                   se.posting_date,
-                   se.posting_time,
-                   se.to_warehouse,
-                   se.remarks,
-                   se.work_order
+            select se.name, se.posting_date, se.posting_time, se.to_warehouse, se.remarks, se.work_order
             from `tabStock Entry` se
             left join `tabWork Order` wo on wo.name = se.work_order
             left join `tabBOM` bom on bom.name = wo.bom_no
-            where se.docstatus = 1
-              and se.purpose = 'Material Transfer for Manufacture'
+            where se.docstatus=1 and se.purpose='Material Transfer for Manufacture'
               and se.modified >= %s
               and bom.routing = %s
             order by se.modified desc
@@ -438,15 +421,9 @@ def get_recent_transfers(routing: str | None = None, hours: int = 24):
         se_list = frappe.db.sql(q, (since, routing), as_dict=True)
     else:
         q = """
-            select se.name,
-                   se.posting_date,
-                   se.posting_time,
-                   se.to_warehouse,
-                   se.remarks,
-                   se.work_order
+            select se.name, se.posting_date, se.posting_time, se.to_warehouse, se.remarks, se.work_order
             from `tabStock Entry` se
-            where se.docstatus = 1
-              and se.purpose = 'Material Transfer for Manufacture'
+            where se.docstatus=1 and se.purpose='Material Transfer for Manufacture'
               and se.modified >= %s
             order by se.modified desc
             limit 50
@@ -457,22 +434,14 @@ def get_recent_transfers(routing: str | None = None, hours: int = 24):
 
 @frappe.whitelist()
 def get_recent_pallets(routing: str | None = None, hours: int = 24):
-    """
-    List Material Transfers that include 'Pallet:' in remarks,
-    optionally filtered by BOM.routing.
-    """
+    """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by BOM.routing."""
     if routing:
         q = """
-            select se.name,
-                   se.posting_date,
-                   se.posting_time,
-                   se.to_warehouse,
-                   se.remarks
+            select se.name, se.posting_date, se.posting_time, se.to_warehouse, se.remarks
             from `tabStock Entry` se
             left join `tabWork Order` wo on wo.name = se.work_order
             left join `tabBOM` bom on bom.name = wo.bom_no
-            where se.docstatus = 1
-              and se.purpose = 'Material Transfer for Manufacture'
+            where se.docstatus=1 and se.purpose='Material Transfer for Manufacture'
               and bom.routing = %s
             order by se.modified desc
             limit 100
@@ -520,7 +489,7 @@ def find_se_by_item_row(rowname: str):
     return parent
 
 
-# --- Remaining requirement helpers (for auto-fill) ---------------------------
+# --- NEW: Remaining requirement helpers (for auto-fill) ----------------------
 
 
 @frappe.whitelist()
@@ -575,47 +544,4 @@ def get_consolidated_remaining_bulk(selected_wos=None, item_codes=None):
     out = []
     for code in item_codes:
         out.append(get_consolidated_remaining(selected_wos=selected_wos, item_code=code))
-    return out
-
-
-@frappe.whitelist()
-def get_stage_status_for_wos(wo_names=None):
-    """
-    Return staging status for a list of Work Orders.
-
-    Used by the Storekeeper Hub to show Allocated / Partly Allocated chips
-    immediately after creating transfers.
-    """
-    if isinstance(wo_names, str):
-        try:
-            wo_names = json.loads(wo_names or "[]")
-        except Exception:
-            wo_names = []
-    wo_names = wo_names or []
-
-    out = []
-    for name in wo_names:
-        try:
-            wo_doc = frappe.get_doc("Work Order", name)
-        except Exception:
-            continue
-
-        target_wh = _target_wh_for(wo_doc)
-        try:
-            status = _stage_status(name, target_wh) if target_wh else "Not Staged"
-        except Exception:
-            status = (
-                "Partial"
-                if frappe.db.exists(
-                    "Stock Entry",
-                    {
-                        "work_order": name,
-                        "purpose": "Material Transfer for Manufacture",
-                        "docstatus": 1,
-                    },
-                )
-                else "Not Staged"
-            )
-        out.append({"work_order": name, "stage_status": status})
-
     return out
