@@ -19,7 +19,8 @@ def _fs():
     except Exception:
         # If not installed yet, return a dummy object with attributes returning None
         class _Dummy:
-            def __getattr__(self, _): return None
+            def __getattr__(self, _):
+                return None
         return _Dummy()
 
 def _consume_on_scan() -> bool:
@@ -43,7 +44,7 @@ def _allowed_groups_global() -> set[str]:
     """
     fs = _fs()
     rows = getattr(fs, "allowed_item_groups", []) or []
-    out = set()
+    out: set[str] = set()
     for r in rows:
         ig = getattr(r, "item_group", None)
         if ig:
@@ -54,7 +55,7 @@ def _packaging_groups_global() -> set[str]:
     """From Factory Settings -> Packaging Item Groups (Table MultiSelect)."""
     fs = _fs()
     rows = getattr(fs, "packaging_item_groups", []) or []
-    out = set()
+    out: set[str] = set()
     for r in rows:
         ig = getattr(r, "item_group", None)
         if ig:
@@ -65,27 +66,31 @@ def _backflush_groups_global() -> set[str]:
     """From Factory Settings -> Backflush Item Groups (Table MultiSelect)."""
     fs = _fs()
     rows = getattr(fs, "backflush_item_groups", []) or []
-    out = set()
+    out: set[str] = set()
     for r in rows:
         ig = getattr(r, "item_group", None)
         if ig:
             out.add(str(ig).strip().lower())
     return out
 
-def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Factory Settings -> Line Warehouse Map child table.
-    Child rows expected: line (Workstation), staging_warehouse, wip_warehouse
+    Child rows expected: line (Workstation), staging_warehouse, wip_warehouse, target_warehouse
+    Returns (staging, wip, target).
     """
     if not line:
-        return None, None
+        return None, None, None
     fs = _fs()
     rows = getattr(fs, "line_warehouse_map", []) or []
     for r in rows:
         if (getattr(r, "line", None) or "").strip().lower() == str(line).strip().lower():
-            return (getattr(r, "staging_warehouse", None) or None,
-                    getattr(r, "wip_warehouse", None) or None)
-    return None, None
+            return (
+                getattr(r, "staging_warehouse", None) or None,
+                getattr(r, "wip_warehouse", None) or None,
+                getattr(r, "target_warehouse", None) or None,
+            )
+    return None, None, None
 
 # ============================================================
 # Generic helpers
@@ -128,13 +133,39 @@ def _employee_or_user_default(employee: Optional[str]) -> Optional[str]:
 
 def _default_line_staging(work_order: str, *, is_packaging: bool = False) -> Optional[str]:
     line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
-    staging, _wip = _warehouses_for_line(line)
+    staging, _wip, _target = _warehouses_for_line(line)
     return staging or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_wip(work_order: str) -> Optional[str]:
     line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
-    _staging, wip = _warehouses_for_line(line)
+    _staging, wip, _target = _warehouses_for_line(line)
     return wip or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+
+def _default_line_target(work_order: str) -> Optional[str]:
+    """Default FG/SFG output warehouse for a WO based on its line."""
+    line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+    _staging, _wip, target = _warehouses_for_line(line)
+    return target or None
+
+def _default_sfg_source(work_order: str) -> Optional[str]:
+    """
+    Default source warehouse for semi-finished (slurry / rice mix) consumption.
+    Order:
+      1) Factory Settings.default_semi_finished_warehouse
+      2) Warehouse named 'Semi-finished - ISN' if it exists
+      3) Stock Settings default warehouse
+    """
+    fs = _fs()
+    wh = getattr(fs, "default_semi_finished_warehouse", None)
+    if wh:
+        return wh
+    try:
+        if frappe.db.exists("Warehouse", "Semi-finished - ISN"):
+            return "Semi-finished - ISN"
+    except Exception:
+        # Fallback to default warehouse
+        pass
+    return frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     bom = frappe.db.get_value("Work Order", work_order, "bom_no")
@@ -146,7 +177,8 @@ def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     return True, "OK"
 
 def _parse_gs1_or_basic(code: str) -> dict:
-    out, s = {}, code or ""
+    out: dict = {}
+    s = code or ""
     if s.startswith(("]d2", "]C1", "]Q3")):
         s = s[3:]
 
@@ -503,11 +535,15 @@ def set_card_status(
         frappe.throw(_("Unknown action"))
 
     if remarks:
-        try: jc.db_set("mes_remarks", remarks, commit=False)
-        except Exception: pass
+        try:
+            jc.db_set("mes_remarks", remarks, commit=False)
+        except Exception:
+            pass
     if reason:
-        try: jc.db_set("mes_reason", reason, commit=False)
-        except Exception: pass
+        try:
+            jc.db_set("mes_reason", reason, commit=False)
+        except Exception:
+            pass
 
     jc.flags.ignore_permissions = True
     jc.save()
@@ -566,11 +602,11 @@ def get_sfg_components_for_wo(work_order: str):
 
     return {"items": items}
 
-def _post_sfg_consumption(wo: "Work Order", rows: list[dict]):
+def _post_sfg_consumption(wo, rows: list[dict]):
     """Post Material Consumption for Manufacture for semi-finished items.
 
     Expects rows like: {"item_code": "SFG10003", "qty": 123.45}.
-    We consume from 'Semi-finished - ISN' into the line's WIP (or default warehouse).
+    We consume from the configured semi-finished warehouse into the line's WIP (or default warehouse).
     """
     if not rows:
         return
@@ -580,8 +616,8 @@ def _post_sfg_consumption(wo: "Work Order", rows: list[dict]):
     if not t_wh:
         t_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
-    # Default SFG source – adjust or make configurable if needed
-    default_sfg_wh = "Semi-finished - ISN"
+    # Default SFG source – from Factory Settings, or Semi-finished - ISN, or default
+    default_sfg_wh = _default_sfg_source(wo.name)
 
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
@@ -729,7 +765,6 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         frappe.log_error(frappe.get_traceback(), "iSnack scan_material")
         return {"ok": False, "msg": _("Scan failed")}
 
-
 @frappe.whitelist()
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
     _require_roles(["Stores User", *ROLES_OPERATOR])
@@ -764,7 +799,7 @@ def set_wo_status(work_order, action, reason=None, remarks=None):
     _require_roles(ROLES_OPERATOR)
     wo = frappe.get_doc("Work Order", work_order)
 
-    updates = {}
+    updates: dict = {}
     if action:  updates["mes_status"]  = action
     if reason:  updates["mes_reason"]  = reason
     if remarks: updates["mes_remarks"] = remarks
@@ -810,10 +845,14 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         frappe.throw(_("Rejects cannot be negative"))
 
     wo = frappe.get_doc("Work Order", work_order)
-    fg_wh = wo.fg_warehouse or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    fg_wh = (
+        wo.fg_warehouse
+        or _default_line_target(work_order)
+        or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    )
     uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
 
-    # 1) Manufacture (FG receipt)
+    # 1) Manufacture (FG/SFG receipt)
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Manufacture"
@@ -830,7 +869,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     })
 
     se.flags.ignore_permissions = True
-    se.insert()
+       se.insert()
     se.submit()
 
     # 2) Semi-finished usage (slurry / rice mix etc.) if provided

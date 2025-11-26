@@ -14,6 +14,7 @@
   "backflush_item_groups",
   "allowed_item_groups",
   "per_line_rules_section",
+  "default_semi_finished_warehouse",
   "line_warehouse_map",
   "label_printing_section",
   "default_label_template",
@@ -93,13 +94,19 @@
    "fieldname": "default_label_printer",
    "fieldtype": "Data",
    "label": "Default Label Printer"
+  },
+  {
+   "fieldname": "default_semi_finished_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Semi-finished Warehouse",
+   "options": "Warehouse"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-26 15:58:32.786367",
+ "modified": "2025-11-26 17:10:31.652857",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",

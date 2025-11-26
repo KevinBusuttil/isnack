@@ -8,7 +8,8 @@
  "field_order": [
   "workstation",
   "staging_warehouse",
-  "wip_warehouse"
+  "wip_warehouse",
+  "target_warehouse"
  ],
  "fields": [
   {
@@ -34,13 +35,20 @@
    "in_standard_filter": 1,
    "label": "WIP Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "target_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target Warehouse",
+   "options": "Warehouse"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-26 16:01:32.261883",
+ "modified": "2025-11-26 17:10:51.500679",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Line Warehouse Map",
