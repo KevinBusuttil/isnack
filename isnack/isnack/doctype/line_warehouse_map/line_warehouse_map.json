@@ -22,12 +22,16 @@
   {
    "fieldname": "staging_warehouse",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Staging Warehouse",
    "options": "Warehouse"
   },
   {
    "fieldname": "wip_warehouse",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "WIP Warehouse",
    "options": "Warehouse"
   }
@@ -36,7 +40,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-25 20:48:14.648585",
+ "modified": "2025-11-26 16:01:32.261883",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Line Warehouse Map",
