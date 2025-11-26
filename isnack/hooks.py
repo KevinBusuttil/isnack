@@ -125,6 +125,13 @@ override_doctype_class = {
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+    "Work Order": {
+        "before_insert": "isnack.api.mes_ops.apply_line_warehouses_to_work_order",
+        "validate": "isnack.api.mes_ops.apply_line_warehouses_to_work_order",
+    }
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",

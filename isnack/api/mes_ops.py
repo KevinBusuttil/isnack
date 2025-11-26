@@ -84,7 +84,7 @@ def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[s
     fs = _fs()
     rows = getattr(fs, "line_warehouse_map", []) or []
     for r in rows:
-        if (getattr(r, "line", None) or "").strip().lower() == str(line).strip().lower():
+        if (getattr(r, "workstation", None) or "").strip().lower() == str(line).strip().lower():
             return (
                 getattr(r, "staging_warehouse", None) or None,
                 getattr(r, "wip_warehouse", None) or None,
@@ -869,7 +869,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     })
 
     se.flags.ignore_permissions = True
-       se.insert()
+    se.insert()
     se.submit()
 
     # 2) Semi-finished usage (slurry / rice mix etc.) if provided
@@ -1087,3 +1087,50 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
     se.insert()
     se.submit()
     return {"ok": True, "stock_entry": se.name}
+
+
+def apply_line_warehouses_to_work_order(doc, method=None):
+    """
+    Auto-fill Work Order WIP / Target warehouses from Factory Settings → Line Warehouse Map.
+
+    Logic:
+      1) Determine the line for this WO:
+           - Prefer doc.custom_line (your line field).
+           - Else, fall back to the first operation's workstation.
+      2) Look up (staging, wip, target) from _warehouses_for_line(line).
+      3) If we have values:
+           - On NEW docs (doc.__islocal), override whatever is there (including
+             Manufacturing Settings defaults).
+           - On existing Draft docs, only fill if fields are empty.
+    """
+
+    # 1) Find the line
+    line = getattr(doc, "custom_line", None)
+    if not line and getattr(doc, "operations", None):
+        for op in doc.operations:
+            ws = getattr(op, "workstation", None)
+            if ws:
+                line = ws
+                break
+
+    if not line:
+        return  # nothing to map
+
+    # 2) Get warehouses from Factory Settings → Line Warehouse Map
+    _staging, wip, target = _warehouses_for_line(line)
+    print(f'_staging, wip, target : {line} {_staging} {wip} {target}')
+    if not (wip or target):
+        return
+
+    is_new = bool(getattr(doc, "__islocal", False))
+
+    # 3) Apply mapping
+    # Work-in-Progress Warehouse
+    if wip:
+        if is_new or not getattr(doc, "wip_warehouse", None):
+            doc.wip_warehouse = wip
+
+    # Target / FG Warehouse
+    if target:
+        if is_new or not getattr(doc, "fg_warehouse", None):
+            doc.fg_warehouse = target
