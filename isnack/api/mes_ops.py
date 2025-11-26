@@ -1,4 +1,3 @@
-# apps/isnack/isnack/api/mes_ops.py
 from __future__ import annotations
 
 import hashlib
@@ -515,6 +514,117 @@ def set_card_status(
     return True
 
 # ============================================================
+# New: Semi-finished (SFG) helpers
+# ============================================================
+
+@frappe.whitelist()
+def get_sfg_components_for_wo(work_order: str):
+    """Return BOM components for this WO that should be treated as semi-finished.
+
+    Heuristic:
+      - Start from the WO's BOM.
+      - Exclude items in Packaging / Backflush item groups.
+      - Include components that themselves have a default active BOM (i.e. SFGs).
+    """
+    bom_no = frappe.db.get_value("Work Order", work_order, "bom_no")
+    if not bom_no:
+        return {"items": []}
+
+    try:
+        bom = frappe.get_doc("BOM", bom_no)
+    except Exception:
+        return {"items": []}
+
+    packaging_groups = _packaging_groups_global()
+    backflush_groups = _backflush_groups_global()
+
+    items: list[dict] = []
+    for row in bom.items:
+        ig = _get_item_group(row.item_code) or ""
+        group = ig.strip().lower()
+        # skip packaging/backflush groups
+        if group in packaging_groups or group in backflush_groups:
+            continue
+
+        # Treat "has its own default BOM" as semi-finished
+        has_child_bom = bool(
+            frappe.db.exists(
+                "BOM",
+                {"item": row.item_code, "is_active": 1, "is_default": 1},
+            )
+        )
+        if not has_child_bom:
+            continue
+
+        items.append(
+            {
+                "item_code": row.item_code,
+                "item_name": row.get("item_name") or row.item_code,
+                "uom": row.uom or frappe.db.get_value("Item", row.item_code, "stock_uom") or "Nos",
+            }
+        )
+
+    return {"items": items}
+
+def _post_sfg_consumption(wo: "Work Order", rows: list[dict]):
+    """Post Material Consumption for Manufacture for semi-finished items.
+
+    Expects rows like: {"item_code": "SFG10003", "qty": 123.45}.
+    We consume from 'Semi-finished - ISN' into the line's WIP (or default warehouse).
+    """
+    if not rows:
+        return
+
+    # Line WIP (target) – fall back to Stock Settings default if not mapped
+    t_wh = _default_line_wip(wo.name)
+    if not t_wh:
+        t_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
+
+    # Default SFG source – adjust or make configurable if needed
+    default_sfg_wh = "Semi-finished - ISN"
+
+    se = frappe.new_doc("Stock Entry")
+    se.company = wo.company
+    se.purpose = "Material Consumption for Manufacture"
+    se.work_order = wo.name
+
+    for r in rows:
+        item_code = (r.get("item_code") or "").strip()
+        if not item_code:
+            continue
+        try:
+            qty = float(r.get("qty") or 0)
+        except Exception:
+            qty = 0.0
+        if qty <= 0:
+            continue
+
+        ok, msg = _validate_item_in_bom(wo.name, item_code)
+        if not ok:
+            frappe.throw(msg)
+
+        uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+
+        se.append(
+            "items",
+            {
+                "item_code": item_code,
+                "qty": qty,
+                "uom": uom,
+                "s_warehouse": default_sfg_wh,
+                # t_warehouse is optional for Consumption; set if you want clearer audit trail
+                "t_warehouse": t_wh,
+            },
+        )
+
+    if not se.items:
+        return
+
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+
+# ============================================================
 # Scanning, requests, labels, completion  (JC-aware)
 # ============================================================
 
@@ -529,7 +639,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
       - Posts either:
           * "Material Consumption for Manufacture" (consume_on_scan = 1), or
           * "Material Transfer for Manufacture"   (consume_on_scan = 0)
-        with warehouses derived from Factory Settings → Line Warehouse Map, falling
+        with warehouses derived from Factory Settings -> Line Warehouse Map, falling
         back to Stock Settings default warehouse.
       - Soft idempotency: ignores duplicates within the configured TTL.
     Returns: {"ok": bool, "msg": str}
@@ -557,7 +667,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         if frappe.db.get_value("Item", item_code, "has_batch_no") and not parsed.get("batch_no"):
             return {"ok": False, "msg": _("Batch number required for {0}").format(item_code)}
 
-        # Global Item Group allowlist (Factory Settings → Allowed Item Groups)
+        # Global Item Group allowlist (Factory Settings -> Allowed Item Groups)
         group = (_get_item_group(item_code) or "").strip().lower()
         allowed_groups = _allowed_groups_global()
         if allowed_groups and group not in allowed_groups:
@@ -689,7 +799,7 @@ def get_wo_progress(work_order):
     return {"target": target, "actual": float(actual), "remaining": remaining}
 
 @frappe.whitelist()
-def complete_work_order(work_order, good, rejects=0, remarks=None):
+def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=None):
     _require_roles(ROLES_OPERATOR)
 
     good = float(good or 0)
@@ -703,6 +813,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None):
     fg_wh = wo.fg_warehouse or frappe.db.get_single_value("Stock Settings", "default_warehouse")
     uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
 
+    # 1) Manufacture (FG receipt)
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Manufacture"
@@ -719,8 +830,24 @@ def complete_work_order(work_order, good, rejects=0, remarks=None):
     })
 
     se.flags.ignore_permissions = True
-    se.insert(); se.submit()
+    se.insert()
+    se.submit()
 
+    # 2) Semi-finished usage (slurry / rice mix etc.) if provided
+    sfg_rows: list[dict] = []
+    if sfg_usage:
+        if isinstance(sfg_usage, str):
+            try:
+                sfg_rows = json.loads(sfg_usage) or []
+            except Exception:
+                sfg_rows = []
+        elif isinstance(sfg_usage, (list, tuple)):
+            sfg_rows = list(sfg_usage)
+
+    if sfg_rows:
+        _post_sfg_consumption(wo, sfg_rows)
+
+    # 3) Remarks + rejects
     if remarks:
         try:
             wo.db_set("remarks", remarks, commit=False)

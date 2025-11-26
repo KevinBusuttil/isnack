@@ -501,25 +501,85 @@ function init_operator_hub($root) {
     d.show();
   });
 
+  // >>> NEW: Close / End Work Order with semi-finished usage <<<
   $('#btn-close',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+
+    // Get remaining qty as default for "Good"
     let remainingDefault = 0;
-    try { const r = await rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo });
-      remainingDefault = (r.message && r.message.remaining) || 0; } catch {}
+    try {
+      const r = await rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo });
+      remainingDefault = (r.message && r.message.remaining) || 0;
+    } catch (e) {
+      console.warn('get_wo_progress failed', e);
+    }
+
+    // Get semi-finished components (slurry / rice mix etc.) for this WO
+    let sfgRows = [];
+    try {
+      const r2 = await rpc('isnack.api.mes_ops.get_sfg_components_for_wo', { work_order: state.current_wo });
+      sfgRows = (r2.message && r2.message.items) || [];
+    } catch (e) {
+      console.warn('get_sfg_components_for_wo failed', e);
+    }
+
+    const fields = [
+      { label:'Good Qty', fieldname:'good', fieldtype:'Float', reqd:1, default: remainingDefault },
+      { label:'Rejects',  fieldname:'rejects', fieldtype:'Float', default: 0 },
+      { label:'Remarks',  fieldname:'remarks', fieldtype:'Small Text' },
+    ];
+
+    if (sfgRows.length) {
+      fields.push({ fieldtype: 'Section Break', label: 'Semi-finished usage (slurry / rice mix)' });
+      fields.push({ fieldtype: 'HTML', fieldname: 'sfg_help' });
+
+      sfgRows.forEach((row, idx) => {
+        fields.push({
+          label: `${(row.item_code || '')} — ${(row.item_name || '')}`,
+          fieldname: `sfg_${idx}`,
+          fieldtype: 'Float',
+          default: 0,
+          description: row.uom ? `UOM: ${row.uom}` : '',
+        });
+      });
+    }
+
     const d = new frappe.ui.Dialog({
       title:'Close / End Work Order',
-      fields: [
-        { label:'Good Qty', fieldname:'good', fieldtype:'Float', reqd:1, default: remainingDefault },
-        { label:'Rejects',  fieldname:'rejects', fieldtype:'Float', default: 0 },
-        { label:'Remarks',  fieldname:'remarks', fieldtype:'Small Text' }
-      ],
+      fields,
       primary_action_label:'Complete',
       primary_action: (v) => {
         setStatus('Completing work order…');
-        rpc('isnack.api.mes_ops.complete_work_order', { work_order: state.current_wo, ...v })
-          .then(() => { d.hide(); flashStatus(`Completed — ${state.current_wo}`, 'success'); load_queue(); });
+
+        const sfgUsage = [];
+        sfgRows.forEach((row, idx) => {
+          const key = `sfg_${idx}`;
+          const rawVal = v[key];
+          const qty = parseFloat(rawVal || 0);
+          if (qty > 0) {
+            sfgUsage.push({ item_code: row.item_code, qty: qty });
+          }
+        });
+
+        rpc('isnack.api.mes_ops.complete_work_order', {
+          work_order: state.current_wo,
+          good: v.good,
+          rejects: v.rejects,
+          remarks: v.remarks,
+          sfg_usage: JSON.stringify(sfgUsage),
+        }).then(() => {
+          d.hide();
+          flashStatus(`Completed — ${state.current_wo}`, 'success');
+          load_queue();
+        });
       }
     });
+
+    const f = d.get_field('sfg_help');
+    if (f && f.$wrapper) {
+      f.$wrapper.html('<div class="text-muted small mb-2">Enter the actual quantities of semi-finished materials used. They will be consumed from the Semi-finished warehouse.</div>');
+    }
+
     d.show();
   });
 
