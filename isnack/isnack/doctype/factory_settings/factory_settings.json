@@ -62,7 +62,7 @@
   },
   {
    "fieldname": "line_warehouse_map",
-   "fieldtype": "Table MultiSelect",
+   "fieldtype": "Table",
    "label": "Line Warehouse Map",
    "options": "Line Warehouse Map"
   },
@@ -99,7 +99,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-25 21:30:48.572414",
+ "modified": "2025-11-26 15:58:32.786367",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",
