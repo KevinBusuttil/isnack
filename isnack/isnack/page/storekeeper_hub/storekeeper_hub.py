@@ -2,6 +2,7 @@ import json
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr
+from frappe.utils.print_format import print_by_server 
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -190,12 +191,27 @@ def _filter_wos_by_routing(wos, routing):
 
 
 @frappe.whitelist()
-def get_queue(routing: str | None = None):
-    """Work Orders Not Started/In Process; normalized for UI; optional filter by BOM.routing."""
+def get_queue(routing: str | None = None, posting_date: str | None = None):
+    """Work Orders Not Started/In Process; normalized for UI; optional filter by BOM.routing
+    and Production Plan posting_date.
+    """
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
     if company:
         filters["company"] = company
+
+    # NEW: filter WOs by Production Plan posting_date, if provided
+    if posting_date:
+        pp_names = frappe.get_all(
+            "Production Plan",
+            filters={"posting_date": posting_date},
+            pluck="name",
+        )
+        if not pp_names:
+            # No Production Plans on that date => no WOs to return
+            return []
+        filters["production_plan"] = ["in", pp_names]
+
     wos = frappe.get_all(
         "Work Order",
         filters=filters,
@@ -209,6 +225,7 @@ def get_queue(routing: str | None = None):
             "planned_start_date",
             "company",
             "bom_no",
+            "production_plan",
         ],
         order_by="planned_start_date asc, creation asc",
     )
@@ -238,12 +255,25 @@ def get_queue(routing: str | None = None):
 
 
 @frappe.whitelist()
-def get_buckets(routing: str | None = None):
-    """Group open WOs by BOM (same-BOM bucket)."""
+def get_buckets(routing: str | None = None, posting_date: str | None = None):
+    """Group open WOs by BOM (same-BOM bucket), optionally filtered by BOM.routing
+    and Production Plan posting_date.
+    """
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
     if company:
         filters["company"] = company
+
+    # NEW: filter WOs by Production Plan posting_date, if provided
+    if posting_date:
+        pp_names = frappe.get_all(
+            "Production Plan",
+            filters={"posting_date": posting_date},
+            pluck="name",
+        )
+        if not pp_names:
+            return []
+        filters["production_plan"] = ["in", pp_names]
 
     wos = frappe.get_all(
         "Work Order",
@@ -258,6 +288,7 @@ def get_buckets(routing: str | None = None):
             "planned_start_date",
             "wip_warehouse",
             "company",
+            "production_plan",
         ],
         order_by="planned_start_date asc, creation asc",
     )
@@ -477,10 +508,28 @@ def get_recent_pallets(routing: str | None = None, hours: int = 24):
 
 @frappe.whitelist()
 def print_labels(stock_entry: str):
-    """Server-side print with your Raw print format. Requires Print Settings and QZ Tray trust."""
-    fmt = "Pallet Label – Material Transfer"
-    frappe.printing.print_by_server(doctype="Stock Entry", name=stock_entry, print_format=fmt)
+    """Server-side network printing for pallet labels.
+
+    Uses the Raw Print Format 'Pallet Label – Material Transfer' and the
+    default Network Printer configured in Print Settings.
+    """
+    fmt = "Pallet Label Material Transfer"
+
+    # Get default Network Printer (Print Settings → Network Printer / Print Server)
+    printer_setting = frappe.db.get_single_value("Print Settings", "default_printer")
+    if not printer_setting:
+        frappe.throw(
+            _(
+                "No default Network Printer configured. "
+                "Go to Print Settings and set a Default Printer under "
+                "'Network Printer / Print Server'."
+            )
+        )
+
+    # Frappe v15: print_by_server(doctype, name, printer_setting, print_format=...)
+    print_by_server("Stock Entry", stock_entry, printer_setting, print_format=fmt)
     return True
+
 
 
 @frappe.whitelist()

@@ -725,19 +725,35 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         # Warehouses from line-map (falls back to Stock Settings default)
         s_wh = parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging)
         t_wh = _default_line_wip(work_order)
-
+        
         # Post either Consumption or Transfer for Manufacture (based on Factory Settings)
         if _consume_on_scan():
+            wo_doc = frappe.get_doc("Work Order", work_order)
+
             se = frappe.new_doc("Stock Entry")
+            # Be explicit so the controller doesn’t treat this like a Manufacture entry
             se.purpose = "Material Consumption for Manufacture"
+            se.stock_entry_type = "Material Consumption for Manufacture"
+            se.company = wo_doc.company
             se.work_order = work_order
+
+            # Prevent ERPNext from trying to derive items from BOM (which triggers the FG qty check)
+            se.from_bom = 0
+            se.use_multi_level_bom = 0
+
+            # Some versions expect this field to exist when a WO is linked; set a neutral value
+            # (it is ignored for 'Material Consumption for Manufacture')
+            se.fg_completed_qty = 0
+
             se.append("items", {
                 "item_code": item_code,
                 "qty": qty,
                 "uom": uom,
                 "s_warehouse": s_wh,
                 "batch_no": parsed.get("batch_no"),
+                # t_warehouse is optional for consumption; omit or leave None
             })
+
             se.flags.ignore_permissions = True
             se.insert()
             se.submit()
@@ -745,7 +761,12 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         else:
             se = frappe.new_doc("Stock Entry")
             se.purpose = "Material Transfer for Manufacture"
+            se.stock_entry_type = "Material Transfer for Manufacture"
+            se.company = frappe.db.get_value("Work Order", work_order, "company")
             se.work_order = work_order
+            se.from_bom = 0
+            se.use_multi_level_bom = 0
+
             se.append("items", {
                 "item_code": item_code,
                 "qty": qty,
@@ -754,10 +775,12 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 "t_warehouse": t_wh,
                 "batch_no": parsed.get("batch_no"),
             })
+
             se.flags.ignore_permissions = True
             se.insert()
             se.submit()
             msg_txt = _("Staged {0} × {1} to WIP (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
+
 
         return {"ok": True, "msg": msg_txt}
 

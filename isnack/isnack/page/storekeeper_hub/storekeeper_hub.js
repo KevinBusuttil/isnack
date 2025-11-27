@@ -18,6 +18,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const state = {
     routing: '',
     src_warehouse: '',
+    posting_date: '',
     pallet_id: '',
     hours: 24,
     selected_bucket: null,  // full bucket object from server
@@ -47,18 +48,25 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
   });
 
-  const pallet_id = frappe.ui.form.make_control({
-    df: { fieldtype: 'Data', label: 'Pallet ID', fieldname: 'pallet_id', placeholder: 'Scan or type Pallet barcode' },
-    parent: $filters.find('.pallet-id'),
+  const posting_date = frappe.ui.form.make_control({
+    df: {
+      fieldtype: 'Date',
+      label: 'Prod. Plan Posting Date',
+      fieldname: 'posting_date'
+    },
+    parent: $filters.find('.pallet-id'),   // reuse the same slot in the toolbar
     render_input: true
   });
+
+  // Optional: default to today
+  posting_date.set_value(frappe.datetime.get_today());
 
   const refresh_btn = $filters.find('.refresh');
 
   const refresh = () => {
     state.routing = routing.get_value();
     state.src_warehouse = src_wh.get_value();
-    state.pallet_id = pallet_id.get_value();
+    state.posting_date = posting_date.get_value();
     load_buckets();
     load_staged();
     load_pallets();
@@ -77,10 +85,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     code = (code || '').trim();
     if (!code) return;
 
-    // Treat non-WO/STE as Pallet ID
+    // Treat non-WO/STE codes as Pallet ID to tag transfers
     if (!/^WO-|^MAT-STE-|^STE-/.test(code)) {
-      pallet_id.set_value(code);
-      frappe.show_alert({ message: __('Pallet set: {0}', [frappe.utils.escape_html(code)]), indicator: 'blue' });
+      state.pallet_id = code;
+      frappe.show_alert({
+        message: __('Pallet set: {0}', [frappe.utils.escape_html(code)]),
+        indicator: 'blue'
+      });
       return;
     }
 
@@ -137,7 +148,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     $buckets.empty().append('<div class="muted">Loading…</div>');
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_buckets',
-      args: { routing: routing.get_value() || null }
+      args: {
+        routing: routing.get_value() || null,
+        posting_date: posting_date.get_value() || null
+      }
     });
 
     $buckets.empty();
@@ -366,7 +380,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (!src_wh.get_value()) return frappe.msgprint(__('Please select Source Warehouse.'));
 
     const args = {
-      pallet_id: pallet_id.get_value() || '',
+      pallet_id: state.pallet_id || '',
       source_warehouse: src_wh.get_value(),
       selected_wos: state.selected_wos,
       items: state.cart

@@ -181,8 +181,22 @@ function init_operator_hub($root) {
       fields: [{ label:'Workstation', fieldname:'line', fieldtype:'Select', options: opts, reqd:1 }],
       primary_action_label: 'Apply',
       primary_action: v => {
-        state.current_line = v.line; localStorage.setItem('kiosk_line', v.line);
-        $('#kiosk-line-label').text(v.line); d.hide(); load_queue();
+        state.current_line = v.line;
+        localStorage.setItem('kiosk_line', v.line);
+        $('#kiosk-line-label').text(v.line);
+
+        // Reset current job/WO context when line changes
+        state.current_card = null;
+        state.current_wo = null;
+        state.current_is_fg = false;
+
+        // Clear banner + materials so we don't show data from previous line
+        banner.html('');
+        render_mat_empty('Select a Job Card to load materials.');
+        refreshButtonStates();
+
+        d.hide();
+        load_queue();   // this will load queue for the new line
       }
     });
     d.show();
