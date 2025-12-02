@@ -26,6 +26,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     cart: []                // [{item_code, batch_no, uom, qty, note}]
   };
 
+  const fmt_qty = (qty) => {
+    const n = parseFloat(qty);
+    if (isNaN(n)) return qty ?? '';
+    // limit to 3 decimals, strip trailing zeros
+    return n.toFixed(3).replace(/\.?0+$/, '');
+  };
+
   // ---------- Toolbar Controls ----------
   const $filters = $hub.find('.filters');
 
@@ -165,7 +172,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           <div class="meta">
             BOM: ${frappe.utils.escape_html(b.bom_no)} ·
             WOs: ${b.wos.length} ·
-            Total Qty: ${b.total_qty} ${frappe.utils.escape_html(b.uom || '')}
+            Total Qty: ${fmt_qty(b.total_qty)} ${frappe.utils.escape_html(b.uom || '')}
           </div>
           <div class="wo-list"></div>
           <div class="mt-2">
@@ -176,8 +183,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
       // Render WO rows
       const $wol = $bucket.find('.wo-list');
+
       b.wos.forEach(wo => {
-        const planned = wo.planned_start_date ? frappe.datetime.str_to_user(wo.planned_start_date) : '';
+        // date only, no time
+        const planned = wo.planned_start_date
+          ? frappe.datetime.str_to_user(wo.planned_start_date).split(' ')[0]
+          : '';
 
         let statusChip = '';
         const status = (wo.stage_status || '').toLowerCase();
@@ -187,15 +198,25 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           statusChip = '<span class="chip partly-allocated">Partly Allocated</span>';
         }
 
+        const itemLabel = frappe.utils.escape_html(
+          wo.item_name || wo.production_item || ''
+        );
+
         const $row = $(`
           <div class="wo-row">
             <input type="checkbox" class="wo-check" data-name="${wo.name}" checked />
-            <div>
-              <b>${frappe.utils.escape_html(wo.name)}</b>
-              ${statusChip}
-              <div class="muted">${frappe.utils.escape_html(wo.item_name)} · ${wo.qty} ${frappe.utils.escape_html(wo.uom || '')}</div>
+            <div class="wo-main">
+              <div class="wo-header">
+                <div class="wo-title">
+                  <b>${frappe.utils.escape_html(wo.name)}</b>
+                  ${statusChip}
+                </div>
+                <div class="muted wo-date">${planned}</div>
+              </div>
+              <div class="muted">
+                ${itemLabel} · ${fmt_qty(wo.qty)} ${frappe.utils.escape_html(wo.uom || '')}
+              </div>
             </div>
-            <div class="muted">${planned}</div>
           </div>
         `);
         $wol.append($row);
@@ -444,7 +465,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     $staged.empty().append('<div class="muted">Loading…</div>');
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
-      args: { routing: state.routing || null, hours: state.hours }
+      args: {
+        routing: state.routing || null,
+        hours: state.hours,                     // used as fallback when no date
+        posting_date: state.posting_date || null
+      }
     });
     $staged.empty();
     (r.message || []).forEach(se => {
@@ -467,7 +492,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         </div>
       `).find('.btn-group').append(open_btn, print_btn).end());
     });
-    if (!$staged.children().length) $staged.append('<div class="muted">Nothing staged recently</div>');
+    if (!$staged.children().length)
+      $staged.append('<div class="muted">Nothing staged for this production date</div>');
+
   }
 
   // ---------- Pallet Tracker ----------

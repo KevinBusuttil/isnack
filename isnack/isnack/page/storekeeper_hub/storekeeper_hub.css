@@ -4,6 +4,7 @@
   --cerulean-700: #006684;
   --cerulean-600: #007BA7; /* Deep Cerulean */
   --cerulean-500: #1996c4;
+  --cerulean-300: #78c2ec;
   --cerulean-100: #d6eef7;
   --text-900: #0f172a;
   --text-600: #475569;
@@ -26,7 +27,7 @@
   grid-template-columns: 1fr auto;
   gap: 12px;
   align-items: end;
-  background: linear-gradient(180deg, var(--cerulean-600), var(--cerulean-700));
+  background: linear-gradient(180deg, var(--cerulean-300), var(--cerulean-500));
   padding: 16px;
   border-radius: 12px;
   color: white;
@@ -52,6 +53,20 @@
   border: 1px solid var(--border-200);
   border-radius: 12px;
   padding: 12px;
+}
+
+/* Left column: make the bucket area scrollable */
+.storekeeper-hub .col-buckets {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 180px);  /* adjust if you want more/less height */
+}
+
+.storekeeper-hub .col-buckets .list.buckets {
+  flex: 1;                 /* fill remaining height in the column */
+  overflow-y: auto;        /* vertical scrollbar when needed */
+  overflow-x: hidden;
+  padding-right: 4px;      /* keeps text away from scrollbar */
 }
 
 .storekeeper-hub h5 {
@@ -156,13 +171,39 @@
   border-top: 1px dashed var(--border-200);
   padding-top: 6px;
 }
+
 .storekeeper-hub .wo-row {
   display: grid;
-  grid-template-columns: 24px 1fr auto;
+  grid-template-columns: 24px 1fr;  /* checkbox + content */
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   padding: 4px 0;
 }
+
+.storekeeper-hub .wo-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.storekeeper-hub .wo-header {
+  display: flex;
+  flex-direction: column;  /* name+chip, then date underneath */
+  gap: 2px;
+}
+
+.storekeeper-hub .wo-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.storekeeper-hub .wo-date {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 
 /* Right column cards */
 .storekeeper-hub .card {
