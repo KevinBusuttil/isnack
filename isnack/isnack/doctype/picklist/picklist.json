@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "format:PKL-{YY}{MM}{DD}-{####}",
  "creation": "2025-12-02 19:28:53.073056",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -52,10 +53,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-02 21:30:41.501799",
+ "modified": "2025-12-02 21:49:29.940064",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Picklist",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
