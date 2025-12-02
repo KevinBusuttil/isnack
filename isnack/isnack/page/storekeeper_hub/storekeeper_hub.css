@@ -298,3 +298,19 @@
 .storekeeper-hub .pallets {
   overflow-x: hidden;
 }
+
+/* Staged Today selection styling */
+.storekeeper-hub .staged .hub-row.selected {
+  border-color: var(--cerulean-500);
+  background: var(--cerulean-100);
+}
+
+.storekeeper-hub .staged-header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.storekeeper-hub .staged-header .pick-transfer {
+  margin-top: 2px;
+}

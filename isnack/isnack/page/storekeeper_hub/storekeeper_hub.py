@@ -1,7 +1,7 @@
 import json
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, add_to_date, cstr
+from frappe.utils import now_datetime, add_to_date, cstr, nowdate
 from frappe.utils.print_format import print_by_server 
 
 # --- Helpers -----------------------------------------------------------------
@@ -623,3 +623,139 @@ def get_consolidated_remaining_bulk(selected_wos=None, item_codes=None):
     for code in item_codes:
         out.append(get_consolidated_remaining(selected_wos=selected_wos, item_code=code))
     return out
+
+@frappe.whitelist()
+def generate_picklist(transfers, group_same_items: int | str | None = 1):
+    """Create a Picklist from selected Stock Entries.
+
+    transfers:
+        JSON array or comma-separated list of Stock Entry names.
+    group_same_items:
+        1/True => group by (item + from_warehouse + to_warehouse + batch + uom)
+        0/False => one row per Stock Entry Detail line.
+    """
+    # Normalise transfers
+    if isinstance(transfers, str):
+        try:
+            transfers = json.loads(transfers or "[]")
+        except Exception:
+            transfers = [t.strip() for t in transfers.split(",") if t.strip()]
+
+    if not transfers:
+        frappe.throw(_("No Stock Entries selected."))
+
+    # Determine grouping flag
+    if isinstance(group_same_items, str):
+        group_same = group_same_items not in ("0", "false", "False")
+    else:
+        group_same = bool(group_same_items)
+
+    # Fetch Stock Entry headers
+    se_list = frappe.get_all(
+        "Stock Entry",
+        filters={"name": ["in", transfers], "docstatus": 1},
+        fields=["name", "company", "from_warehouse", "to_warehouse"],
+    )
+    if not se_list:
+        frappe.throw(_("No submitted Stock Entries found for the selected names."))
+
+    companies = {se.company for se in se_list if se.company}
+    if len(companies) > 1:
+        frappe.throw(
+            _("Selected Stock Entries belong to multiple companies. "
+              "Please generate a picklist per company.")
+        )
+    company = next(iter(companies)) if companies else None
+
+    from_whs = {se.from_warehouse for se in se_list if se.from_warehouse}
+    to_whs = {se.to_warehouse for se in se_list if se.to_warehouse}
+
+    params = {"transfers": tuple(se.name for se in se_list)}
+
+    if group_same:
+        rows = frappe.db.sql(
+            """
+            select
+                sed.item_code,
+                sed.item_name,
+                coalesce(sed.s_warehouse, se.from_warehouse) as s_warehouse,
+                coalesce(sed.t_warehouse, se.to_warehouse) as t_warehouse,
+                sed.uom,
+                sed.stock_uom,
+                sed.batch_no,
+                sum(sed.qty) as qty
+            from `tabStock Entry` se
+            join `tabStock Entry Detail` sed on sed.parent = se.name
+            where se.docstatus = 1
+              and se.name in %(transfers)s
+            group by
+                sed.item_code,
+                sed.item_name,
+                s_warehouse,
+                t_warehouse,
+                sed.uom,
+                sed.stock_uom,
+                sed.batch_no
+            order by sed.item_code, sed.batch_no
+            """,
+            params,
+            as_dict=True,
+        )
+    else:
+        rows = frappe.db.sql(
+            """
+            select
+                se.name as stock_entry,
+                sed.name as stock_entry_detail,
+                sed.item_code,
+                sed.item_name,
+                coalesce(sed.s_warehouse, se.from_warehouse) as s_warehouse,
+                coalesce(sed.t_warehouse, se.to_warehouse) as t_warehouse,
+                sed.uom,
+                sed.stock_uom,
+                sed.batch_no,
+                sed.qty
+            from `tabStock Entry` se
+            join `tabStock Entry Detail` sed on sed.parent = se.name
+            where se.docstatus = 1
+              and se.name in %(transfers)s
+            order by sed.item_code, sed.batch_no, se.name
+            """,
+            params,
+            as_dict=True,
+        )
+
+    if not rows:
+        frappe.throw(_("No items found in selected Stock Entries."))
+
+    # Create Picklist doc
+    pick = frappe.new_doc("Picklist")
+    if company:
+        pick.company = company
+    pick.posting_date = nowdate()
+    if len(from_whs) == 1:
+        pick.from_warehouse = next(iter(from_whs))
+    if len(to_whs) == 1:
+        pick.to_warehouse = next(iter(to_whs))
+
+    for se in se_list:
+        pick.append("transfers", {"stock_entry": se.name})
+
+    for r in rows:
+        pick.append(
+            "items",
+            {
+                "item_code": r.get("item_code"),
+                "item_name": r.get("item_name"),
+                "from_warehouse": r.get("s_warehouse"),
+                "to_warehouse": r.get("t_warehouse"),
+                "uom": r.get("uom") or r.get("stock_uom"),
+                "qty": float(r.get("qty") or 0),
+                "batch_no": r.get("batch_no"),
+                "stock_entry": r.get("stock_entry") if not group_same else None,
+            },
+        )
+
+    pick.insert()
+    frappe.msgprint(_("Picklist {0} created.").format(pick.name))
+    return {"name": pick.name}

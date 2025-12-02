@@ -23,7 +23,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     hours: 24,
     selected_bucket: null,  // full bucket object from server
     selected_wos: [],       // names of selected WOs from the chosen bucket
-    cart: []                // [{item_code, batch_no, uom, qty, note}]
+    cart: [],                // [{item_code, batch_no, uom, qty, note}]
+    selected_transfers: []  // names of Stock Entries selected for picklist
   };
 
   const fmt_qty = (qty) => {
@@ -69,6 +70,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   posting_date.set_value(frappe.datetime.get_today());
 
   const refresh_btn = $filters.find('.refresh');
+  const picklist_btn = $filters.find('.generate-picklist');
 
   const refresh = () => {
     state.routing = routing.get_value();
@@ -80,6 +82,55 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   };
 
   refresh_btn.on('click', refresh);
+
+  // --- Generate Picklist from selected transfers ---
+  const generate_picklist = () => {
+    if (!state.selected_transfers.length) {
+      frappe.msgprint(__('Please select at least one staged Stock Entry in "Staged Today".'));
+      return;
+    }
+
+    const d = new frappe.ui.Dialog({
+      title: __('Generate Picklist'),
+      fields: [
+        {
+          fieldname: 'group_same_items',
+          fieldtype: 'Check',
+          label: __('Group same items (by Item + Batch + Warehouse)'),
+          default: 1
+        }
+      ],
+      primary_action_label: __('Create Picklist'),
+      primary_action: async (values) => {
+        d.hide();
+        try {
+          const r = await frappe.call({
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.generate_picklist',
+            args: {
+              transfers: state.selected_transfers,
+              group_same_items: values.group_same_items ? 1 : 0
+            },
+            freeze: true,
+            freeze_message: __('Generating picklist…')
+          });
+          if (r.message && r.message.name) {
+            frappe.show_alert({
+              message: __('Picklist {0} created', [r.message.name]),
+              indicator: 'green'
+            });
+            frappe.set_route('Form', 'Picklist', r.message.name);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    });
+
+    d.show();
+  };
+
+  picklist_btn.on('click', generate_picklist);
+
   // Optional live refresh on routing change
   if (routing.$input) routing.$input.on('change', refresh);
 
@@ -461,41 +512,101 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   });
 
   // ---------- Recently Staged ----------
+// ---------- Recently Staged / Staged Today ----------
   async function load_staged(){
     $staged.empty().append('<div class="muted">Loading…</div>');
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
       args: {
         routing: state.routing || null,
-        hours: state.hours,                     // used as fallback when no date
+        hours: state.hours,                     // fallback when no date
         posting_date: state.posting_date || null
       }
     });
+
     $staged.empty();
+
+    const prev_selected = new Set(state.selected_transfers || []);
+    state.selected_transfers = [];
+
     (r.message || []).forEach(se => {
+      const is_selected = prev_selected.has(se.name);
+
       const open_btn = $(`<button class="btn btn-xs btn-default">Open</button>`)
-        .on('click', () => frappe.set_route('Form', 'Stock Entry', se.name));
+        .on('click', (e) => {
+          e.stopPropagation();
+          frappe.set_route('Form', 'Stock Entry', se.name);
+        });
+
       const print_btn = $(`<button class="btn btn-xs btn-secondary">Reprint</button>`)
-        .on('click', async () => {
+        .on('click', async (e) => {
+          e.stopPropagation();
           await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
             args: { stock_entry: se.name }
           });
           frappe.show_alert({ message: __('Sent to printer'), indicator: 'green' });
         });
-      const info = (se.remarks || '').includes('Pallet:') ? se.remarks : (se.to_warehouse || '');
-      $staged.append($(`
-        <div class="hub-row">
-          <div class="cell"><b>${se.name}</b><br><span class="muted">${frappe.utils.escape_html(info || '')}</span></div>
-          <div class="cell">${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}</div>
+
+      const info = (se.remarks || '').includes('Pallet:')
+        ? se.remarks
+        : (se.to_warehouse || '');
+
+      const $row = $(`
+        <div class="hub-row staged-row ${is_selected ? 'selected' : ''}" data-name="${se.name}">
+          <div class="cell">
+            <div class="staged-header">
+              <input type="checkbox" class="pick-transfer" ${is_selected ? 'checked' : ''} />
+              <div class="staged-main">
+                <b>${se.name}</b><br>
+                <span class="muted">${frappe.utils.escape_html(info || '')}</span>
+              </div>
+            </div>
+          </div>
+          <div class="cell staged-meta">
+            ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}
+          </div>
           <div class="cell"><div class="btn-group"></div></div>
         </div>
-      `).find('.btn-group').append(open_btn, print_btn).end());
-    });
-    if (!$staged.children().length)
-      $staged.append('<div class="muted">Nothing staged for this production date</div>');
+      `);
 
+      $row.find('.btn-group').append(open_btn, print_btn);
+
+      const sync_selected = (checked) => {
+        const name = se.name;
+        const idx = state.selected_transfers.indexOf(name);
+        if (checked) {
+          if (idx === -1) state.selected_transfers.push(name);
+          $row.addClass('selected');
+        } else {
+          if (idx !== -1) state.selected_transfers.splice(idx, 1);
+          $row.removeClass('selected');
+        }
+      };
+
+      // initialise selection
+      sync_selected(is_selected);
+
+      // Checkbox toggles selection
+      $row.find('.pick-transfer').on('change', (e) => {
+        sync_selected(e.currentTarget.checked);
+      });
+
+      // Clicking the card (but not buttons/checkbox) also toggles selection
+      $row.on('click', (e) => {
+        if ($(e.target).closest('button,.pick-transfer').length) return;
+        const $cb = $row.find('.pick-transfer');
+        $cb.prop('checked', !$cb.prop('checked')).trigger('change');
+      });
+
+      $staged.append($row);
+    });
+
+    if (!$staged.children().length) {
+      $staged.append('<div class="muted">Nothing staged for this production date</div>');
+    }
   }
+
 
   // ---------- Pallet Tracker ----------
   async function load_pallets(){
