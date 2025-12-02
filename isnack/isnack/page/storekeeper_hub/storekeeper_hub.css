@@ -258,6 +258,12 @@
   color: #854d0e;
 }
 
+.storekeeper-hub .staged .chip.in-picklist {
+  background: #e0f2fe;   /* light blue */
+  border-color: #7dd3fc;
+  color: #075985;
+}
+
 /* --- Right column cards: keep original stacked text, pin actions bottom-right --- */
 
 /* Undo any previous grid/flex on these rows */

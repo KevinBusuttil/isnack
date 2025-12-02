@@ -433,63 +433,64 @@ def create_consolidated_transfers(
 
     return {"transfers": created}
 
-
 @frappe.whitelist()
-def get_recent_transfers(
-    routing: str | None = None,
-    hours: int = 24,
-    posting_date: str | None = None,
-):
-    """Material Transfers for Manufacture, optionally filtered by routing and
-    Production Plan posting_date.
-
-    If posting_date is given, we ignore the "hours" window and instead return
-    all transfers whose Work Order belongs to a Production Plan with that
-    posting_date. If posting_date is empty, we fall back to the last `hours`
-    worth of modified entries.
-    """
-
-    conditions = [
-        "se.docstatus = 1",
-        "se.purpose = 'Material Transfer for Manufacture'",
-    ]
-    params: list[object] = []
-
-    # Always join Work Order so we can optionally filter by routing / prod plan
-    joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
+def get_recent_transfers(routing: str | None = None, hours: int = 24):
+    since = add_to_date(now_datetime(), hours=-int(hours))
 
     if routing:
-        joins.append("left join `tabBOM` bom on bom.name = wo.bom_no")
-        conditions.append("bom.routing = %s")
-        params.append(routing)
-
-    if posting_date:
-        # Match how get_buckets filters WOs by Production Plan posting_date
-        joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
-        conditions.append("pp.posting_date = %s")
-        params.append(posting_date)
+        q = """
+            select se.name, se.posting_date, se.posting_time,
+                   se.to_warehouse, se.remarks, se.work_order
+            from `tabStock Entry` se
+            left join `tabWork Order` wo on wo.name = se.work_order
+            left join `tabBOM` bom on bom.name = wo.bom_no
+            where se.docstatus = 1
+              and se.purpose = 'Material Transfer for Manufacture'
+              and se.modified >= %s
+              and bom.routing = %s
+            order by se.modified desc
+            limit 50
+        """
+        se_list = frappe.db.sql(q, (since, routing), as_dict=True)
     else:
-        # Old behaviour: last N hours, when no production date is selected
-        since = add_to_date(now_datetime(), hours=-int(hours))
-        conditions.append("se.modified >= %s")
-        params.append(since)
+        q = """
+            select se.name, se.posting_date, se.posting_time,
+                   se.to_warehouse, se.remarks, se.work_order
+            from `tabStock Entry` se
+            where se.docstatus = 1
+              and se.purpose = 'Material Transfer for Manufacture'
+              and se.modified >= %s
+            order by se.modified desc
+            limit 50
+        """
+        se_list = frappe.db.sql(q, (since,), as_dict=True)
 
-    query = f"""
-        select
-            se.name,
-            se.posting_date,
-            se.posting_time,
-            se.to_warehouse,
-            se.remarks,
-            se.work_order
-        from `tabStock Entry` se
-        {' '.join(joins)}
-        where {' and '.join(conditions)}
-        order by se.modified desc
-        limit 50
-    """
+    # --- Mark which of these Stock Entries are already in a Picklist ---
+    se_names = [d["name"] for d in se_list]
+    in_picklist = set()
 
-    return frappe.db.sql(query, tuple(params), as_dict=True)
+    if se_names:
+        try:
+            rows = frappe.db.sql(
+                """
+                select distinct pt.stock_entry
+                from `tabPicklist Transfer` pt
+                join `tabPicklist` p on p.name = pt.parent
+                where pt.stock_entry in %(names)s
+                  and p.docstatus < 2
+                """,
+                {"names": tuple(se_names)},
+                as_dict=True,
+            )
+            in_picklist = {r["stock_entry"] for r in rows}
+        except Exception:
+            # If Picklist tables don't exist yet, just skip the badge
+            in_picklist = set()
+
+    for d in se_list:
+        d["in_picklist"] = 1 if d["name"] in in_picklist else 0
+
+    return se_list
 
 
 @frappe.whitelist()

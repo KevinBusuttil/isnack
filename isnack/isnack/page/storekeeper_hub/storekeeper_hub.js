@@ -511,36 +511,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
   });
 
-  // ---------- Recently Staged ----------
-// ---------- Recently Staged / Staged Today ----------
+  // ---------- Recently Staged / Staged Today ----------
   async function load_staged(){
     $staged.empty().append('<div class="muted">Loading…</div>');
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
-      args: {
-        routing: state.routing || null,
-        hours: state.hours,                     // fallback when no date
-        posting_date: state.posting_date || null
-      }
+      args: { routing: state.routing || null, hours: state.hours }
     });
 
     $staged.empty();
 
-    const prev_selected = new Set(state.selected_transfers || []);
-    state.selected_transfers = [];
-
     (r.message || []).forEach(se => {
-      const is_selected = prev_selected.has(se.name);
-
       const open_btn = $(`<button class="btn btn-xs btn-default">Open</button>`)
-        .on('click', (e) => {
-          e.stopPropagation();
-          frappe.set_route('Form', 'Stock Entry', se.name);
-        });
+        .on('click', () => frappe.set_route('Form', 'Stock Entry', se.name));
 
       const print_btn = $(`<button class="btn btn-xs btn-secondary">Reprint</button>`)
-        .on('click', async (e) => {
-          e.stopPropagation();
+        .on('click', async () => {
           await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
             args: { stock_entry: se.name }
@@ -552,61 +538,28 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         ? se.remarks
         : (se.to_warehouse || '');
 
-      const $row = $(`
-        <div class="hub-row staged-row ${is_selected ? 'selected' : ''}" data-name="${se.name}">
+      const in_picklist_badge = se.in_picklist
+        ? '<span class="chip in-picklist">' + __('In Picklist') + '</span>'
+        : '';
+
+      $staged.append($(`
+        <div class="hub-row">
           <div class="cell">
-            <div class="staged-header">
-              <input type="checkbox" class="pick-transfer" ${is_selected ? 'checked' : ''} />
-              <div class="staged-main">
-                <b>${se.name}</b><br>
-                <span class="muted">${frappe.utils.escape_html(info || '')}</span>
-              </div>
-            </div>
+            <b>${frappe.utils.escape_html(se.name)}</b> ${in_picklist_badge}<br>
+            <span class="muted">${frappe.utils.escape_html(info || '')}</span>
           </div>
-          <div class="cell staged-meta">
+          <div class="cell">
             ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}
           </div>
           <div class="cell"><div class="btn-group"></div></div>
         </div>
-      `);
-
-      $row.find('.btn-group').append(open_btn, print_btn);
-
-      const sync_selected = (checked) => {
-        const name = se.name;
-        const idx = state.selected_transfers.indexOf(name);
-        if (checked) {
-          if (idx === -1) state.selected_transfers.push(name);
-          $row.addClass('selected');
-        } else {
-          if (idx !== -1) state.selected_transfers.splice(idx, 1);
-          $row.removeClass('selected');
-        }
-      };
-
-      // initialise selection
-      sync_selected(is_selected);
-
-      // Checkbox toggles selection
-      $row.find('.pick-transfer').on('change', (e) => {
-        sync_selected(e.currentTarget.checked);
-      });
-
-      // Clicking the card (but not buttons/checkbox) also toggles selection
-      $row.on('click', (e) => {
-        if ($(e.target).closest('button,.pick-transfer').length) return;
-        const $cb = $row.find('.pick-transfer');
-        $cb.prop('checked', !$cb.prop('checked')).trigger('change');
-      });
-
-      $staged.append($row);
+      `).find('.btn-group').append(open_btn, print_btn).end());
     });
 
     if (!$staged.children().length) {
-      $staged.append('<div class="muted">Nothing staged for this production date</div>');
+      $staged.append('<div class="muted">Nothing staged recently</div>');
     }
   }
-
 
   // ---------- Pallet Tracker ----------
   async function load_pallets(){
