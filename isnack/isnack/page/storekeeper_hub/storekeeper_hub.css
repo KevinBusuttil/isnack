@@ -34,6 +34,16 @@
   margin-bottom: 16px;
 }
 
+.storekeeper-hub .hub-toolbar .quick-stock-entries {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.storekeeper-hub .hub-toolbar .quick-stock-entries .btn {
+  padding-inline: 6px;
+}
+
 .storekeeper-hub .filters,
 .storekeeper-hub .scan {
   display: flex;
@@ -319,4 +329,29 @@
 
 .storekeeper-hub .staged-header .pick-transfer {
   margin-top: 2px;
+}
+
+/* Manual Stock Entries list uses same layout as staged & pallets */
+.storekeeper-hub .manual-se .hub-row {
+  display: block !important;
+  position: relative;
+  padding: 10px 12px 44px 12px;
+}
+
+.storekeeper-hub .manual-se .hub-row .cell {
+  white-space: normal;
+  word-break: break-word;
+  margin: 0 0 2px 0;
+}
+
+.storekeeper-hub .manual-se .hub-row .cell:last-child {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  width: auto;
+  text-align: right;
+}
+
+.storekeeper-hub .manual-se {
+  overflow-x: hidden;
 }

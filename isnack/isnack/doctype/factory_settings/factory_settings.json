@@ -18,7 +18,9 @@
   "line_warehouse_map",
   "label_printing_section",
   "default_label_template",
-  "default_label_printer"
+  "default_label_printer",
+  "per_user_printer_defaults_section",
+  "user_printer_defaults"
  ],
  "fields": [
   {
@@ -82,7 +84,7 @@
   {
    "fieldname": "label_printing_section",
    "fieldtype": "Section Break",
-   "label": "Label Printing"
+   "label": "Global Label Printing Defaults"
   },
   {
    "fieldname": "default_label_template",
@@ -92,21 +94,33 @@
   },
   {
    "fieldname": "default_label_printer",
-   "fieldtype": "Data",
-   "label": "Default Label Printer"
+   "fieldtype": "Link",
+   "label": "Default Label Printer",
+   "options": "Network Printer Settings"
   },
   {
    "fieldname": "default_semi_finished_warehouse",
    "fieldtype": "Link",
    "label": "Default Semi-finished Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "per_user_printer_defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Per User Printer Defaults"
+  },
+  {
+   "fieldname": "user_printer_defaults",
+   "fieldtype": "Table",
+   "label": "User Printer Defaults",
+   "options": "User Printer Default"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-26 17:10:31.652857",
+ "modified": "2025-12-03 19:13:03.016733",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",

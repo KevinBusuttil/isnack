@@ -3,6 +3,7 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr, nowdate
 from frappe.utils.print_format import print_by_server 
+from isnack.utils.printing import get_label_printer 
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -434,36 +435,52 @@ def create_consolidated_transfers(
     return {"transfers": created}
 
 @frappe.whitelist()
-def get_recent_transfers(routing: str | None = None, hours: int = 24):
-    since = add_to_date(now_datetime(), hours=-int(hours))
+def get_recent_transfers(
+    routing: str | None = None,
+    hours: int = 24,
+    posting_date: str | None = None,
+):
+    """Material Transfers for Manufacture.
+
+    If posting_date is given, filter by Work Orders whose Production Plan has that posting_date.
+    Otherwise, fallback to "last N hours" based on se.modified.
+    """
+    joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
+    conditions = [
+        "se.docstatus = 1",
+        "se.purpose = 'Material Transfer for Manufacture'",
+    ]
+    params: list[object] = []
 
     if routing:
-        q = """
-            select se.name, se.posting_date, se.posting_time,
-                   se.to_warehouse, se.remarks, se.work_order
-            from `tabStock Entry` se
-            left join `tabWork Order` wo on wo.name = se.work_order
-            left join `tabBOM` bom on bom.name = wo.bom_no
-            where se.docstatus = 1
-              and se.purpose = 'Material Transfer for Manufacture'
-              and se.modified >= %s
-              and bom.routing = %s
-            order by se.modified desc
-            limit 50
-        """
-        se_list = frappe.db.sql(q, (since, routing), as_dict=True)
+        joins.append("left join `tabBOM` bom on bom.name = wo.bom_no")
+        conditions.append("bom.routing = %s")
+        params.append(routing)
+
+    if posting_date:
+        joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
+        conditions.append("pp.posting_date = %s")
+        params.append(posting_date)
     else:
-        q = """
-            select se.name, se.posting_date, se.posting_time,
-                   se.to_warehouse, se.remarks, se.work_order
-            from `tabStock Entry` se
-            where se.docstatus = 1
-              and se.purpose = 'Material Transfer for Manufacture'
-              and se.modified >= %s
-            order by se.modified desc
-            limit 50
-        """
-        se_list = frappe.db.sql(q, (since,), as_dict=True)
+        since = add_to_date(now_datetime(), hours=-int(hours))
+        conditions.append("se.modified >= %s")
+        params.append(since)
+
+    query = f"""
+        select
+            se.name,
+            se.posting_date,
+            se.posting_time,
+            se.to_warehouse,
+            se.remarks,
+            se.work_order
+        from `tabStock Entry` se
+        {' '.join(joins)}
+        where {' and '.join(conditions)}
+        order by se.posting_date desc, se.posting_time desc, se.modified desc
+        limit 50
+    """
+    se_list = frappe.db.sql(query, tuple(params), as_dict=True)
 
     # --- Mark which of these Stock Entries are already in a Picklist ---
     se_names = [d["name"] for d in se_list]
@@ -484,7 +501,6 @@ def get_recent_transfers(routing: str | None = None, hours: int = 24):
             )
             in_picklist = {r["stock_entry"] for r in rows}
         except Exception:
-            # If Picklist tables don't exist yet, just skip the badge
             in_picklist = set()
 
     for d in se_list:
@@ -492,6 +508,69 @@ def get_recent_transfers(routing: str | None = None, hours: int = 24):
 
     return se_list
 
+@frappe.whitelist()
+def get_recent_manual_stock_entries(
+    source_warehouse: str | None = None,
+    hours: int = 24,
+    purposes: str | None = None,
+):
+    """Recent manual Stock Entries (non-WO) for a given warehouse and purposes.
+
+    Defaults to Material Transfer, Material Issue, Material Receipt.
+    """
+    # parse purposes argument (can be JSON list or comma-separated)
+    if isinstance(purposes, str) and purposes:
+        try:
+            purposes_list = json.loads(purposes)
+            if not isinstance(purposes_list, (list, tuple)):
+                purposes_list = [cstr(purposes_list)]
+        except Exception:
+            purposes_list = [p.strip() for p in purposes.split(",") if p.strip()]
+    else:
+        purposes_list = [
+            "Material Transfer",
+            "Material Issue",
+            "Material Receipt",
+        ]
+
+    if not purposes_list:
+        return []
+
+    since = add_to_date(now_datetime(), hours=-int(hours))
+
+    conditions = [
+        "se.docstatus = 1",
+        "se.work_order is null",
+        "se.purpose in %(purposes)s",
+        "se.modified >= %(since)s",
+    ]
+    params = {
+        "purposes": tuple(purposes_list),
+        "since": since,
+    }
+
+    if source_warehouse:
+        conditions.append(
+            "(se.from_warehouse = %(wh)s or se.to_warehouse = %(wh)s)"
+        )
+        params["wh"] = source_warehouse
+
+    query = f"""
+        select
+            se.name,
+            se.posting_date,
+            se.posting_time,
+            se.from_warehouse,
+            se.to_warehouse,
+            se.purpose,
+            se.remarks
+        from `tabStock Entry` se
+        where {' and '.join(conditions)}
+        order by se.modified desc
+        limit 50
+    """
+
+    return frappe.db.sql(query, params, as_dict=True)
 
 @frappe.whitelist()
 def get_recent_pallets(routing: str | None = None, hours: int = 24):
@@ -538,28 +617,18 @@ def get_recent_pallets(routing: str | None = None, hours: int = 24):
 
 @frappe.whitelist()
 def print_labels(stock_entry: str):
-    """Server-side network printing for pallet labels.
-
-    Uses the Raw Print Format 'Pallet Label – Material Transfer' and the
-    default Network Printer configured in Print Settings.
-    """
     fmt = "Pallet Label Material Transfer"
+    printer_setting = get_label_printer()  # returns the *name* of a Network Printer Settings doc
 
-    # Get default Network Printer (Print Settings → Network Printer / Print Server)
-    printer_setting = frappe.db.get_single_value("Print Settings", "default_printer")
     if not printer_setting:
-        frappe.throw(
-            _(
-                "No default Network Printer configured. "
-                "Go to Print Settings and set a Default Printer under "
-                "'Network Printer / Print Server'."
-            )
-        )
+        frappe.throw(_("No label printer configured."))
 
-    # Frappe v15: print_by_server(doctype, name, printer_setting, print_format=...)
-    print_by_server("Stock Entry", stock_entry, printer_setting, print_format=fmt)
-    return True
-
+    print_by_server(
+        "Stock Entry",
+        stock_entry,
+        printer_setting=printer_setting,   # name of Network Printer Settings
+        print_format=fmt
+    )
 
 
 @frappe.whitelist()

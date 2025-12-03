@@ -5,7 +5,13 @@
       <div class="control routing"></div>
       <div class="control src-warehouse"></div>
       <div class="control pallet-id"></div>
-      <button class="btn btn-sm btn-secondary generate-picklist">Generate Picklist</button>
+
+      <div class="quick-stock-entries">
+        <button class="btn btn-xs btn-default se-transfer">Mat. Transfer</button>
+        <button class="btn btn-xs btn-default se-issue">Mat. Issue</button>
+        <button class="btn btn-xs btn-default se-receipt">Mat. Receipt</button>
+      </div>
+
       <button class="btn btn-sm btn-primary refresh">Refresh</button>
     </div>
     <div class="scan">
@@ -62,6 +68,10 @@
       <div class="card">
         <h5>Staged Today</h5>
         <div class="list staged"></div>
+      </div>
+      <div class="card">
+        <h5>Recent Manual Stock Entries (Last 24h)</h5>
+        <div class="list manual-se"></div>
       </div>
       <div class="card">
         <h5>Pallet Tracker (Last 24h)</h5>

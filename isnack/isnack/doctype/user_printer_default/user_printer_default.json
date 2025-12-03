@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-12-03 18:50:57.095202",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "label_printer",
+  "a4_printer"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "label_printer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Label Printer",
+   "options": "Network Printer Settings"
+  },
+  {
+   "fieldname": "a4_printer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "A4 Printer",
+   "options": "Network Printer Settings"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-12-03 19:08:27.793108",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "User Printer Default",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
