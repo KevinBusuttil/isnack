@@ -19,6 +19,7 @@
   "label_printing_section",
   "default_label_template",
   "default_label_printer",
+  "default_a4_printer",
   "per_user_printer_defaults_section",
   "user_printer_defaults"
  ],
@@ -114,13 +115,19 @@
    "fieldtype": "Table",
    "label": "User Printer Defaults",
    "options": "User Printer Default"
+  },
+  {
+   "fieldname": "default_a4_printer",
+   "fieldtype": "Link",
+   "label": "Default A4 Printer",
+   "options": "Network Printer Settings"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-12-03 19:13:03.016733",
+ "modified": "2025-12-03 20:10:16.474277",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",
