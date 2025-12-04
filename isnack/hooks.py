@@ -60,6 +60,11 @@ doctype_js = {
 
 # Jinja
 # ----------
+jinja = {
+    "methods": [
+        "isnack.utils.qr.get_qr_code",
+    ]
+}
 
 # add methods and filters to jinja environment
 # jinja = {
