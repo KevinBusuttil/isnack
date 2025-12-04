@@ -132,6 +132,49 @@
   border-color: var(--cerulean-700);
 }
 
+/* --- Quick stock entry buttons (Mat. Transfer / Issue / Receipt) --- */
+.storekeeper-hub .hub-toolbar .quick-stock-entries .btn {
+  border-radius: 999px;
+  font-weight: 500;
+  border-width: 1px;
+}
+
+/* Material Transfer: cerulean accent */
+.storekeeper-hub .hub-toolbar .se-transfer {
+  background: var(--cerulean-100);
+  border-color: var(--cerulean-500);
+  color: var(--cerulean-700);
+}
+.storekeeper-hub .hub-toolbar .se-transfer:hover {
+  background: var(--cerulean-300);
+  border-color: var(--cerulean-600);
+  color: #ffffff;
+}
+
+/* Material Issue: warm / warning accent */
+.storekeeper-hub .hub-toolbar .se-issue {
+  background: #fef3c7;          /* soft amber */
+  border-color: #facc15;
+  color: #854d0e;
+}
+.storekeeper-hub .hub-toolbar .se-issue:hover {
+  background: #facc15;
+  border-color: #eab308;
+  color: #1f2933;
+}
+
+/* Material Receipt: success / green accent */
+.storekeeper-hub .hub-toolbar .se-receipt {
+  background: #dcfce7;          /* light green */
+  border-color: #22c55e;
+  color: #166534;
+}
+.storekeeper-hub .hub-toolbar .se-receipt:hover {
+  background: #22c55e;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
 /* Consolidated pick cart */
 .storekeeper-hub .cart {
   border: 1px dashed var(--cerulean-500);
