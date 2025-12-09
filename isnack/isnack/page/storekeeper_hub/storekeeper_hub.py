@@ -1,8 +1,9 @@
 import json
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, add_to_date, cstr, nowdate
+from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
 from frappe.utils.print_format import print_by_server 
+from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 from isnack.utils.printing import get_label_printer 
 
 # --- Helpers -----------------------------------------------------------------
@@ -829,3 +830,200 @@ def generate_picklist(transfers, group_same_items: int | str | None = 1):
     pick.insert()
     frappe.msgprint(_("Picklist {0} created.").format(pick.name))
     return {"name": pick.name}
+
+@frappe.whitelist()
+def get_open_purchase_orders(doctype, txt, searchfield, start, page_len, filters):
+    """Query function used by the Link field to show only POs that still need receipt."""
+    conditions = [
+        "po.docstatus = 1",
+        "po.status in ('To Receive and Bill', 'To Receive')",
+        "po.per_received < 100",
+    ]
+
+    params = {
+        "start": start,
+        "page_len": page_len,
+    }
+
+    if txt:
+        params["txt"] = f"%{txt}%"
+        conditions.append("(po.name like %(txt)s or po.supplier like %(txt)s)")
+
+    where_clause = " and ".join(conditions)
+
+    data = frappe.db.sql(
+        f"""
+        select
+            po.name,
+            po.supplier,
+            po.transaction_date,
+            po.per_received
+        from `tabPurchase Order` po
+        where {where_clause}
+        order by po.transaction_date desc, po.name desc
+        limit %(start)s, %(page_len)s
+        """,
+        params,
+    )
+
+    return data
+
+
+@frappe.whitelist()
+def get_po_items(purchase_order: str):
+    """Return pending items for a Purchase Order.
+
+    Only items with remaining (qty - received_qty) > 0 are returned, along with
+    basic header fields.
+    """
+    po = frappe.get_doc("Purchase Order", purchase_order)
+
+    items = []
+    for row in po.items:
+        ordered = flt(row.qty)
+        received = flt(row.received_qty)
+        pending = max(0.0, ordered - received)
+        if pending <= 0:
+            continue
+
+        item_doc = frappe.get_doc("Item", row.item_code)
+        requires_batch = bool(getattr(item_doc, "has_batch_no", False))
+
+        items.append(
+            {
+                "name": row.name,
+                "item_code": row.item_code,
+                "item_name": row.item_name,
+                "uom": row.uom,
+                "qty": ordered,
+                "received_qty": received,
+                "pending_qty": pending,
+                "requires_batch": requires_batch,
+                # optional: could be populated from item defaults or PO dates
+                "default_expiry_date": None,
+            }
+        )
+
+    return {
+        "company": po.company,
+        "supplier": po.supplier,
+        "items": items,
+    }
+
+
+
+@frappe.whitelist()
+def post_po_receipt(purchase_order, items=None):
+    """Create a Purchase Receipt for the given Purchase Order
+    using ERPNext's standard PO -> PR mapper, while overriding
+    qty / rejected_qty / batch from the dialog.
+
+    Args:
+        purchase_order: PO name (e.g. 'PUR-ORD-2025-00044')
+        items: JSON string or list of dicts with:
+            - po_detail (Purchase Order Item name)
+            - accepted_qty
+            - rejected_qty
+            - batch_no
+            - expiry_date
+            plus some read-only helpers (item_code, etc.)
+    """
+
+    # 1) Normalise items (JS sends JSON string)
+    if isinstance(items, str):
+        items = json.loads(items or "[]")
+
+    if not items:
+        frappe.throw(_("No items received."))
+
+    # 2) Build a map from PO Item (row.name) -> our dialog row
+    # Only keep rows where accepted or rejected > 0
+    item_map = {}
+    for row in items:
+        accepted = flt(row.get("accepted_qty") or 0)
+        rejected = flt(row.get("rejected_qty") or 0)
+        if accepted <= 0 and rejected <= 0:
+            continue
+
+        po_detail = row.get("po_detail")
+        if not po_detail:
+            # nothing to link to -> skip, or you can frappe.throw here
+            continue
+
+        item_map[po_detail] = {
+            "row": row,
+            "accepted": accepted,
+            "rejected": rejected,
+        }
+
+    if not item_map:
+        frappe.throw(_("No quantities to receive."))
+
+    # 3) Let ERPNext create a standard PR from the PO
+    # This ensures rate, taxes, currency, etc. all match the PO.
+    pr = make_purchase_receipt(purchase_order)
+
+    # 4) Filter & override PR items based on our dialog rows
+    new_items = []
+    for pr_item in pr.items:
+        data = item_map.get(pr_item.purchase_order_item)
+        if not data:
+            # This PO line wasn't selected in the dialog -> drop it
+            continue
+
+        row = data["row"]
+        accepted = data["accepted"]
+        rejected = data["rejected"]
+
+        total = accepted + rejected
+        if total <= 0:
+            continue
+
+        # override quantities
+        pr_item.qty = total
+        pr_item.rejected_qty = rejected
+
+        # batch handling
+        batch_no = (row.get("batch_no") or "").strip()
+        expiry_date = row.get("expiry_date")
+        if batch_no:
+            _ensure_batch(pr_item.item_code, batch_no, expiry_date)
+            pr_item.batch_no = batch_no
+
+        new_items.append(pr_item)
+
+    if not new_items:
+        frappe.throw(_("Nothing to post: all quantities are zero."))
+
+    # Replace items child table with our filtered/edited rows
+    pr.set("items", new_items)
+
+    # 5) Save (and optionally submit)
+    pr.flags.ignore_permissions = True
+    pr.save()
+    # pr.submit()  # enable if you want automatic submission
+
+    return {"purchase_receipt": pr.name}
+
+
+def _ensure_batch(item_code: str, batch_no: str, expiry_date=None):
+    """Create or update a Batch for the given item/batch_no."""
+    existing_batch = frappe.db.exists("Batch", {"batch_id": batch_no, "item": item_code})
+    if existing_batch:
+        if expiry_date:
+            batch = frappe.get_doc("Batch", existing_batch)
+            batch.expiry_date = getdate(expiry_date)
+            batch.save()
+        return existing_batch
+
+    batch = frappe.get_doc(
+        {
+            "doctype": "Batch",
+            "item": item_code,
+            "batch_id": batch_no,
+        }
+    )
+    if expiry_date:
+        batch.expiry_date = getdate(expiry_date)
+    batch.insert()
+    return batch.name

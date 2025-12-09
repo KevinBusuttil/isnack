@@ -74,6 +74,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const se_transfer_btn = $filters.find('.se-transfer');
   const se_issue_btn    = $filters.find('.se-issue');
   const se_receipt_btn  = $filters.find('.se-receipt');
+  const po_receipt_btn  = $filters.find('.po-receipt'); 
 
   const refresh = () => {
     state.routing = routing.get_value();
@@ -184,6 +185,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     make_stock_entry('Material Receipt', {
       to_warehouse: wh
     });
+  });
+
+  po_receipt_btn.on('click', () => {
+    show_po_receipt_dialog();
   });
 
   // ---------- Global Scan ----------
@@ -739,6 +744,445 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
     if (!$pallets.children().length) $pallets.append('<div class="muted">No pallets in the last 24h</div>');
   }
+
+  // ---------- PO Receipt Dialog ----------
+
+  let po_receipt_dialog = null;
+
+  function show_po_receipt_dialog() {
+    if (po_receipt_dialog) {
+      po_receipt_dialog.show();
+      return;
+    }
+
+    po_receipt_dialog = new frappe.ui.Dialog({
+      title: __('PO Receipt'),
+      size: 'extra-large',
+      static: true,
+      fields: [
+        {
+          fieldname: 'po_section',
+          fieldtype: 'Section Break',
+          label: __('Purchase Order'),
+        },
+        {
+          fieldname: 'purchase_order',
+          fieldtype: 'Link',
+          label: __('Purchase Order'),
+          options: 'Purchase Order',
+          reqd: 1,
+          get_query: () => {
+            return {
+              // use page-level Python module as query
+              query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_open_purchase_orders',
+            };
+          },
+          onchange: () => {
+            const d = po_receipt_dialog;
+            const po = d.get_value('purchase_order');
+            if (po) {
+              load_po_items_into_dialog(po);
+            } else {
+              d.set_value('items', []);
+            }
+          },
+        },
+        {
+          fieldname: 'col_break_1',
+          fieldtype: 'Column Break',
+        },
+        {
+          fieldname: 'company',
+          fieldtype: 'Link',
+          label: __('Company'),
+          options: 'Company',
+          read_only: 1,
+        },
+        {
+          fieldname: 'supplier',
+          fieldtype: 'Link',
+          label: __('Supplier'),
+          options: 'Supplier',
+          read_only: 1,
+        },
+        {
+          fieldname: 'items_section',
+          fieldtype: 'Section Break',
+          label: __('Items to Receive'),
+        },
+        {
+          fieldname: 'items',
+          fieldtype: 'Table',
+          label: __('Items'),
+          in_place_edit: true,
+          allow_bulk_edit: false,
+          reqd: 1,
+          cannot_add_rows: 1,      
+          cannot_delete_rows: 1,
+          hide_toolbar: 1,
+          fields: [
+            {
+              fieldname: 'item_code',
+              fieldtype: 'Data',
+              label: __('Item Code'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'item_name',
+              fieldtype: 'Data',
+              label: __('Item Name'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '160px',
+              columns: 2,
+            },
+            {
+              fieldname: 'uom',
+              fieldtype: 'Data',
+              label: __('UoM'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '40px',
+              columns: 1,
+            },
+            {
+              fieldname: 'ordered_qty',
+              fieldtype: 'Float',
+              label: __('Ordered'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'pending_qty',
+              fieldtype: 'Float',
+              label: __('Pending'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '80px',
+              columns: 1,
+            },
+            {
+              fieldname: 'accepted_qty',
+              fieldtype: 'Float',
+              label: __('Accepted Qty'),
+              in_list_view: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'rejected_qty',
+              fieldtype: 'Float',
+              label: __('Rejected Qty'),
+              in_list_view: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'batch_no',
+              fieldtype: 'Data',
+              label: __('Batch No'),
+              in_list_view: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'expiry_date',
+              fieldtype: 'Date',
+              label: __('Expiry Date'),
+              in_list_view: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'requires_batch',
+              fieldtype: 'Check',
+              label: __('Requires Batch'),
+              hidden: 1,
+            },
+            {
+              fieldname: 'already_received_qty',
+              fieldtype: 'Float',
+              label: __('Already Received'),
+              in_list_view: 1,
+              read_only: 1,
+              width: '100px',
+              columns: 1,
+            },
+            {
+              fieldname: 'po_detail',
+              fieldtype: 'Data',
+              label: __('PO Detail'),
+              hidden: 1,
+            },
+          ],
+        },
+      ],
+      primary_action_label: __('Post'),
+      primary_action: () => {
+        post_po_receipt();
+      },
+      secondary_action_label: __('Cancel'),
+      secondary_action: () => {
+        if (po_receipt_dialog) {
+            po_receipt_dialog.hide();
+        }
+    },
+
+    });
+
+    po_receipt_dialog.show();
+  }
+
+  function load_po_items_into_dialog(po_name) {
+    const d = po_receipt_dialog;
+    frappe.call({
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_po_items',
+      args: {
+        purchase_order: po_name,
+      },
+      freeze: true,
+      freeze_message: __('Loading PO Items...'),
+      callback: function (r) {
+        if (!r.message) return;
+
+        d.set_value('company', r.message.company || '');
+        d.set_value('supplier', r.message.supplier || '');
+
+        const rows = (r.message.items || []).map((row) => {
+          return {
+            item_code: row.item_code,
+            item_name: row.item_name,
+            uom: row.uom,
+            ordered_qty: row.qty,
+            pending_qty: row.pending_qty,
+            accepted_qty: row.pending_suggested || 0,
+            rejected_qty: 0,
+            batch_no: '',
+            expiry_date: row.default_expiry_date || null,
+            requires_batch: row.requires_batch,
+            already_received_qty: row.received_qty,
+            po_detail: row.name,
+          };
+        });
+
+        const items_field = d.get_field('items');
+        const grid = items_field.grid;
+
+        // fill the grid
+        grid.df.data = rows;
+        grid.refresh();
+
+      },
+    });
+  }
+
+  function post_po_receipt() {
+    const d = po_receipt_dialog;
+    const values = d.get_values();
+
+    if (!values || !values.purchase_order) {
+      frappe.msgprint({
+        title: __('Missing Data'),
+        message: __('Please select a Purchase Order.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
+    const grid = d.get_field('items').grid;
+
+    // Build items from the live DOM + row docs
+    const rows = (grid.grid_rows || [])
+      .map(row => {
+        const doc = { ...row.doc };              // base data from grid
+        const $row = $(row.row);                 // row DOM
+
+        // pull latest visible values from inputs
+        const acc_input = $row.find('input[data-fieldname="accepted_qty"]');
+        const rej_input = $row.find('input[data-fieldname="rejected_qty"]');
+        const batch_input = $row.find('input[data-fieldname="batch_no"]');
+        const exp_input = $row.find('input[data-fieldname="expiry_date"]');
+
+        if (acc_input.length) {
+          doc.accepted_qty = flt(acc_input.val() || 0);
+        }
+        if (rej_input.length) {
+          doc.rejected_qty = flt(rej_input.val() || 0);
+        }
+        if (batch_input.length) {
+          doc.batch_no = batch_input.val() || '';
+        }
+        if (exp_input.length) {
+          doc.expiry_date = exp_input.val() || null;
+        }
+
+        return doc;
+      })
+      .filter(row => row && row.item_code);      // ignore any empty/template rows
+
+    console.log('PO Receipt Items (from DOM):', rows);  // optional debug
+
+    const items = rows.filter((row) => {
+      const accepted = flt(row.accepted_qty || 0);
+      const rejected = flt(row.rejected_qty || 0);
+      return accepted > 0 || rejected > 0;
+    });
+
+    if (!items.length) {
+      frappe.msgprint({
+        title: __('No Quantities Entered'),
+        message: __('Enter Accepted or Rejected quantities for at least one item.'),
+        indicator: 'orange',
+      });
+      return;
+    }
+
+    // Basic validation: accepted + rejected must not exceed pending
+    for (let row of items) {
+      const pending = flt(row.pending_qty || 0);
+      const total = flt(row.accepted_qty || 0) + flt(row.rejected_qty || 0);
+      if (total > pending + 0.0001) {
+        frappe.throw(
+          __('Row {0}: Accepted + Rejected ({1}) cannot be greater than Pending ({2}) for item {3}.', [
+            row.idx || '',
+            total,
+            pending,
+            row.item_code,
+          ])
+        );
+      }
+
+      if (row.requires_batch && !row.batch_no) {
+        frappe.throw(__('Row {0}: Batch No is required for item {1}.', [row.idx || '', row.item_code]));
+      }
+    }
+
+    frappe.call({
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.post_po_receipt',
+      args: {
+        purchase_order: values.purchase_order,
+        items: items,
+      },
+      freeze: true,
+      freeze_message: __('Posting Purchase Receipt...'),
+      callback: function (r) {
+        if (r.exc) return;
+        const pr_name = r.message && r.message.purchase_receipt;
+        d.hide();
+
+        let msg = __('PO Receipt saved successfully.');
+        if (pr_name) {
+          msg += '<br>' + __('Purchase Receipt: {0}', [
+            `<a href="/app/purchase-receipt/${pr_name}" target="_blank">${pr_name}</a>`,
+          ]);
+        }
+
+        frappe.msgprint({
+          title: __('Success'),
+          message: msg,
+          indicator: 'green',
+        });
+      },
+    });
+  }
+  /*
+  function post_po_receipt() {
+    const d = po_receipt_dialog;
+
+    // 1) Force any in-place edited cell to lose focus so its value is committed
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+      document.activeElement.blur();
+    }
+
+    const values = d.get_values();
+
+    if (!values || !values.purchase_order) {
+      frappe.msgprint({
+        title: __('Missing Data'),
+        message: __('Please select a Purchase Order.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
+    // Read rows from the grid, not from values.items
+    const grid = d.get_field('items').grid;
+
+    console.log('1. Grid Data:', grid);
+    
+    const rows = grid.get_data() || [];
+
+    console.log('1. PO Receipt Items:', rows);
+
+    const items = rows.filter((row) => {
+      const accepted = flt(row.accepted_qty || 0);
+      const rejected = flt(row.rejected_qty || 0);
+      return accepted > 0 || rejected > 0;
+    });
+
+    if (!items.length) {
+      frappe.msgprint({
+        title: __('No Quantities Entered'),
+        message: __('Enter Accepted or Rejected quantities for at least one item.'),
+        indicator: 'orange',
+      });
+      return;
+    }
+
+    // Basic validation: accepted + rejected must not exceed pending
+    for (let row of items) {
+      const pending = flt(row.pending_qty || 0);
+      const total = flt(row.accepted_qty || 0) + flt(row.rejected_qty || 0);
+      if (total > pending + 0.0001) {
+        frappe.throw(
+          __('Row {0}: Accepted + Rejected ({1}) cannot be greater than Pending ({2}) for item {3}.', [
+            row.idx || '',
+            total,
+            pending,
+            row.item_code,
+          ])
+        );
+      }
+
+      if (row.requires_batch && !row.batch_no) {
+        frappe.throw(__('Row {0}: Batch No is required for item {1}.', [row.idx || '', row.item_code]));
+      }
+    }
+
+    frappe.call({
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.post_po_receipt',
+      args: {
+        purchase_order: values.purchase_order,
+        items: items,
+      },
+      freeze: true,
+      freeze_message: __('Posting Purchase Receipt...'),
+      callback: function (r) {
+        if (r.exc) return;
+        const pr_name = r.message && r.message.purchase_receipt;
+        d.hide();
+
+        let msg = __('PO Receipt saved successfully.');
+        if (pr_name) {
+          msg += '<br>' + __('Purchase Receipt: {0}', [
+            `<a href="/app/purchase-receipt/${pr_name}" target="_blank">${pr_name}</a>`,
+          ]);
+        }
+
+        frappe.msgprint({
+          title: __('Success'),
+          message: msg,
+          indicator: 'green',
+        });
+      },
+    });
+  }
+  */
 
   // ---------- Initial Paint ----------
   const redraw_and_refresh = () => { redraw_cart(); refresh(); };
