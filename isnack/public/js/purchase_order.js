@@ -31,7 +31,7 @@ function set_item_code_query(frm) {
 
 		// 2. Normal PO – keep your existing supplier‑based filter
 		return {
-			query:  'isnack.utils.get_items_filtered_by_supplier',
+			query:  'isnack.utils.common.get_items_filtered_by_supplier',
 			filters: { supplier: frm.doc.supplier }
 		};
 	});
