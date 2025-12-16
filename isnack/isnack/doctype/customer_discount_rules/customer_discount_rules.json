@@ -12,22 +12,13 @@
   "item",
   "discount_tier_1",
   "discount_tier_2",
-  "amended_from"
+  "pricing_rule_tier_1",
+  "pricing_rule_tier_2"
  ],
  "fields": [
   {
    "fieldname": "section_break_zafp",
    "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "amended_from",
-   "fieldtype": "Link",
-   "label": "Amended From",
-   "no_copy": 1,
-   "options": "Customer Discount Rules",
-   "print_hide": 1,
-   "read_only": 1,
-   "search_index": 1
   },
   {
    "fieldname": "customer",
@@ -66,14 +57,27 @@
    "non_negative": 1,
    "precision": "2",
    "reqd": 1
+  },
+  {
+   "fieldname": "pricing_rule_tier_1",
+   "fieldtype": "Link",
+   "label": "Pricing Rule (Tier 1)",
+   "options": "Pricing Rule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pricing_rule_tier_2",
+   "fieldtype": "Link",
+   "label": "Pricing Rule (Tier 2)",
+   "options": "Pricing Rule",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
- "is_submittable": 1,
  "links": [],
- "modified": "2025-12-15 17:34:14.218337",
+ "modified": "2025-12-16 15:44:48.300742",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Customer Discount Rules",
@@ -90,7 +94,6 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "submit": 1,
    "write": 1
   }
  ],
