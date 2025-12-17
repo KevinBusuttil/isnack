@@ -3,6 +3,7 @@
 
 import frappe
 from frappe.model.document import Document
+from frappe.utils import flt
 
 class CustomerDiscountRules(Document):
     def after_insert(self):
@@ -135,3 +136,86 @@ class CustomerDiscountRules(Document):
         for name in duplicates:
             if name != link_name:
                 frappe.delete_doc("Pricing Rule", name, force=1, ignore_permissions=True)
+
+@frappe.whitelist()
+def bulk_adjust_discounts(
+    names: list[str] | str,
+    tier1_action: str | None = None,
+    tier1_value: float | int | str | None = None,
+    tier2_action: str | None = None,
+    tier2_value: float | int | str | None = None,
+):
+    """Adjust tier discounts for multiple Customer Discount Rules records.
+
+    Actions:
+    - Tier 1: add / deduct
+    - Tier 2: add / deduct / clear
+    """
+
+    docnames = _parse_names(names)
+    if not docnames:
+        frappe.throw("No Customer Discount Rules selected")
+
+    tier1_action = _normalize_action(tier1_action, {"add", "deduct"})
+    tier2_action = _normalize_action(tier2_action, {"add", "deduct", "clear"})
+
+    tier1_delta = _coerce_delta(tier1_value, tier1_action)
+    tier2_delta = _coerce_delta(tier2_value, tier2_action)
+
+    updated = 0
+    for name in docnames:
+        doc: CustomerDiscountRules = frappe.get_doc("Customer Discount Rules", name)
+
+        if tier1_action:
+            doc.discount_tier_1 = _apply_delta(doc.discount_tier_1, tier1_delta, tier1_action)
+
+        if tier2_action:
+            if tier2_action == "clear":
+                doc.discount_tier_2 = None
+            else:
+                doc.discount_tier_2 = _apply_delta(doc.discount_tier_2, tier2_delta, tier2_action)
+
+        if tier1_action or tier2_action:
+            doc.save()
+            updated += 1
+
+    return {"updated": updated}
+
+
+def _parse_names(names: list[str] | str | None) -> list[str]:
+    if names is None:
+        return []
+    if isinstance(names, str):
+        try:
+            names = frappe.parse_json(names)
+        except Exception:
+            names = [names]
+    return [name for name in names if name]
+
+
+def _normalize_action(action: str | None, allowed: set[str]) -> str | None:
+    if not action:
+        return None
+    action = action.lower()
+    if action not in allowed:
+        frappe.throw(f"Invalid action: {action}")
+    return action
+
+
+def _coerce_delta(value: float | int | str | None, action: str | None) -> float:
+    if not action:
+        return 0.0
+    if action == "clear":
+        return 0.0
+    if value is None or value == "":
+        frappe.throw("Please provide a discount change value for the selected action")
+    return flt(value)
+
+
+def _apply_delta(current: float | None, delta: float, action: str) -> float:
+    base = flt(current)
+    if action == "add":
+        return base + delta
+    if action == "deduct":
+        return base - delta
+    return base                
