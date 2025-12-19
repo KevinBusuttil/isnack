@@ -64,6 +64,7 @@ doctype_js = {
 jinja = {
     "methods": [
         "isnack.utils.qr.get_qr_code",
+        "isnack.utils.sales_print_format.get_item_discounts",        
     ]
 }
 
