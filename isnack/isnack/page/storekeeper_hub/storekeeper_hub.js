@@ -272,8 +272,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     $buckets.empty();
     (r.message || []).forEach(b => {
+      const allAllocated = (b.wos || []).length && (b.wos || []).every(
+        wo => (wo.stage_status || '').toLowerCase() === 'staged'
+      );      
       const $bucket = $(`
-        <div class="bucket">
+        <div class="bucket ${allAllocated ? 'fully-allocated' : ''}">
           <div class="title">
             ${frappe.utils.escape_html(b.item_name)}
             <span class="muted">(${frappe.utils.escape_html(b.item_code)})</span>
@@ -285,7 +288,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           </div>
           <div class="wo-list"></div>
           <div class="mt-2">
-            <button class="btn btn-xs btn-primary select-bucket">Select for Allocation</button>
+            <button class="btn btn-xs btn-primary select-bucket" ${allAllocated ? 'disabled' : ''}>
+              ${allAllocated ? __('Fully Allocated') : __('Select for Allocation')}
+            </button>
+
           </div>
         </div>
       `);
@@ -389,7 +395,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     redraw_cart();
   }
-    
+
   // Add "Fill Cart to Remaining" next to existing buttons
   const $cart_inputs = $hub.find('.cart .cart-inputs');
   const $fillCartBtn = $('<button class="btn btn-sm btn-default fill-cart">Fill Cart to Remaining</button>');

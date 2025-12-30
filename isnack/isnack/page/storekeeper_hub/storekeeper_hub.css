@@ -208,6 +208,10 @@
   border-radius: 10px;
   background: var(--bg-50);
 }
+.storekeeper-hub .bucket.fully-allocated {
+  background: #fdf3d8; /* gentle gold tint to denote fully allocated */
+  border-color: #f5d082;
+}
 .storekeeper-hub .bucket .title {
   font-weight: 600;
   color: var(--text-900);
