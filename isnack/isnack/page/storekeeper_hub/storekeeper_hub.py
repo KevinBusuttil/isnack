@@ -45,6 +45,30 @@ def _required_map_for_wo(wo_name: str) -> dict:
         }
     return req
 
+def _required_leaf_map_for_wo(wo_name: str) -> dict:
+    """Return required qty per item_code for leaf (non-sub-assembly) BOM items only."""
+    wo = frappe.get_doc("Work Order", wo_name)
+    rows = frappe.db.sql(
+        """
+        select
+            bi.item_code,
+            bi.stock_uom,
+            sum(coalesce(bi.qty_consumed_per_unit, bi.qty, 0)) as qty_per_unit
+        from `tabBOM Item` bi
+        where bi.parent = %s
+          and coalesce(bi.bom_no, '') = ''
+        group by bi.item_code, bi.stock_uom
+        """,
+        (wo.bom_no,),
+        as_dict=True,
+    )
+    req = {}
+    for r in rows:
+        req[r.item_code] = {
+            "uom": r.stock_uom,
+            "qty": float(r.qty_per_unit) * float(wo.qty),
+        }
+    return req
 
 def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
     """Return already-transferred qty per item_code into the staging/WIP warehouse for this WO."""
@@ -112,6 +136,19 @@ def _remaining_map_for_wo(wo_name: str) -> dict:
     wo = frappe.get_doc("Work Order", wo_name)
     target_wh = _staging_for(wo) or _wip_for(wo)
     req = _required_map_for_wo(wo_name)
+    have = _transferred_map_for_wo(wo_name, target_wh) if target_wh else {}
+    out = {}
+    for item, info in req.items():
+        rem = max(0.0, float(info["qty"]) - float(have.get(item, 0.0)))
+        if rem > 0:
+            out[item] = {"uom": info["uom"], "qty": rem}
+    return out
+
+def _remaining_leaf_map_for_wo(wo_name: str) -> dict:
+    """Remaining qty per item_code for leaf BOM items (never negative)."""
+    wo = frappe.get_doc("Work Order", wo_name)
+    target_wh = _staging_for(wo) or _wip_for(wo)
+    req = _required_leaf_map_for_wo(wo_name)
     have = _transferred_map_for_wo(wo_name, target_wh) if target_wh else {}
     out = {}
     for item, info in req.items():
@@ -694,6 +731,34 @@ def get_consolidated_remaining_bulk(selected_wos=None, item_codes=None):
     for code in item_codes:
         out.append(get_consolidated_remaining(selected_wos=selected_wos, item_code=code))
     return out
+
+@frappe.whitelist()
+def get_consolidated_remaining_items(selected_wos=None):
+    """Return all raw-material items (leaf BOM items) with remaining requirement across selected WOs.
+
+    Response: [{'item_code': str, 'qty': float, 'uom': str}]
+    """
+    if isinstance(selected_wos, str):
+        try:
+            selected_wos = json.loads(selected_wos or "[]")
+        except Exception:
+            selected_wos = []
+    selected_wos = selected_wos or []
+
+    totals = {}
+    for wo in selected_wos:
+        remaining = _remaining_leaf_map_for_wo(wo)
+        for item_code, info in remaining.items():
+            if not item_code:
+                continue
+            entry = totals.setdefault(item_code, {"item_code": item_code, "qty": 0.0, "uom": info.get("uom")})
+            entry["qty"] += float(info.get("qty") or 0)
+            if not entry.get("uom") and info.get("uom"):
+                entry["uom"] = info.get("uom")
+
+    out = [row for row in totals.values() if row.get("qty", 0) > 0]
+    return sorted(out, key=lambda r: r.get("item_code") or "")
+
 
 @frappe.whitelist()
 def generate_picklist(transfers, group_same_items: int | str | None = 1):

@@ -343,7 +343,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       });
 
       // Select bucket button: capture only checked WOs
-      $bucket.find('.select-bucket').on('click', () => {
+      $bucket.find('.select-bucket').on('click', async () => {
         state.selected_bucket = b;
         state.selected_wos = [];
         $bucket.find('.wo-check').each((_, el) => {
@@ -354,6 +354,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           indicator: 'green'
         });
         paint_selection($bucket);
+        await auto_fill_cart_from_selection();
       });
 
       $buckets.append($bucket);
@@ -368,6 +369,27 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const $cart_scan = $hub.find('.cart-scan');
   const $cart_rows = $hub.find('.cart-rows');
 
+  async function auto_fill_cart_from_selection() {
+    if (!state.selected_wos || !state.selected_wos.length) {
+      return;
+    }
+
+    const r = await frappe.call({
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_consolidated_remaining_items',
+      args: { selected_wos: state.selected_wos }
+    });
+
+    state.cart = (r.message || []).map(item => ({
+      item_code: item.item_code,
+      batch_no: '',
+      uom: item.uom || '',
+      qty: item.qty || 0,
+      note: ''
+    }));
+
+    redraw_cart();
+  }
+    
   // Add "Fill Cart to Remaining" next to existing buttons
   const $cart_inputs = $hub.find('.cart .cart-inputs');
   const $fillCartBtn = $('<button class="btn btn-sm btn-default fill-cart">Fill Cart to Remaining</button>');
@@ -1090,99 +1112,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       },
     });
   }
-  /*
-  function post_po_receipt() {
-    const d = po_receipt_dialog;
-
-    // 1) Force any in-place edited cell to lose focus so its value is committed
-    if (document.activeElement && document.activeElement.tagName === 'INPUT') {
-      document.activeElement.blur();
-    }
-
-    const values = d.get_values();
-
-    if (!values || !values.purchase_order) {
-      frappe.msgprint({
-        title: __('Missing Data'),
-        message: __('Please select a Purchase Order.'),
-        indicator: 'red',
-      });
-      return;
-    }
-
-    // Read rows from the grid, not from values.items
-    const grid = d.get_field('items').grid;
-
-    console.log('1. Grid Data:', grid);
-    
-    const rows = grid.get_data() || [];
-
-    console.log('1. PO Receipt Items:', rows);
-
-    const items = rows.filter((row) => {
-      const accepted = flt(row.accepted_qty || 0);
-      const rejected = flt(row.rejected_qty || 0);
-      return accepted > 0 || rejected > 0;
-    });
-
-    if (!items.length) {
-      frappe.msgprint({
-        title: __('No Quantities Entered'),
-        message: __('Enter Accepted or Rejected quantities for at least one item.'),
-        indicator: 'orange',
-      });
-      return;
-    }
-
-    // Basic validation: accepted + rejected must not exceed pending
-    for (let row of items) {
-      const pending = flt(row.pending_qty || 0);
-      const total = flt(row.accepted_qty || 0) + flt(row.rejected_qty || 0);
-      if (total > pending + 0.0001) {
-        frappe.throw(
-          __('Row {0}: Accepted + Rejected ({1}) cannot be greater than Pending ({2}) for item {3}.', [
-            row.idx || '',
-            total,
-            pending,
-            row.item_code,
-          ])
-        );
-      }
-
-      if (row.requires_batch && !row.batch_no) {
-        frappe.throw(__('Row {0}: Batch No is required for item {1}.', [row.idx || '', row.item_code]));
-      }
-    }
-
-    frappe.call({
-      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.post_po_receipt',
-      args: {
-        purchase_order: values.purchase_order,
-        items: items,
-      },
-      freeze: true,
-      freeze_message: __('Posting Purchase Receipt...'),
-      callback: function (r) {
-        if (r.exc) return;
-        const pr_name = r.message && r.message.purchase_receipt;
-        d.hide();
-
-        let msg = __('PO Receipt saved successfully.');
-        if (pr_name) {
-          msg += '<br>' + __('Purchase Receipt: {0}', [
-            `<a href="/app/purchase-receipt/${pr_name}" target="_blank">${pr_name}</a>`,
-          ]);
-        }
-
-        frappe.msgprint({
-          title: __('Success'),
-          message: msg,
-          indicator: 'green',
-        });
-      },
-    });
-  }
-  */
 
   // ---------- Initial Paint ----------
   const redraw_and_refresh = () => { redraw_cart(); refresh(); };
