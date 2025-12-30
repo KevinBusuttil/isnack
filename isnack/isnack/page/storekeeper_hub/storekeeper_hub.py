@@ -759,6 +759,43 @@ def get_consolidated_remaining_items(selected_wos=None):
     out = [row for row in totals.values() if row.get("qty", 0) > 0]
     return sorted(out, key=lambda r: r.get("item_code") or "")
 
+@frappe.whitelist()
+def batch_link_query(doctype, txt, searchfield, start, page_len, filters=None):
+    """Batch Link field query with optional item filter and non-expired filter."""
+    filters = filters or {}
+    txt = (txt or "").strip()
+    item_code = filters.get("item_code")
+    has_expired = filters.get("has_expired")
+    today = nowdate()
+
+    conditions = []
+    params = {"today": today, "start": start or 0, "page_len": page_len or 20}
+
+    if item_code:
+        conditions.append("b.item = %(item_code)s")
+        params["item_code"] = item_code
+
+    if has_expired in (0, "0", False, "false", None):
+        conditions.append("(b.expiry_date is null or b.expiry_date >= %(today)s)")
+
+    if txt:
+        like_txt = f"%{txt}%"
+        conditions.append("(b.name like %(txt)s)")
+        params["txt"] = like_txt
+
+    where_clause = " and ".join(conditions) if conditions else "1=1"
+
+    rows = frappe.db.sql(
+        f"""
+        select b.name
+        from `tabBatch` b
+        where {where_clause}
+        order by b.expiry_date asc, b.creation desc
+        limit %(start)s, %(page_len)s
+        """,
+        params,
+    )
+    return rows
 
 @frappe.whitelist()
 def generate_picklist(transfers, group_same_items: int | str | None = 1):

@@ -428,7 +428,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const $tr = $(`
         <tr>
           <td><input class="form-control form-control-sm c-item"  value="${frappe.utils.escape_html(r.item_code || '')}"></td>
-          <td><input class="form-control form-control-sm c-batch" value="${frappe.utils.escape_html(r.batch_no || '')}"></td>
+          <td><div class="batch-holder"></div></td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
           <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${r.qty || 0}"></td>
           <td><input class="form-control form-control-sm c-notes" value="${frappe.utils.escape_html(r.note || '')}"></td>
@@ -442,8 +442,38 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       `);
 
       // Bind row handlers
-      $tr.find('.c-item').on('change', e => { r.item_code = e.target.value; });
-      $tr.find('.c-batch').on('change', e => { r.batch_no = e.target.value; });
+      const $itemInput = $tr.find('.c-item');
+      const $batchHolder = $tr.find('.batch-holder');
+
+      let batchControl = frappe.ui.form.make_control({
+        df: {
+          fieldtype: 'Link',
+          options: 'Batch',
+          placeholder: __('Batch'),
+          get_query: () => ({
+            query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.batch_link_query',
+            filters: {
+              item_code: r.item_code || null,
+              has_expired: 0
+            }
+          })
+        },
+        parent: $batchHolder,
+        render_input: true
+      });
+      batchControl.set_value(r.batch_no || '');
+      batchControl.$input && batchControl.$input.on('change', () => { r.batch_no = batchControl.get_value(); });
+
+      $itemInput.on('change', async e => {
+        r.item_code = e.target.value;
+        // reset batch on item change to force re-selection
+        r.batch_no = '';
+        if (batchControl) {
+          batchControl.set_value('');
+          batchControl.refresh();
+        }
+      });
+
       $tr.find('.c-uom').on('change',   e => { r.uom = e.target.value; });
       $tr.find('.c-qty').on('change',   e => { r.qty = parseFloat(e.target.value || 0); });
       $tr.find('.c-notes').on('change', e => { r.note = e.target.value; });
