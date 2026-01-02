@@ -14,7 +14,6 @@ def _default_company():
         "Global Defaults", "default_company"
     )
 
-
 def _wip_for(wo: dict) -> str:
     """Prefer WO's wip_warehouse field."""
     if isinstance(wo, dict):
@@ -23,6 +22,25 @@ def _wip_for(wo: dict) -> str:
         wip = getattr(wo, "wip_warehouse", None)
     return wip or ""
 
+def _wo_line(wo_doc):
+    """Resolve Factory Line for a Work Order."""
+    if getattr(wo_doc, "custom_factory_line", None):
+        return wo_doc.custom_factory_line
+    if getattr(wo_doc, "custom_line", None):
+        return wo_doc.custom_line
+
+    if getattr(wo_doc, "bom_no", None):
+        line = frappe.db.get_value("BOM", wo_doc.bom_no, "custom_default_factory_line")
+        if line:
+            return line
+
+    if getattr(wo_doc, "operations", None):
+        try:
+            if wo_doc.operations:
+                return wo_doc.operations[0].workstation
+        except Exception:
+            return None
+    return None
 
 def _required_map_for_wo(wo_name: str) -> dict:
     """Return required qty per item_code for a WO (BOM Explosion * WO.qty)."""
@@ -92,36 +110,28 @@ def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
 
 
 def _staging_for(wo_doc):
-    """Return staging warehouse from Factory Settings -> Line Warehouse Map (by workstation)."""
+    """Return staging warehouse from Factory Settings -> Line Warehouse Map (by Factory Line)."""
     # Child table for Factory Settings line_warehouse_map
+    meta = frappe.get_meta("Line Warehouse Map")
+    fields = ["factory_line", "staging_warehouse"]
+    if meta.has_field("workstation"):
+        fields.append("workstation")
+
     rows = frappe.get_all(
         "Line Warehouse Map",
-        fields=["workstation", "staging_warehouse"],
+        fields=fields,
         filters={},
     )
     if not rows:
         return None
 
-    # Determine workstation / line for this WO:
-    workstation = None
-
-    # If you use a custom_line field on Work Order, prefer that
-    if getattr(wo_doc, "custom_line", None):
-        workstation = wo_doc.custom_line
-
-    # Fallback to first operation's workstation
-    if not workstation and getattr(wo_doc, "operations", None):
-        try:
-            if wo_doc.operations:
-                workstation = wo_doc.operations[0].workstation
-        except Exception:
-            workstation = None
-
-    if not workstation:
+    line = _wo_line(wo_doc)
+    if not line:
         return None
 
     for r in rows:
-        if r.workstation == workstation:
+        row_line = r.get("factory_line") or r.get("workstation")
+        if row_line == line:
             return r.staging_warehouse or None
 
     return None

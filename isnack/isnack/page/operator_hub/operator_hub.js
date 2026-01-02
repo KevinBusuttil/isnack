@@ -1,4 +1,4 @@
-// Operator Hub — Kiosk-ready: operator-required actions, materials snapshot, line-centric Job Cards
+// Operator Hub — Kiosk-ready: operator-required actions, materials snapshot, line-centric Work Orders
 frappe.pages['operator-hub'].on_page_load = function (wrapper) {
   const page = frappe.ui.make_app_page({ parent: wrapper, title: 'Operator Hub', single_column: true });
   const $main = $(page.main);
@@ -25,9 +25,8 @@ function init_operator_hub($root) {
   const $matWOLbl  = $('#mat-wo-label', $root);
 
   const state  = {
-    current_card: null,
     current_wo: null,
-    cards: [],
+    orders: [],
     current_line: localStorage.getItem('kiosk_line') || null,
     current_emp: null,
     current_emp_name: null,
@@ -145,9 +144,8 @@ function init_operator_hub($root) {
   // ---------- Enable/disable ----------
   function refreshButtonStates() {
     const hasEmp  = !!state.current_emp;
-    const hasCard = !!state.current_card;
     const hasWO   = !!state.current_wo;
-    const enableCore = hasEmp && hasCard;
+    const enableCore = hasEmp && hasWO;
 
     $('#btn-start',  $root).prop('disabled', !enableCore);
     $('#btn-pause',  $root).prop('disabled', !enableCore);
@@ -189,22 +187,21 @@ function init_operator_hub($root) {
     const r = await rpc('isnack.api.mes_ops.list_workstations');
     const opts = (r.message || []).join('\n');
     const d = new frappe.ui.Dialog({
-      title: 'Select Line (Workstation)',
-      fields: [{ label:'Workstation', fieldname:'line', fieldtype:'Select', options: opts, reqd:1 }],
+      title: 'Select Factory Line',
+      fields: [{ label:'Factory Line', fieldname:'line', fieldtype:'Select', options: opts, reqd:1 }],
       primary_action_label: 'Apply',
       primary_action: v => {
         state.current_line = v.line;
         localStorage.setItem('kiosk_line', v.line);
         $('#kiosk-line-label').text(v.line);
 
-        // Reset current job/WO context when line changes
-        state.current_card = null;
+        // Reset current WO context when line changes
         state.current_wo = null;
         state.current_is_fg = false;
 
         // Clear banner + materials so we don't show data from previous line
         banner.html('');
-        render_mat_empty('Select a Job Card to load materials.');
+        render_mat_empty('Select a Work Order to load materials.');
         refreshButtonStates();
 
         d.hide();
@@ -293,7 +290,7 @@ function init_operator_hub($root) {
 
   function render_mat_empty(msg){
     $matWOLbl.text('—'); $matTBody.empty(); $matScans.empty();
-    $matWrap.addClass('d-none'); $matEmpty.removeClass('d-none').text(msg || 'Select a Job Card to load materials.');
+    $matWrap.addClass('d-none'); $matEmpty.removeClass('d-none').text(msg || 'Select a Work Order to load materials.');
   }
 
   // =============== Queue & grid ===============
@@ -301,27 +298,43 @@ function init_operator_hub($root) {
     setStatus('Loading queue…');
     const args = state.current_line ? { line: state.current_line } : {};
     return rpc('isnack.api.mes_ops.get_line_queue', args).then(r => {
-      state.cards = r.message || r || []; render_grid();
-      if (!state.current_card && state.cards.length) set_active_card(state.cards[0].name);
-      flashStatus(`Loaded ${state.cards.length} job card(s)`, 'success');
+      const prev = state.current_wo;
+      state.orders = r.message || r || []; render_grid();
+      if (prev && state.orders.find(o => o.name === prev)) {
+        set_active_work_order(prev);
+      } else if (state.orders.length) {
+        set_active_work_order(state.orders[0].name);
+      } else {
+        state.current_wo = null;
+        state.current_is_fg = false;
+        banner.html('');
+        render_mat_empty('Select a Work Order to load materials.');
+        refreshButtonStates();
+      }
+      flashStatus(`Loaded ${state.orders.length} work order(s)`, 'success');
     });
   }
   load_queue();
 
   function render_grid() {
     grid.empty();
-    if (!state.cards.length) { grid.html('<div class="text-muted">No job cards in queue for this line.</div>'); return; }
-    state.cards.forEach(row => {
+    if (!state.orders.length) { grid.html('<div class="text-muted">No work orders in queue for this line.</div>'); return; }
+    state.orders.forEach(row => {
       const chipType = row.type === 'FG' ? 'chip chip-fg' : 'chip chip-sf';
-      const stClass = ({'Open':'chip chip-ns','Work In Progress':'chip chip-running','On Hold':'chip chip-paused','Completed':'chip chip-running'}[row.status] || 'chip chip-ns');
+      const stClass = ({
+        'Not Started':'chip chip-ns',
+        'In Process':'chip chip-running',
+        'On Hold':'chip chip-paused',
+        'Stopped':'chip chip-paused',
+        'Completed':'chip chip-running'
+      }[row.status] || 'chip chip-ns');
       const el = $(`
         <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center" type="button">
           <div class="fw-semibold">
             <span class="me-2">${frappe.utils.escape_html(row.name)}</span>
             <span class="text-muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
-            <span class="text-muted ms-2">Op ${frappe.utils.escape_html(row.operation || '')}</span>
             <span class="text-muted ms-2">Qty ${row.for_quantity}</span>
-            <span class="text-muted ms-2">Crew ${row.crew_open}</span>
+            ${row.line ? `<span class="text-muted ms-2">Line ${frappe.utils.escape_html(row.line)}</span>` : ''}
           </div>
           <div class="d-flex gap-2 align-items-center">
             <span class="${chipType}">${row.type}</span>
@@ -329,22 +342,21 @@ function init_operator_hub($root) {
           </div>
         </button>
       `);
-      el.on('click', () => set_active_card(row.name)); grid.append(el);
+      el.on('click', () => set_active_work_order(row.name)); grid.append(el);
     });
   }
 
-  function set_active_card(card_name) {
-    state.current_card = card_name;
-    const row = (state.cards || []).find(x => x.name === card_name);
-    state.current_wo = row ? row.work_order : null;
+  function set_active_work_order(wo_name) {
+    state.current_wo = wo_name;
+    const row = (state.orders || []).find(x => x.name === wo_name);
     state.current_is_fg = row ? (row.type === 'FG') : false;
 
-    rpc('isnack.api.mes_ops.get_card_banner', { job_card: card_name })
+    rpc('isnack.api.mes_ops.get_wo_banner', { work_order: wo_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
 
     refreshButtonStates();
-    if (state.current_wo) load_materials_snapshot(state.current_wo); else render_mat_empty('Select a Job Card to load materials.');
-    flashStatus(`Selected ${card_name} (${state.current_is_fg ? 'FG' : 'SF'})`, 'neutral');
+    if (state.current_wo) load_materials_snapshot(state.current_wo); else render_mat_empty('Select a Work Order to load materials.');
+    flashStatus(`Selected ${wo_name} (${state.current_is_fg ? 'FG' : 'SF'})`, 'neutral');
   }
 
   // ---------- Scanner handling ----------
@@ -359,10 +371,10 @@ function init_operator_hub($root) {
       return;
     }
     if (!state.current_emp) { ensureOperatorNotice(); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
-    if (!state.current_card){ flashStatus('Pick a Job Card first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
+    if (!state.current_wo){ flashStatus('Pick a Work Order first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
 
     setStatus('Processing scan…');
-    rpc('isnack.api.mes_ops.scan_material', { job_card: state.current_card, code: raw })
+    rpc('isnack.api.mes_ops.scan_material', { work_order: state.current_wo, code: raw })
       .then(async r => {
         const { ok, msg } = r.message || {};
         frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
@@ -385,37 +397,37 @@ function init_operator_hub($root) {
 
   // ---------- Buttons ----------
   $('#btn-start',$root).on('click', async () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_card_status', { job_card: state.current_card, action:'Start', employee: state.current_emp });
-    flashStatus(`Started — ${state.current_card}`, 'success');
-    const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card }); banner.html(r.message.html); load_queue();
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
+    flashStatus(`Started — ${state.current_wo}`, 'success');
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
   });
 
   $('#btn-pause',$root).on('click', async () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_card_status', { job_card: state.current_card, action:'Pause', employee: state.current_emp });
-    flashStatus(`Paused — ${state.current_card}`, 'warning');
-    const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card }); banner.html(r.message.html); load_queue();
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Pause' });
+    flashStatus(`Paused — ${state.current_wo}`, 'warning');
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
   });
 
   $('#btn-stop',$root).on('click', async () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_card_status', { job_card: state.current_card, action:'Stop', employee: state.current_emp });
-    flashStatus(`Stopped — ${state.current_card}`, 'error');
-    const r = await rpc('isnack.api.mes_ops.get_card_banner', { job_card: state.current_card }); banner.html(r.message.html); load_queue();
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Stop' });
+    flashStatus(`Stopped — ${state.current_wo}`, 'error');
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
   });
 
   $('#btn-load',$root).on('click', () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     new frappe.ui.Dialog({ title: 'Load / Scan Materials',
       fields: [{ fieldname:'info', fieldtype:'HTML', options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' }]
     }).show();
     setScanMode(true);
-    flashStatus(`Ready to scan for ${state.current_card}`); focus_scan();
+    flashStatus(`Ready to scan for ${state.current_wo}`); focus_scan();
   });
 
   $('#btn-request',$root).on('click', () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);  // let the dialog keep focus
     const d = new frappe.ui.Dialog({
       title:'Request More Material',
@@ -427,7 +439,7 @@ function init_operator_hub($root) {
       primary_action_label:'Send Request',
       primary_action: (v) => {
         setStatus('Submitting material request…');
-        rpc('isnack.api.mes_ops.request_material', { job_card: state.current_card, ...v })
+        rpc('isnack.api.mes_ops.request_material', { work_order: state.current_wo, ...v })
           .then(r => { d.hide(); frappe.msgprint('Material Request: ' + (r.message && r.message.mr)); flashStatus('Material request submitted', 'success'); });
       }
     });
@@ -436,7 +448,7 @@ function init_operator_hub($root) {
 
   // Return Materials
   $('#btn-return',$root).on('click', () => {
-    if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);  // keep focus inside the return dialog
     const lines = [];
     const listHTML = `
@@ -456,7 +468,7 @@ function init_operator_hub($root) {
         if (!lines.length) { frappe.msgprint('No items to return'); return; }
         setStatus('Posting returns…');
         try {
-          await rpc('isnack.api.mes_ops.return_materials', { job_card: state.current_card, lines: JSON.stringify(lines) });
+          await rpc('isnack.api.mes_ops.return_materials', { work_order: state.current_wo, lines: JSON.stringify(lines) });
           d.hide(); flashStatus('Return transfer posted', 'success');
           if (state.current_wo) load_materials_snapshot(state.current_wo);
         } catch {}
@@ -492,7 +504,7 @@ function init_operator_hub($root) {
 
   // Print Label (FG) — uses Factory Settings defaults for template/printer
   $('#btn-label',$root).on('click', async () => {
-    if (!state.current_card || !state.current_emp || !state.current_is_fg) return;
+    if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
     setScanMode(false);
 
     // Pull defaults from Factory Settings
@@ -511,8 +523,8 @@ function init_operator_hub($root) {
       primary_action_label:'Print',
       primary_action: (v) => {
         setStatus('Sending label to printer…');
-        rpc('isnack.api.mes_ops.print_label', { job_card: state.current_card, carton_qty: v.qty, template: v.template, printer: v.printer })
-          .then(() => { d.hide(); frappe.show_alert({message:'Label sent', indicator:'green'}); flashStatus(`Label printed — ${state.current_card}`, 'success'); });
+        rpc('isnack.api.mes_ops.print_label', { work_order: state.current_wo, carton_qty: v.qty, template: v.template, printer: v.printer })
+          .then(() => { d.hide(); frappe.show_alert({message:'Label sent', indicator:'green'}); flashStatus(`Label printed — ${state.current_wo}`, 'success'); });
       }
     });
     d.show();
@@ -603,5 +615,5 @@ function init_operator_hub($root) {
 
   // Initial
   refreshButtonStates();
-  render_mat_empty('Select a Job Card to load materials.');
+  render_mat_empty('Select a Work Order to load materials.');
 }

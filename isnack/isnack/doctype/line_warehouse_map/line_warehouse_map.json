@@ -6,20 +6,12 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "workstation",
+  "factory_line",
   "staging_warehouse",
   "wip_warehouse",
   "target_warehouse"
  ],
  "fields": [
-  {
-   "fieldname": "workstation",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Workstation",
-   "options": "Workstation",
-   "reqd": 1
-  },
   {
    "fieldname": "staging_warehouse",
    "fieldtype": "Link",
@@ -42,13 +34,21 @@
    "in_list_view": 1,
    "label": "Target Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Factory Line",
+   "options": "Factory Line",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-26 17:10:51.500679",
+ "modified": "2026-01-02 15:48:13.373021",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Line Warehouse Map",

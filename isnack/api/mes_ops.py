@@ -84,7 +84,12 @@ def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[s
     fs = _fs()
     rows = getattr(fs, "line_warehouse_map", []) or []
     for r in rows:
-        if (getattr(r, "workstation", None) or "").strip().lower() == str(line).strip().lower():
+        row_line = (
+            getattr(r, "factory_line", None)
+            or getattr(r, "workstation", None)
+            or ""
+        ).strip()
+        if row_line.lower() == str(line).strip().lower():
             return (
                 getattr(r, "staging_warehouse", None) or None,
                 getattr(r, "wip_warehouse", None) or None,
@@ -106,7 +111,10 @@ def _get_item_group(item_code: str) -> Optional[str]:
     return frappe.db.get_value("Item", item_code, "item_group")
 
 def _get_user_line(user: str) -> Optional[str]:
-    line = frappe.defaults.get_user_default("manufacturing_line")
+    line = (
+        frappe.defaults.get_user_default("factory_line")
+        or frappe.defaults.get_user_default("manufacturing_line")
+    )
     return line or None
 
 def _user_employee(user: str) -> Optional[str]:
@@ -131,19 +139,42 @@ def _employee_or_user_default(employee: Optional[str]) -> Optional[str]:
         return employee
     return _user_employee(frappe.session.user)
 
+def _line_for_work_order(work_order: str) -> Optional[str]:
+    """Prefer WO.factory_line/custom_factory_line, then BOM default, then first operation/workstation."""
+    if not work_order:
+        return None
+
+    info = frappe.db.get_value(
+        "Work Order",
+        work_order,
+        ["custom_factory_line", "bom_no"],
+        as_dict=True,
+    ) or {}
+    line = (info.get("custom_factory_line") or "").strip() or None
+
+    if not line and info.get("bom_no"):
+        line = frappe.db.get_value("BOM", info["bom_no"], "custom_default_factory_line")
+
+    if line:
+        return line
+
+    # Legacy fallback: first operation workstation or Job Card workstation
+    op_line = frappe.db.get_value("Work Order Operation", {"parent": work_order}, "workstation")
+    return op_line or frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+
 def _default_line_staging(work_order: str, *, is_packaging: bool = False) -> Optional[str]:
-    line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+    line = _line_for_work_order(work_order)
     staging, _wip, _target = _warehouses_for_line(line)
     return staging or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_wip(work_order: str) -> Optional[str]:
-    line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+    line = _line_for_work_order(work_order)
     _staging, wip, _target = _warehouses_for_line(line)
     return wip or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_target(work_order: str) -> Optional[str]:
     """Default FG/SFG output warehouse for a WO based on its line."""
-    line = frappe.db.get_value("Job Card", {"work_order": work_order}, "workstation")
+    line = _line_for_work_order(work_order)
     _staging, _wip, target = _warehouses_for_line(line)
     return target or None
 
@@ -317,6 +348,7 @@ def get_wo_banner(work_order):
     is_fg = _is_fg(wo.production_item)
     type_chip = "FG" if is_fg else "SF"
     batch = wo.get("batch_no") or "-"
+    line = _line_for_work_order(work_order) or "-"
 
     html = f"""
       <div class="d-flex flex-wrap justify-content-between">
@@ -325,7 +357,7 @@ def get_wo_banner(work_order):
       </div>
       <div>Batch: {frappe.utils.escape_html(batch)}</div>
       <div>Target: {wo.qty} &nbsp; Actual: {actual} &nbsp; Rejects: {rejects} &nbsp; Status: {frappe.utils.escape_html(wo.status)}</div>
-      <div class="small text-muted">Operator: {frappe.utils.escape_html(frappe.session.user)}</div>
+      <div class="small text-muted">Line: {frappe.utils.escape_html(line)} · Operator: {frappe.utils.escape_html(frappe.session.user)}</div>
     """
     return {"html": html}
 
@@ -349,77 +381,66 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
     }
 
 # ============================================================
-# Line queue + card banner
+# Line queue + banner (Factory Line / Work Order centric)
 # ============================================================
 
 @frappe.whitelist()
 def get_line_queue(line: Optional[str] = None):
+    """Return Work Orders for a line (Factory Line), replacing Job Card queue."""    
     if not line:
         line = _get_user_line(frappe.session.user)
 
-    filters = {
-        "docstatus": ["<", 2],
-        "status": ["in", ["Open", "Work In Progress", "On Hold"]],
-    }
+    filters: dict = {
+        "docstatus": 1,
+        "status": ["in", ["Not Started", "In Process", "On Hold", "Stopped"]],    }
+    
     if line:
-        filters["workstation"] = line
+        meta = frappe.get_meta("Work Order")
+        if meta.has_field("custom_factory_line"):
+            filters["custom_factory_line"] = line
 
-    meta = frappe.get_meta("Job Card")
-    has_priority = any(df.fieldname == "priority" for df in meta.fields)
-    fields = ["name","work_order","operation","workstation","for_quantity","status","modified"]
-    if has_priority:
-        fields.append("priority")
-
-    order_by = "creation asc"
-    if has_priority:
-        order_by = "coalesce(priority, 999999), creation asc"
-
-    cards = frappe.get_all(
-        "Job Card",
+    wos = frappe.get_all(
+        "Work Order",
         filters=filters,
-        fields=fields,
-        order_by=order_by,
+        fields=[
+            "name",
+            "production_item",
+            "item_name",
+            "qty",
+            "status",
+            "custom_factory_line",
+            "planned_start_date",
+            "creation",
+        ],
+        order_by="coalesce(planned_start_date, creation) asc",
         limit=300,
     )
 
     out = []
-    for c in cards:
-        wo = frappe.db.get_value("Work Order", c.work_order, ["production_item","item_name","status"], as_dict=True) if c.work_order else {}
-        out.append({
-            "name": c.name,
-            "work_order": c.work_order,
-            "operation": c.operation,
-            "workstation": c.workstation,
-            "for_quantity": c.for_quantity,
-            "status": c.status,
-            "priority": getattr(c, "priority", None),
-            "production_item": (wo or {}).get("production_item"),
-            "item_name": (wo or {}).get("item_name"),
-            "wo_status": (wo or {}).get("status"),
-            "crew_open": _open_log_count(c.name),
-            "type": "FG" if (wo and _is_fg(wo.get("production_item"))) else "SF",
-        })
+    for wo in wos:
+        wo_line = wo.get("custom_factory_line") or _line_for_work_order(wo.name)
+        out.append(
+            {
+                "name": wo.name,
+                "work_order": wo.name,
+                "line": wo_line,
+                "for_quantity": wo.qty,
+                "status": wo.status,
+                "production_item": wo.production_item,
+                "item_name": wo.item_name,
+                "type": "FG" if _is_fg(wo.production_item) else "SF",
+            }
+        )
     return out
 
 @frappe.whitelist()
-def get_card_banner(job_card: str):
-    info = _job_card_info(job_card)
-    crew = ", ".join([
-        frappe.utils.escape_html(
-            frappe.db.get_value("Employee", r["employee"], "employee_name") or r["employee"]
-        ) for r in info["open_logs"]
-    ]) or "-"
-
-    html = f"""
-      <div class="d-flex flex-wrap justify-content-between">
-        <div><b>{frappe.utils.escape_html(info['name'])}</b> — {frappe.utils.escape_html(info.get('item_name') or '')}</div>
-        <div><span class="badge {'bg-primary' if _is_fg(info.get('production_item') or '') else 'bg-secondary'}">{'FG' if _is_fg(info.get('production_item') or '') else 'SF'}</span></div>
-      </div>
-      <div>WO: {frappe.utils.escape_html(info.get('work_order') or '-')} &nbsp; Op: {frappe.utils.escape_html(info.get('operation') or '-')} &nbsp; Qty: {info.get('for_quantity') or 0}</div>
-      <div>Status: {frappe.utils.escape_html(info.get('status') or '-')} &nbsp; Crew (active): {crew}</div>
-      <div class="small text-muted">Line: {frappe.utils.escape_html(info.get('workstation') or '-')}</div>
-    """
-    return {"html": html}
+def get_card_banner(job_card: Optional[str] = None, work_order: Optional[str] = None):
+    """Compatibility wrapper: returns the Work Order banner."""
+    if not work_order and job_card:
+        work_order = frappe.db.get_value("Job Card", job_card, "work_order")
+    if not work_order:
+        frappe.throw(_("Missing Work Order"))
+    return get_wo_banner(work_order)
 
 # ============================================================
 # Job control (Start / Pause / Stop) — employee-specific logs
@@ -548,6 +569,51 @@ def set_card_status(
     jc.flags.ignore_permissions = True
     jc.save()
     return True
+
+@frappe.whitelist()
+def set_work_order_state(
+    work_order: str,
+    action: str,
+    reason: Optional[str] = None,
+    remarks: Optional[str] = None,
+):
+    """Start / Pause / Stop a Work Order directly (Factory Line execution)."""
+    _require_roles(ROLES_OPERATOR)
+    wo = frappe.get_doc("Work Order", work_order)
+
+    now = frappe.utils.now_datetime()
+    action_lc = (action or "").strip().lower()
+    updates: dict = {}
+
+    if action_lc == "start":
+        updates["status"] = "In Process"
+        if not wo.actual_start_date:
+            updates["actual_start_date"] = now
+    elif action_lc == "pause":
+        updates["status"] = "On Hold"
+    elif action_lc == "stop":
+        updates["status"] = "Stopped"
+        if not wo.actual_end_date:
+            updates["actual_end_date"] = now
+    else:
+        frappe.throw(_("Unknown action"))
+
+    if reason:
+        updates["mes_reason"] = reason
+    if remarks:
+        updates["mes_remarks"] = remarks
+
+    if updates:
+        frappe.db.set_value("Work Order", work_order, updates)
+
+    wo.add_comment(
+        "Info",
+        _("Work Order control update: {0}").format(
+            {"action": action, "reason": reason, "remarks": remarks, "by": frappe.session.user}
+        ),
+    )
+    return True
+
 
 # ============================================================
 # New: Semi-finished (SFG) helpers
@@ -923,6 +989,15 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         except Exception:
             pass
 
+    try:
+        frappe.db.set_value(
+            "Work Order",
+            work_order,
+            {"status": "Completed", "actual_end_date": frappe.utils.now_datetime()},
+        )
+    except Exception:
+        pass
+
     wo.add_comment("Info", _("WO FG receipt: Good={0}, Rejects={1}, Remarks={2}").format(good, rejects, (remarks or "")))
     wo.flags.ignore_permissions = True
     wo.save()
@@ -993,8 +1068,10 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
 
 @frappe.whitelist()
 def list_workstations():
+    """Deprecated name; now returns Factory Lines for Operator Hub."""
     _require_roles(["Factory Operator", "Production Manager"])
-    rows = frappe.get_all("Workstation", fields=["name"], order_by="name asc", limit=500)
+    target_dt = "Factory Line" if frappe.db.exists("DocType", "Factory Line") else "Workstation"
+    rows = frappe.get_all(target_dt, fields=["name"], order_by="name asc", limit=500)
     return [r.name for r in rows]
 
 @frappe.whitelist()
@@ -1128,7 +1205,13 @@ def apply_line_warehouses_to_work_order(doc, method=None):
     """
 
     # 1) Find the line
-    line = getattr(doc, "custom_line", None)
+    line = getattr(doc, "custom_factory_line", None) or getattr(doc, "custom_line", None)
+
+    if not line and getattr(doc, "bom_no", None):
+        line = frappe.db.get_value("BOM", doc.bom_no, "custom_default_factory_line")
+        if line and not getattr(doc, "custom_factory_line", None):
+            doc.custom_factory_line = line
+
     if not line and getattr(doc, "operations", None):
         for op in doc.operations:
             ws = getattr(op, "workstation", None)
@@ -1141,7 +1224,6 @@ def apply_line_warehouses_to_work_order(doc, method=None):
 
     # 2) Get warehouses from Factory Settings → Line Warehouse Map
     _staging, wip, target = _warehouses_for_line(line)
-    print(f'_staging, wip, target : {line} {_staging} {wip} {target}')
     if not (wip or target):
         return
 
