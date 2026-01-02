@@ -192,10 +192,24 @@
 .storekeeper-hub .cart-table th,
 .storekeeper-hub .cart-table td {
   border-bottom: 1px solid var(--border-200);
-  padding: 6px 8px;
+  padding: 4px 6px;
+  vertical-align: middle;  
 }
 .storekeeper-hub .cart-table tbody tr td {
   border-bottom: none; /* avoid separator lines between cart rows */
+}
+.storekeeper-hub .cart-table .frappe-control,
+.storekeeper-hub .cart-table .frappe-control .form-group {
+  margin: 0;
+}
+.storekeeper-hub .cart-table .frappe-control .control-input-wrapper {
+  margin: 0;
+}
+.storekeeper-hub .cart-table .frappe-control .control-label {
+  display: none;
+}
+.storekeeper-hub .cart-table .frappe-control .control-input {
+  min-height: auto;
 }
 .storekeeper-hub .cart-actions {
   display: flex;

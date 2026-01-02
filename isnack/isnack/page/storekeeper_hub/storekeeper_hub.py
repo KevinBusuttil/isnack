@@ -766,6 +766,7 @@ def batch_link_query(doctype, txt, searchfield, start, page_len, filters=None):
     txt = (txt or "").strip()
     item_code = filters.get("item_code")
     has_expired = filters.get("has_expired")
+    warehouse = filters.get("warehouse")
     today = nowdate()
 
     conditions = []
@@ -783,11 +784,28 @@ def batch_link_query(doctype, txt, searchfield, start, page_len, filters=None):
         conditions.append("(b.name like %(txt)s)")
         params["txt"] = like_txt
 
+    qty_conditions = ["sle.is_cancelled = 0"]
+    if item_code:
+        qty_conditions.append("sle.item_code = %(item_code)s")
+    if warehouse:
+        qty_conditions.append("sle.warehouse = %(warehouse)s")
+        params["warehouse"] = warehouse
+    qty_where = " and ".join(qty_conditions)
+
+
     where_clause = " and ".join(conditions) if conditions else "1=1"
 
     rows = frappe.db.sql(
         f"""
-        select b.name
+        select
+            b.name,
+            concat_ws(
+                ', ',
+                ifnull(format(coalesce(b.batch_qty, 0), 2), ''),
+                case when b.manufacturing_date is not null then concat('MFG-', date_format(b.manufacturing_date, '%%Y-%%m-%%d')) end,
+                case when b.expiry_date is not null then concat('EXP-', date_format(b.expiry_date, '%%Y-%%m-%%d')) end,
+                b.name
+            ) as description
         from `tabBatch` b
         where {where_clause}
         order by b.expiry_date asc, b.creation desc

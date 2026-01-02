@@ -454,7 +454,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.batch_link_query',
             filters: {
               item_code: r.item_code || null,
-              has_expired: 0
+              has_expired: 0,
+              warehouse: state.src_warehouse || null
             }
           })
         },
