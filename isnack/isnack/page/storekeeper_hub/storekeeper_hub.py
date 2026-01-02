@@ -163,6 +163,9 @@ def _stage_status(work_order_name: str) -> str:
 
     We consider transfers into the WO's staging warehouse (Factory Settings →
     Line Warehouse Map) if present, otherwise its WIP warehouse.
+
+    Only leaf BOM items (raw materials without their own BOM) are considered
+    when determining staged vs. partial to avoid counting sub-assembly rows.
     """
     wo = frappe.get_doc("Work Order", work_order_name)
     target_wh = _staging_for(wo) or _wip_for(wo)
@@ -186,7 +189,7 @@ def _stage_status(work_order_name: str) -> str:
     if not rows:
         return "Not Staged"
 
-    req = _required_map_for_wo(work_order_name)
+    req = _required_leaf_map_for_wo(work_order_name)
     have_map = {r.item_code: float(r.qty or 0) for r in rows}
     partial = any(
         have_map.get(item, 0.0) < float(info["qty"]) - 1e-9

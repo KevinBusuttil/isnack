@@ -164,7 +164,18 @@ function init_operator_hub($root) {
 
   // Keep scanner focused
   const focus_scan = () => scan.trigger('focus');
-  setInterval(focus_scan, 1500); focus_scan();
+  let scanFocusTimer = null;
+  let scanMode = false;
+  function setScanMode(enable){
+    const on = !!enable;
+    if (on === scanMode) return;
+    scanMode = on;
+    if (scanFocusTimer) { clearInterval(scanFocusTimer); scanFocusTimer = null; }
+    if (scanMode) {
+      focus_scan();
+      scanFocusTimer = setInterval(focus_scan, 1500);
+    }
+  }
 
   // Print channel
   if (!window.__opHubRealtimeBound) {
@@ -174,6 +185,7 @@ function init_operator_hub($root) {
 
   // Choose line — via server (no client get_list)
   $('#kiosk-choose-line', $root).on('click', async () => {
+    setScanMode(false);
     const r = await rpc('isnack.api.mes_ops.list_workstations');
     const opts = (r.message || []).join('\n');
     const d = new frappe.ui.Dialog({
@@ -204,17 +216,16 @@ function init_operator_hub($root) {
 
   // Choose operator
   $('#kiosk-choose-emp', $root).on('click', () => {
+    setScanMode(false);  // avoid hidden scanner stealing focus inside dialog    
     const d = new frappe.ui.Dialog({
       title: 'Set Operator',
       fields: [
-        { label:'Employee', fieldname:'employee', fieldtype:'Link', options:'Employee' },
-        { fieldtype:'Section Break' },
-        { label:'Scan Badge', fieldname:'badge', fieldtype:'Data', description:'Scan or type EMP:123456 and press Enter' }
+        { label:'Employee', fieldname:'employee', fieldtype:'Link', options:'Employee', reqd:1 }, 
       ],
       primary_action_label: 'Set',
       primary_action: async v => {
-        let payload = v.employee ? { employee: v.employee } : (v.badge ? { badge: v.badge.replace(/^EMP:/i, '') } : null);
-        if (!payload) { frappe.msgprint('Pick an Employee or scan a Badge'); return; }
+        const payload = v.employee ? { employee: v.employee } : null;
+        if (!payload) { frappe.msgprint('Pick an Employee'); return; }
         const r = await frappe.call('isnack.api.mes_ops.resolve_employee', payload);
         if (r.message && r.message.ok) {
           state.current_emp = r.message.employee; state.current_emp_name = r.message.employee_name;
@@ -341,24 +352,12 @@ function init_operator_hub($root) {
   const errTone = new Audio('/assets/frappe/sounds/cancel.mp3');
   const $scanStatus = $('#scan-status');
 
-  async function resolveBadge(badge){
-    const r = await frappe.call('isnack.api.mes_ops.resolve_employee', { badge });
-    if (r.message && r.message.ok) {
-      state.current_emp = r.message.employee; state.current_emp_name = r.message.employee_name;
-      $('#kiosk-emp-label').text(state.current_emp_name);
-      $scanStatus.length && $scanStatus.text('Badge').removeClass().addClass('badge bg-info');
-      refreshButtonStates(); flashStatus(`Operator: ${state.current_emp_name}`, 'success');
-      try { okTone.play().catch(()=>{}); } catch(_) {}
-    } else {
-      $scanStatus.length && $scanStatus.text('Unknown').removeClass().addClass('badge bg-danger');
-      ensureOperatorNotice(); try { errTone.play().catch(()=>{}); } catch(_) {}
-    }
-  }
-
   async function handleScanValue(raw) {
     if (!raw) return;
-    if (/^EMP:/i.test(raw)) return resolveBadge(raw.replace(/^EMP:/i, ''));
-    if (!state.current_card && /^[A-Z0-9\-]{4,20}$/i.test(raw)) return resolveBadge(raw);
+    if (/^EMP:/i.test(raw)) {
+      flashStatus('Use Set Operator to choose the operator', 'warning');
+      return;
+    }
     if (!state.current_emp) { ensureOperatorNotice(); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
     if (!state.current_card){ flashStatus('Pick a Job Card first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
 
@@ -411,11 +410,13 @@ function init_operator_hub($root) {
     new frappe.ui.Dialog({ title: 'Load / Scan Materials',
       fields: [{ fieldname:'info', fieldtype:'HTML', options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' }]
     }).show();
+    setScanMode(true);
     flashStatus(`Ready to scan for ${state.current_card}`); focus_scan();
   });
 
   $('#btn-request',$root).on('click', () => {
     if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
+    setScanMode(false);  // let the dialog keep focus
     const d = new frappe.ui.Dialog({
       title:'Request More Material',
       fields: [
@@ -436,6 +437,7 @@ function init_operator_hub($root) {
   // Return Materials
   $('#btn-return',$root).on('click', () => {
     if (!state.current_card || !state.current_emp) { ensureOperatorNotice(); return; }
+    setScanMode(false);  // keep focus inside the return dialog
     const lines = [];
     const listHTML = `
       <div class="mb-2 text-muted">Scan an item barcode, enter quantity (UoM), optional batch, then click <b>Add</b>. When done, click <b>Post Returns</b>.</div>
@@ -491,6 +493,7 @@ function init_operator_hub($root) {
   // Print Label (FG) — uses Factory Settings defaults for template/printer
   $('#btn-label',$root).on('click', async () => {
     if (!state.current_card || !state.current_emp || !state.current_is_fg) return;
+    setScanMode(false);
 
     // Pull defaults from Factory Settings
     const [tplDefault, prnDefault] = await Promise.all([
@@ -518,6 +521,7 @@ function init_operator_hub($root) {
   // >>> NEW: Close / End Work Order with semi-finished usage <<<
   $('#btn-close',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    setScanMode(false);
 
     // Get remaining qty as default for "Good"
     let remainingDefault = 0;
