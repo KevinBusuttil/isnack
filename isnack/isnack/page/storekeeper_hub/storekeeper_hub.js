@@ -51,9 +51,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   // Default Source Warehouse from Stock Settings
   frappe.db.get_single_value('Stock Settings', 'default_warehouse').then(val => {
-    if (val && !src_wh.get_value()) {
-      src_wh.set_value(val);
+    console.log('Default Source Warehouse value to', val);
+
+    const current = src_wh.get_value();
+    if (val && !current) {
+      src_wh.set_value(val).then(() => {
+        state.src_warehouse = src_wh.get_value() || val || '';
+      });
+    } else {
+      state.src_warehouse = current || val || '';
+
+    state.src_warehouse = src_wh.get_value() || '';
+    console.log('Default Source Warehouse set to', state.src_warehouse);
     }
+  });
+  src_wh.$input && src_wh.$input.on('change', () => {
+    state.src_warehouse = src_wh.get_value() || '';
   });
 
   const posting_date = frappe.ui.form.make_control({
@@ -455,7 +468,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             filters: {
               item_code: r.item_code || null,
               has_expired: 0,
-              warehouse: state.src_warehouse || null
+              warehouse: src_wh.get_value() || state.src_warehouse || null
             }
           })
         },
