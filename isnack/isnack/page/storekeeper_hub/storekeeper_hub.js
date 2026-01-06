@@ -16,7 +16,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const $hub = $(wrapper).find('.storekeeper-hub');
 
   const state = {
-    routing: '',
+    factory_line: '',
     src_warehouse: '',
     posting_date: '',
     pallet_id: '',
@@ -37,9 +37,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   // ---------- Toolbar Controls ----------
   const $filters = $hub.find('.filters');
 
-  const routing = frappe.ui.form.make_control({
-    df: { fieldtype: 'Link', label: 'Routing', fieldname: 'routing', options: 'Routing', reqd: 0 },
-    parent: $filters.find('.routing'),
+  const factory_line = frappe.ui.form.make_control({
+    df: { fieldtype: 'Link', label: 'Factory Line', fieldname: 'factory_line', options: 'Factory Line', reqd: 0 },
+    parent: $filters.find('.factory-line'),
     render_input: true
   });
 
@@ -90,7 +90,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const po_receipt_btn  = $filters.find('.po-receipt'); 
 
   const refresh = () => {
-    state.routing = routing.get_value();
+    state.factory_line = factory_line.get_value();
     state.src_warehouse = src_wh.get_value();
     state.posting_date = posting_date.get_value();
     load_buckets();
@@ -149,8 +149,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   picklist_btn.on('click', generate_picklist);
 
-  // Optional live refresh on routing change
-  if (routing.$input) routing.$input.on('change', refresh);
+  // Optional live refresh on factory line change
+  if (factory_line.$input) factory_line.$input.on('change', refresh);
 
   function make_stock_entry(purpose, defaults = {}) {
     frappe.model.with_doctype('Stock Entry', () => {
@@ -278,7 +278,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_buckets',
       args: {
-        routing: routing.get_value() || null,
+        factory_line: factory_line.get_value() || null,
         posting_date: posting_date.get_value() || null
       }
     });
@@ -380,7 +380,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
 
     if (!$buckets.children().length) {
-      $buckets.append('<div class="muted">No open Work Orders for this routing.</div>');
+      $buckets.append('<div class="muted">No open Work Orders for this factory line.</div>');
     }
   }
 
@@ -647,7 +647,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
       args: {
-        routing: state.routing || null,
+        factory_line: state.factory_line || null,
         hours: state.hours,
         posting_date: state.posting_date || null   // see section 2 below
       }
@@ -800,7 +800,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     $pallets.empty().append('<div class="muted">Loading…</div>');
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_pallets',
-      args: { routing: state.routing || null, hours: state.hours }
+      args: { factory_line: state.factory_line || null, hours: state.hours }
     });
     $pallets.empty();
     (r.message || []).forEach(p => {

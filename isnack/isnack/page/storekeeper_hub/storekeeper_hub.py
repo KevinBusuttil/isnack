@@ -26,8 +26,6 @@ def _wo_line(wo_doc):
     """Resolve Factory Line for a Work Order."""
     if getattr(wo_doc, "custom_factory_line", None):
         return wo_doc.custom_factory_line
-    if getattr(wo_doc, "custom_line", None):
-        return wo_doc.custom_line
 
     if getattr(wo_doc, "bom_no", None):
         line = frappe.db.get_value("BOM", wo_doc.bom_no, "custom_default_factory_line")
@@ -224,28 +222,52 @@ def _order_wos_fifo(wo_names):
     return order
 
 
-# --- Routing helpers ----------------------------------------------------------
+# --- Factory Line helpers -----------------------------------------------------
+
+def _resolve_line_for_row(row: dict, bom_line_map: dict[str, str | None]) -> str | None:
+    """Resolve Factory Line for a WO row, preferring WO fields then BOM default."""
+    if not row:
+        return None
+    if row.get("custom_factory_line"):
+        return row.get("custom_factory_line")
+    if row.get("bom_no") and bom_line_map.get(row.get("bom_no")):
+        return bom_line_map.get(row.get("bom_no"))
+    return None
 
 
-def _filter_wos_by_routing(wos, routing):
-    """Given WO rows with bom_no, filter by BOM.routing (bulk map)."""
-    if not routing:
+def _filter_wos_by_factory_line(wos, factory_line):
+    """Given WO rows with bom_no, filter by Factory Line (WO fields or BOM default)."""
+    if not factory_line:
         return wos
     bom_nos = list({w["bom_no"] for w in wos if w.get("bom_no")})
-    if not bom_nos:
-        return []
-    bom_rows = frappe.get_all("BOM", filters={"name": ["in", bom_nos]}, fields=["name", "routing"])
-    bom_map = {b["name"]: b.get("routing") for b in bom_rows}
-    return [w for w in wos if bom_map.get(w.get("bom_no")) == routing]
+    bom_rows = (
+        frappe.get_all(
+            "BOM",
+            filters={"name": ["in", bom_nos]},
+            fields=["name", "custom_default_factory_line"],
+        )
+        if bom_nos
+        else []
+    )
+    bom_map = {b["name"]: b.get("custom_default_factory_line") for b in bom_rows}
+
+    out = []
+    for w in wos:
+        line = _resolve_line_for_row(w, bom_map)
+        if line:
+            w["factory_line"] = line
+        if line == factory_line:
+            out.append(w)
+    return out
 
 
 # --- Page APIs (hub) ---------------------------------------------------------
 
 
 @frappe.whitelist()
-def get_queue(routing: str | None = None, posting_date: str | None = None):
-    """Work Orders Not Started/In Process; normalized for UI; optional filter by BOM.routing
-    and Production Plan posting_date.
+def get_queue(factory_line: str | None = None, posting_date: str | None = None):
+    """Work Orders Not Started/In Process; normalized for UI; optional filter by Factory Line
+    (WO field or BOM default) and Production Plan posting_date.
     """
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
@@ -278,11 +300,12 @@ def get_queue(routing: str | None = None, posting_date: str | None = None):
             "company",
             "bom_no",
             "production_plan",
+            "custom_factory_line",
         ],
         order_by="planned_start_date asc, creation asc",
     )
 
-    wos = _filter_wos_by_routing(wos, routing)
+    wos = _filter_wos_by_factory_line(wos, factory_line)
 
     for w in wos:
         w["item_code"] = w.get("production_item")
@@ -307,9 +330,9 @@ def get_queue(routing: str | None = None, posting_date: str | None = None):
 
 
 @frappe.whitelist()
-def get_buckets(routing: str | None = None, posting_date: str | None = None):
-    """Group open WOs by BOM (same-BOM bucket), optionally filtered by BOM.routing
-    and Production Plan posting_date.
+def get_buckets(factory_line: str | None = None, posting_date: str | None = None):
+    """Group open WOs by BOM (same-BOM bucket), optionally filtered by Factory Line and
+    Production Plan posting_date.
     """
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
@@ -341,11 +364,12 @@ def get_buckets(routing: str | None = None, posting_date: str | None = None):
             "wip_warehouse",
             "company",
             "production_plan",
+            "custom_factory_line",
         ],
         order_by="planned_start_date asc, creation asc",
     )
 
-    wos = _filter_wos_by_routing(wos, routing)
+    wos = _filter_wos_by_factory_line(wos, factory_line)
 
     buckets = {}
     for w in wos:
@@ -487,7 +511,7 @@ def create_consolidated_transfers(
 
 @frappe.whitelist()
 def get_recent_transfers(
-    routing: str | None = None,
+    factory_line: str | None = None,
     hours: int = 24,
     posting_date: str | None = None,
 ):
@@ -503,10 +527,12 @@ def get_recent_transfers(
     ]
     params: list[object] = []
 
-    if routing:
+    if factory_line:
         joins.append("left join `tabBOM` bom on bom.name = wo.bom_no")
-        conditions.append("bom.routing = %s")
-        params.append(routing)
+        conditions.append(
+            "(wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
+        )
+        params.extend([factory_line, factory_line, factory_line])
 
     if posting_date:
         joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
@@ -624,20 +650,20 @@ def get_recent_manual_stock_entries(
     return frappe.db.sql(query, params, as_dict=True)
 
 @frappe.whitelist()
-def get_recent_pallets(routing: str | None = None, hours: int = 24):
-    """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by BOM.routing."""
-    if routing:
+def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
+    """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by Factory Line."""
+    if factory_line:
         q = """
             select se.name, se.posting_date, se.posting_time, se.to_warehouse, se.remarks
             from `tabStock Entry` se
             left join `tabWork Order` wo on wo.name = se.work_order
             left join `tabBOM` bom on bom.name = wo.bom_no
             where se.docstatus=1 and se.purpose='Material Transfer for Manufacture'
-              and bom.routing = %s
+              and (wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)
             order by se.modified desc
             limit 100
         """
-        rows = frappe.db.sql(q, (routing,), as_dict=True)
+        rows = frappe.db.sql(q, (factory_line, factory_line, factory_line), as_dict=True)
     else:
         rows = frappe.get_all(
             "Stock Entry",
