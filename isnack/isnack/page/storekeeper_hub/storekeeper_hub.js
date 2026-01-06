@@ -89,8 +89,19 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const se_receipt_btn  = $filters.find('.se-receipt');
   const po_receipt_btn  = $filters.find('.po-receipt'); 
 
+  const read_factory_line = () => {
+  const raw = (factory_line.$input && factory_line.$input.val()) || factory_line.get_value() || '';
+  const value = (raw || '').trim();
+  if (!value && factory_line.get_value()) {
+    // ensure the control is actually cleared so the next refresh doesn't reuse stale value
+    factory_line.set_value('');
+  }
+  return value || null;
+};
+
+
   const refresh = () => {
-    state.factory_line = factory_line.get_value();
+    state.factory_line = read_factory_line();
     state.src_warehouse = src_wh.get_value();
     state.posting_date = posting_date.get_value();
     load_buckets();
@@ -278,8 +289,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_buckets',
       args: {
-        factory_line: factory_line.get_value() || null,
-        posting_date: posting_date.get_value() || null
+        factory_line: state.factory_line || null,
+        posting_date: state.posting_date || null
       }
     });
 

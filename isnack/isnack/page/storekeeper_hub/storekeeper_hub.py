@@ -234,9 +234,14 @@ def _resolve_line_for_row(row: dict, bom_line_map: dict[str, str | None]) -> str
         return bom_line_map.get(row.get("bom_no"))
     return None
 
+def _normalize_factory_line(value: str | None) -> str | None:
+    """Trim and blank-to-None normalization for factory line filter values."""
+    line = (cstr(value) or "").strip()
+    return line or None
 
 def _filter_wos_by_factory_line(wos, factory_line):
     """Given WO rows with bom_no, filter by Factory Line (WO fields or BOM default)."""
+    factory_line = _normalize_factory_line(factory_line)    
     if not factory_line:
         return wos
     bom_nos = list({w["bom_no"] for w in wos if w.get("bom_no")})
@@ -269,6 +274,7 @@ def get_queue(factory_line: str | None = None, posting_date: str | None = None):
     """Work Orders Not Started/In Process; normalized for UI; optional filter by Factory Line
     (WO field or BOM default) and Production Plan posting_date.
     """
+    factory_line = _normalize_factory_line(factory_line)
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
     if company:
@@ -334,6 +340,7 @@ def get_buckets(factory_line: str | None = None, posting_date: str | None = None
     """Group open WOs by BOM (same-BOM bucket), optionally filtered by Factory Line and
     Production Plan posting_date.
     """
+    factory_line = _normalize_factory_line(factory_line)
     filters = {"status": ["in", ["Not Started", "In Process"]]}
     company = _default_company()
     if company:
@@ -520,6 +527,7 @@ def get_recent_transfers(
     If posting_date is given, filter by Work Orders whose Production Plan has that posting_date.
     Otherwise, fallback to "last N hours" based on se.modified.
     """
+    factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
     conditions = [
         "se.docstatus = 1",
@@ -532,7 +540,7 @@ def get_recent_transfers(
         conditions.append(
             "(wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
         )
-        params.extend([factory_line, factory_line, factory_line])
+        params.extend([factory_line, factory_line])
 
     if posting_date:
         joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
@@ -652,6 +660,7 @@ def get_recent_manual_stock_entries(
 @frappe.whitelist()
 def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
     """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by Factory Line."""
+    factory_line = _normalize_factory_line(factory_line)
     if factory_line:
         q = """
             select se.name, se.posting_date, se.posting_time, se.to_warehouse, se.remarks
@@ -663,7 +672,7 @@ def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
             order by se.modified desc
             limit 100
         """
-        rows = frappe.db.sql(q, (factory_line, factory_line, factory_line), as_dict=True)
+        rows = frappe.db.sql(q, (factory_line, factory_line), as_dict=True)
     else:
         rows = frappe.get_all(
             "Stock Entry",
