@@ -79,8 +79,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     render_input: true
   });
 
-  // Optional: default to today
-  posting_date.set_value(frappe.datetime.get_today());
+  // Ensure posting date has a value before first load (defaults to today if empty)
+  async function ensure_posting_date_default() {
+    if (!posting_date.get_value()) {
+      await posting_date.set_value(frappe.datetime.get_today());
+    }
+    state.posting_date = posting_date.get_value() || '';
+  }
 
   const refresh_btn = $filters.find('.refresh');
   const picklist_btn = $filters.find('.generate-picklist');
@@ -103,7 +108,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const refresh = () => {
     state.factory_line = read_factory_line();
     state.src_warehouse = src_wh.get_value();
-    state.posting_date = posting_date.get_value();
+    state.posting_date = posting_date.get_value() || '';
     load_buckets();
     load_staged();
     load_manual_entries();
@@ -1175,6 +1180,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   }
 
   // ---------- Initial Paint ----------
-  const redraw_and_refresh = () => { redraw_cart(); refresh(); };
+  const redraw_and_refresh = async () => {
+    await ensure_posting_date_default();
+    redraw_cart();
+    refresh();
+  };
   redraw_and_refresh();
 };
