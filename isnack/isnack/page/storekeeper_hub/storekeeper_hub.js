@@ -533,21 +533,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         }
       });
 
-      const details = await fetch_item_details(r.item_code);
-      if (details && details.name) {
-        r.item_code = details.name;
-        r.item_name = details.item_name || '';
-        r.has_batch_no = !!details.has_batch_no;
-        if (details.stock_uom) r.uom = details.stock_uom;
-        $itemInput.val(details.name);
-        $itemName.text(details.item_name || '');
-        $tr.find('.c-uom').val(r.uom || '');
-        if (batchControl) {
-          batchControl.refresh();
+      fetch_item_details(r.item_code).then(details => {
+        if (details && details.name) {
+          r.item_code = details.name;
+          r.item_name = details.item_name || '';
+          r.has_batch_no = !!details.has_batch_no;
+          if (details.stock_uom) r.uom = details.stock_uom;
+          $itemInput.val(details.name);
+          $itemName.text(details.item_name || '');
+          $tr.find('.c-uom').val(r.uom || '');
+          if (batchControl) {
+            batchControl.refresh();
+          }
+        } else {
+          $itemName.text('');
         }
-      } else {
-        $itemName.text('');
-      }
+      });
 
       $tr.find('.c-uom').on('change',   e => { r.uom = e.target.value; });
       $tr.find('.c-qty').on('change',   e => {
