@@ -211,6 +211,26 @@
 .storekeeper-hub .cart-table .frappe-control .control-input {
   min-height: auto;
 }
+.storekeeper-hub .cart-table .item-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.storekeeper-hub .cart-table .item-cell .c-item {
+  flex: 0 0 60%;
+}
+.storekeeper-hub .cart-table .item-cell .item-name {
+  flex: 1 1 auto;
+  font-size: 12px;
+}
+.storekeeper-hub .cart-table .c-qty::-webkit-outer-spin-button,
+.storekeeper-hub .cart-table .c-qty::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.storekeeper-hub .cart-table .c-qty {
+  -moz-appearance: textfield;
+}
 .storekeeper-hub .cart-actions {
   display: flex;
   justify-content: space-between;

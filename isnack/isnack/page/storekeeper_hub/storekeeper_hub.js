@@ -23,7 +23,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     hours: 24,
     selected_bucket: null,  // full bucket object from server
     selected_wos: [],       // names of selected WOs from the chosen bucket
-    cart: [],                // [{item_code, batch_no, uom, qty, note}]
+    cart: [],                // [{item_code, item_name, has_batch_no, batch_no, uom, qty, note}]
     selected_transfers: []  // names of Stock Entries selected for picklist
   };
 
@@ -32,6 +32,25 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (isNaN(n)) return qty ?? '';
     // limit to 3 decimals, strip trailing zeros
     return n.toFixed(3).replace(/\.?0+$/, '');
+  };
+
+    const round_qty = (value) => {
+    const n = parseFloat(value);
+    if (isNaN(n)) return 0;
+    return parseFloat(n.toFixed(3));
+  };
+
+  const fetch_item_details = async (item_code) => {
+    const code = (item_code || '').trim();
+    if (!code) {
+      return { item_code: '', item_name: '', stock_uom: '', has_batch_no: 0 };
+    }
+
+    const d = await frappe.db.get_value('Item', code, ['name', 'item_name', 'stock_uom', 'has_batch_no']);
+    if (d && d.message && d.message.name) {
+      return d.message;
+    }
+    return { item_code: code, item_name: '', stock_uom: '', has_batch_no: 0 };
   };
 
   // ---------- Toolbar Controls ----------
@@ -416,9 +435,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     state.cart = (r.message || []).map(item => ({
       item_code: item.item_code,
+      item_name: item.item_name || '',
+      has_batch_no: !!item.has_batch_no,
       batch_no: '',
       uom: item.uom || '',
-      qty: item.qty || 0,
+      qty: round_qty(item.qty || 0),
       note: ''
     }));
 
@@ -440,7 +461,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       args: { selected_wos: state.selected_wos, item_code: row.item_code }
     });
     if (r && r.message) {
-      const want = parseFloat(r.message.qty || 0);
+      const want = round_qty(r.message.qty || 0);
       if (want > 0) row.qty = want;
       if (!row.uom && r.message.uom) row.uom = r.message.uom;
       redraw_cart();
@@ -456,10 +477,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     state.cart.forEach((r, idx) => {
       const $tr = $(`
         <tr>
-          <td><input class="form-control form-control-sm c-item"  value="${frappe.utils.escape_html(r.item_code || '')}"></td>
+          <td>
+            <div class="item-cell">
+              <input class="form-control form-control-sm c-item" value="${frappe.utils.escape_html(r.item_code || '')}">
+              <div class="muted item-name">${frappe.utils.escape_html(r.item_name || '')}</div>
+            </div>
+          </td>
           <td><div class="batch-holder"></div></td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
-          <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${r.qty || 0}"></td>
+          <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${fmt_qty(r.qty || 0)}"></td>
           <td><input class="form-control form-control-sm c-notes" value="${frappe.utils.escape_html(r.note || '')}"></td>
           <td>
             <div class="btn-group">
@@ -472,6 +498,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
       // Bind row handlers
       const $itemInput = $tr.find('.c-item');
+      const $itemName = $tr.find('.item-name');
       const $batchHolder = $tr.find('.batch-holder');
 
       let batchControl = frappe.ui.form.make_control({
@@ -498,14 +525,36 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         r.item_code = e.target.value;
         // reset batch on item change to force re-selection
         r.batch_no = '';
+        r.item_name = '';
+        r.has_batch_no = false;
         if (batchControl) {
           batchControl.set_value('');
           batchControl.refresh();
         }
       });
 
+      const details = await fetch_item_details(r.item_code);
+      if (details && details.name) {
+        r.item_code = details.name;
+        r.item_name = details.item_name || '';
+        r.has_batch_no = !!details.has_batch_no;
+        if (details.stock_uom) r.uom = details.stock_uom;
+        $itemInput.val(details.name);
+        $itemName.text(details.item_name || '');
+        $tr.find('.c-uom').val(r.uom || '');
+        if (batchControl) {
+          batchControl.refresh();
+        }
+      } else {
+        $itemName.text('');
+      }
+
       $tr.find('.c-uom').on('change',   e => { r.uom = e.target.value; });
-      $tr.find('.c-qty').on('change',   e => { r.qty = parseFloat(e.target.value || 0); });
+      $tr.find('.c-qty').on('change',   e => {
+        const rounded = round_qty(e.target.value || 0);
+        r.qty = rounded;
+        $(e.currentTarget).val(fmt_qty(rounded));
+      });
       $tr.find('.c-notes').on('change', e => { r.note = e.target.value; });
       $tr.find('.del').on('click', () => { state.cart.splice(idx, 1); redraw_cart(); });
       $tr.find('.fill').on('click', () => set_auto_qty_for_row(idx));
@@ -521,11 +570,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     // First resolve the "real" item code (Item.name if it exists)
     let item_code = code;
     let stock_uom = '';
+    let item_name = '';
+    let has_batch_no = false;
 
-    const d = await frappe.db.get_value('Item', code, ['name', 'stock_uom']);
+    const d = await frappe.db.get_value('Item', code, ['name', 'item_name', 'stock_uom', 'has_batch_no']);
     if (d && d.message && d.message.name) {
       item_code = d.message.name;
       stock_uom = d.message.stock_uom;
+      item_name = d.message.item_name || '';
+      has_batch_no = !!d.message.has_batch_no;
     }
 
     // Check if this item is already in the cart
@@ -540,6 +593,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     // New row
     state.cart.push({
       item_code: item_code,
+      item_name: item_name,
+      has_batch_no: has_batch_no,
       batch_no: '',
       uom: stock_uom || '',
       qty: 1,
@@ -554,7 +609,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
 
   $hub.find('.add-manual').on('click', () => {
-    state.cart.push({ item_code: '', batch_no: '', uom: '', qty: 0, note: '' });
+    state.cart.push({ item_code: '', item_name: '', has_batch_no: false, batch_no: '', uom: '', qty: 0, note: '' });
     redraw_cart();
   });
 
@@ -578,7 +633,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     state.cart.forEach(row => {
       const m = map[row.item_code];
       if (!m) return;
-      if (m.qty > 0) row.qty = m.qty;
+      if (m.qty > 0) row.qty = round_qty(m.qty);
       if (!row.uom && m.uom) row.uom = m.uom;
     });
     redraw_cart();
@@ -596,6 +651,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (!state.cart.length) return frappe.msgprint(__('Cart is empty.'));
     if (!state.selected_bucket || !state.selected_wos.length) return frappe.msgprint(__('Select a WO bucket and at least one Work Order.'));
     if (!src_wh.get_value()) return frappe.msgprint(__('Please select Source Warehouse.'));
+    const missing_batch = state.cart.filter(row => row.has_batch_no && !row.batch_no);
+    if (missing_batch.length) {
+      const codes = missing_batch.map(row => row.item_code).filter(Boolean).join(', ');
+      frappe.msgprint(__('Select batch codes for batch-managed items before allocating. Missing: {0}', [codes || __('(unknown item)')]));
+      return;
+    }
 
     const args = {
       pallet_id: state.pallet_id || '',

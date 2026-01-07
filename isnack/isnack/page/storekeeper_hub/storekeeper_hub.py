@@ -439,6 +439,28 @@ def create_consolidated_transfers(
     if not source_warehouse:
         frappe.throw(_("Source Warehouse is required (set Stock Settings: Default Warehouse)."))
 
+    item_codes = [row.get("item_code") for row in (items or []) if isinstance(row, dict) and row.get("item_code")]
+    item_meta = {}
+    if item_codes:
+        item_meta = {
+            row.name: row
+            for row in frappe.get_all(
+                "Item",
+                fields=["name", "has_batch_no"],
+                filters={"name": ["in", list(set(item_codes))]},
+            )
+        }
+        for row in items or []:
+            if not isinstance(row, dict):
+                continue
+            item_code = row.get("item_code")
+            if not item_code:
+                continue
+            if item_meta.get(item_code, {}).get("has_batch_no") and not row.get("batch_no"):
+                frappe.throw(_("Batch No is required for item {0}.").format(item_code))
+
+    batch_map = {row.get("item_code"): row.get("batch_no") for row in items or [] if isinstance(row, dict)}
+
     wo_order = _order_wos_fifo(selected_wos)
     remaining = {wo: _remaining_map_for_wo(wo) for wo in wo_order}
 
@@ -499,6 +521,7 @@ def create_consolidated_transfers(
                     "uom": uom,
                     "s_warehouse": source_warehouse,
                     "t_warehouse": target_wh,
+                    "batch_no": batch_map.get(item_code) or None,
                 },
             )
 
@@ -803,6 +826,22 @@ def get_consolidated_remaining_items(selected_wos=None):
             entry["qty"] += float(info.get("qty") or 0)
             if not entry.get("uom") and info.get("uom"):
                 entry["uom"] = info.get("uom")
+
+    item_meta = {}
+    if totals:
+        item_meta = {
+            row.name: row
+            for row in frappe.get_all(
+                "Item",
+                fields=["name", "item_name", "has_batch_no"],
+                filters={"name": ["in", list(totals.keys())]},
+            )
+        }
+        for item_code, entry in totals.items():
+            meta = item_meta.get(item_code)
+            if meta:
+                entry["item_name"] = meta.item_name or ""
+                entry["has_batch_no"] = meta.has_batch_no
 
     out = [row for row in totals.values() if row.get("qty", 0) > 0]
     return sorted(out, key=lambda r: r.get("item_code") or "")
