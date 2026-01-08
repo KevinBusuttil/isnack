@@ -309,7 +309,7 @@ def get_assigned_work_orders():
     user = frappe.session.user
     line = _get_user_line(user)
 
-    filters = {"docstatus": 1, "status": ["in", ["Not Started", "In Process", "On Hold"]]}
+    filters = {"docstatus": 1, "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]]}
     if line:
         meta = frappe.get_meta("Work Order")
         if meta.has_field("custom_line"):
@@ -392,7 +392,8 @@ def get_line_queue(line: Optional[str] = None):
 
     filters: dict = {
         "docstatus": 1,
-        "status": ["in", ["Not Started", "In Process", "On Hold", "Stopped"]],    }
+        "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]],
+    }
     
     if line:
         meta = frappe.get_meta("Work Order")
@@ -603,11 +604,13 @@ def set_work_order_state(
             frappe.msgprint(_("Warning: Could not transfer staged materials. Error: {0}").format(str(e)), 
                           indicator="orange")
     elif action_lc == "pause":
-        updates["status"] = "On Hold"
+        updates["status"] = "Stopped"
     elif action_lc == "stop":
         updates["status"] = "Stopped"
         if not wo.actual_end_date:
             updates["actual_end_date"] = now
+    elif action_lc == "resume" or action_lc == "reopen":
+        updates["status"] = "Resumed"
     else:
         frappe.throw(_("Unknown action"))
 
