@@ -653,6 +653,8 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Get materials currently in staging for this WO
     # Look for recent "Material Transfer" stock entries to this staging warehouse
     # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
+    # Using a more precise pattern match to avoid matching partial work order names
+    wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
             sed.item_code,
@@ -664,12 +666,13 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
         WHERE se.docstatus = 1
             AND se.purpose = 'Material Transfer'
             AND sed.t_warehouse = %(staging_wh)s
-            AND se.remarks LIKE %(wo_pattern)s
+            AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
         GROUP BY sed.item_code, sed.batch_no, sed.uom
         HAVING SUM(sed.qty) > 0
     """, {
         'staging_wh': staging_wh,
-        'wo_pattern': f'%WO: {work_order}%'
+        'wo_pattern1': f'%WO: {work_order}|%',
+        'wo_pattern2': f'%WO: {work_order}'
     }, as_dict=True)
     
     if not items_in_staging:
@@ -689,7 +692,12 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     
     # Set fg_completed_qty for ERPNext to update material_transferred_for_manufacturing
     remaining_qty = flt(wo.qty) - flt(wo.material_transferred_for_manufacturing)
-    se.fg_completed_qty = remaining_qty if remaining_qty > 0 else wo.qty
+    if remaining_qty <= 0:
+        frappe.msgprint(_("Warning: Material already transferred for full quantity. Proceeding with transfer."), 
+                       indicator="orange")
+        se.fg_completed_qty = 0
+    else:
+        se.fg_completed_qty = remaining_qty
     
     if employee:
         se.custom_operator = employee  # If you have this custom field
@@ -702,7 +710,7 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             "uom": item.uom,
             "s_warehouse": staging_wh,
             "t_warehouse": wip_wh,
-            "batch_no": item.batch_no if item.batch_no else None,
+            "batch_no": item.batch_no,
         })
     
     se.flags.ignore_permissions = True
