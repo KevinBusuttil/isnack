@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
@@ -512,6 +513,7 @@ def create_consolidated_transfers(
             se.remarks = (se.remarks or "") + f" Pallet: {pallet_id}"
 
         for item_code, qty in alloc.items():
+            rounded_qty = _round_up_qty(qty, precision=3)
             uom = (
                 remaining.get(wo, {}).get(item_code, {}).get("uom")
                 or frappe.db.get_value("Item", item_code, "stock_uom")
@@ -520,7 +522,7 @@ def create_consolidated_transfers(
                 "items",
                 {
                     "item_code": item_code,
-                    "qty": qty,
+                    "qty": rounded_qty,
                     "uom": uom,
                     "s_warehouse": source_warehouse,
                     "t_warehouse": target_wh,
@@ -541,6 +543,11 @@ def create_consolidated_transfers(
         )
 
     return {"transfers": created}
+
+def _round_up_qty(value, precision=3):
+    qty = Decimal(str(value or 0))
+    quantum = Decimal("1").scaleb(-precision)
+    return float(qty.quantize(quantum, rounding=ROUND_CEILING))
 
 @frappe.whitelist()
 def get_recent_transfers(
