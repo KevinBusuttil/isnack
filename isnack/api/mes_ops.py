@@ -589,6 +589,19 @@ def set_work_order_state(
         updates["status"] = "In Process"
         if not wo.actual_start_date:
             updates["actual_start_date"] = now
+        
+        # NEW: Transfer staged materials to WIP
+        try:
+            transfer_result = transfer_staged_to_wip(work_order)
+            if transfer_result.get("stock_entry"):
+                frappe.msgprint(_("Materials transferred from Staging to WIP: {0}").format(
+                    transfer_result["stock_entry"]
+                ))
+        except Exception as e:
+            # Log the error but don't block the Start action
+            frappe.log_error(f"Failed to transfer staged materials for {work_order}: {str(e)}")
+            frappe.msgprint(_("Warning: Could not transfer staged materials. Error: {0}").format(str(e)), 
+                          indicator="orange")
     elif action_lc == "pause":
         updates["status"] = "On Hold"
     elif action_lc == "stop":
@@ -613,6 +626,98 @@ def set_work_order_state(
         ),
     )
     return True
+
+
+@frappe.whitelist()
+def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
+    """Transfer materials from Staging to WIP when operator clicks Start.
+    
+    This creates a 'Material Transfer for Manufacture' which:
+    1. Moves materials from Staging → WIP warehouse
+    2. Updates material_transferred_for_manufacturing on Work Order
+    3. Changes Work Order status to 'In Process' (if not already)
+    """
+    from frappe.utils import flt
+    
+    _require_roles(ROLES_OPERATOR)
+    
+    wo = frappe.get_doc("Work Order", work_order)
+    staging_wh = _default_line_staging(work_order)
+    wip_wh = _default_line_wip(work_order)
+    
+    if not staging_wh:
+        frappe.throw(_("No Staging warehouse configured for this Work Order"))
+    if not wip_wh:
+        frappe.throw(_("No WIP warehouse configured for this Work Order"))
+    
+    # Get materials currently in staging for this WO
+    # Look for recent "Material Transfer" stock entries to this staging warehouse
+    # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
+    # Using a more precise pattern match to avoid matching partial work order names
+    wo_escaped = frappe.db.escape(work_order)
+    items_in_staging = frappe.db.sql("""
+        SELECT 
+            sed.item_code,
+            sed.batch_no,
+            sed.uom,
+            SUM(sed.qty) as qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+            AND se.purpose = 'Material Transfer'
+            AND sed.t_warehouse = %(staging_wh)s
+            AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
+        GROUP BY sed.item_code, sed.batch_no, sed.uom
+        HAVING SUM(sed.qty) > 0
+    """, {
+        'staging_wh': staging_wh,
+        'wo_pattern1': f'%WO: {work_order}|%',
+        'wo_pattern2': f'%WO: {work_order}'
+    }, as_dict=True)
+    
+    if not items_in_staging:
+        return {"ok": True, "msg": _("No staged materials found to transfer to WIP"), "stock_entry": None}
+    
+    # Create Material Transfer for Manufacture
+    se = frappe.new_doc("Stock Entry")
+    se.company = wo.company
+    se.purpose = "Material Transfer for Manufacture"
+    se.stock_entry_type = "Material Transfer for Manufacture"
+    se.work_order = work_order
+    se.from_warehouse = staging_wh
+    se.to_warehouse = wip_wh
+    se.from_bom = 1
+    se.bom_no = wo.bom_no
+    se.use_multi_level_bom = wo.use_multi_level_bom
+    
+    # Set fg_completed_qty for ERPNext to update material_transferred_for_manufacturing
+    remaining_qty = flt(wo.qty) - flt(wo.material_transferred_for_manufacturing)
+    if remaining_qty <= 0:
+        frappe.msgprint(_("Warning: Material already transferred for full quantity. Proceeding with transfer."), 
+                       indicator="orange")
+        se.fg_completed_qty = 0
+    else:
+        se.fg_completed_qty = remaining_qty
+    
+    if employee:
+        se.custom_operator = employee  # If you have this custom field
+    
+    # Add items from staging
+    for item in items_in_staging:
+        se.append("items", {
+            "item_code": item.item_code,
+            "qty": item.qty,
+            "uom": item.uom,
+            "s_warehouse": staging_wh,
+            "t_warehouse": wip_wh,
+            "batch_no": item.batch_no,
+        })
+    
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+    
+    return {"ok": True, "msg": _("Transferred materials from Staging to WIP"), "stock_entry": se.name}
 
 
 # ============================================================
@@ -825,9 +930,11 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
             se.submit()
             msg_txt = _("Consumed {0} × {1} (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
         else:
+            # Changed from "Material Transfer for Manufacture" to "Material Consumption for Manufacture"
+            # This properly consumes materials from WIP during production
             se = frappe.new_doc("Stock Entry")
-            se.purpose = "Material Transfer for Manufacture"
-            se.stock_entry_type = "Material Transfer for Manufacture"
+            se.purpose = "Material Consumption for Manufacture"
+            se.stock_entry_type = "Material Consumption for Manufacture"
             se.company = frappe.db.get_value("Work Order", work_order, "company")
             se.work_order = work_order
             se.from_bom = 0
@@ -837,15 +944,15 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 "item_code": item_code,
                 "qty": qty,
                 "uom": uom,
-                "s_warehouse": s_wh,
-                "t_warehouse": t_wh,
+                "s_warehouse": t_wh,  # Consume from WIP warehouse
+                "t_warehouse": None,  # Consumption has no target warehouse
                 "batch_no": parsed.get("batch_no"),
             })
 
             se.flags.ignore_permissions = True
             se.insert()
             se.submit()
-            msg_txt = _("Staged {0} × {1} to WIP (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
+            msg_txt = _("Consumed {0} × {1} from WIP (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
 
 
         return {"ok": True, "msg": msg_txt}

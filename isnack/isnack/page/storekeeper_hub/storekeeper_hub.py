@@ -88,7 +88,11 @@ def _required_leaf_map_for_wo(wo_name: str) -> dict:
     return req
 
 def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
-    """Return already-transferred qty per item_code into the staging/WIP warehouse for this WO."""
+    """Return already-transferred qty per item_code into the WIP warehouse for this WO.
+    
+    Only counts 'Material Transfer for Manufacture' which moves materials to WIP.
+    Does NOT count 'Material Transfer' which moves to staging.
+    """
     if not target_wh:
         return {}
     rows = frappe.db.sql(
@@ -505,24 +509,24 @@ def create_consolidated_transfers(
 
         se = frappe.new_doc("Stock Entry")
         se.company = wo_doc.company
-        se.stock_entry_type = "Material Transfer for Manufacture"
-        se.work_order = wo_doc.name
+        se.stock_entry_type = "Material Transfer"  # Changed from "Material Transfer for Manufacture"
+        se.purpose = "Material Transfer"  # Explicitly set purpose
+        # Note: we still link to work_order for reference tracking in remarks
         se.from_warehouse = source_warehouse
         se.to_warehouse = target_wh
 
-        # Set fg_completed_qty - represents the FG quantity this transfer is for
-        # This is critical for ERPNext to update material_transferred_for_manufacturing
-        remaining_qty = flt(wo_doc.qty) - flt(wo_doc.material_transferred_for_manufacturing)
-        se.fg_completed_qty = remaining_qty if remaining_qty > 0 else wo_doc.qty
+        # Remove BOM-related fields since this is just a staging transfer
+        # These should only be used for "Material Transfer for Manufacture"
+        # se.from_bom = 1
+        # se.bom_no = wo_doc.bom_no
+        # se.use_multi_level_bom = wo_doc.use_multi_level_bom
+        # se.fg_completed_qty = ...
 
-        # Set BOM-related fields for proper ERPNext integration
-        if wo_doc.bom_no:
-            se.from_bom = 1
-            se.bom_no = wo_doc.bom_no
-            se.use_multi_level_bom = wo_doc.use_multi_level_bom
-
+        # Add WO reference in remarks for tracking
         if pallet_id:
-            se.remarks = (se.remarks or "") + f" Pallet: {pallet_id}"
+            se.remarks = f"Pallet: {pallet_id} | WO: {wo_doc.name}"
+        else:
+            se.remarks = f"Staging transfer for WO: {wo_doc.name}"
 
         for item_code, qty in alloc.items():
             rounded_qty = _round_up_qty(qty, precision=3)
