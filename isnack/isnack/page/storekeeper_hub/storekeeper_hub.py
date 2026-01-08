@@ -199,8 +199,11 @@ def _stage_status(work_order_name: str) -> str:
 
     req = _required_leaf_map_for_wo(work_order_name)
     have_map = {r.item_code: float(r.qty or 0) for r in rows}
+    qty_precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    print("DEBUG _stage_status", work_order_name, "req:", req, "have_map:", have_map)
     partial = any(
-        have_map.get(item, 0.0) < float(info["qty"]) - 1e-9
+        flt(have_map.get(item, 0.0), qty_precision)
+        < flt(float(info["qty"]), qty_precision)
         for item, info in req.items()
     )
     return "Partial" if partial else "Staged"

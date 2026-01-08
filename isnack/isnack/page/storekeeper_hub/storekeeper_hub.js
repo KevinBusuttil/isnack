@@ -519,7 +519,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         render_input: true
       });
       batchControl.set_value(r.batch_no || '');
-      batchControl.$input && batchControl.$input.on('change', () => { r.batch_no = batchControl.get_value(); });
+      const sync_batch_value = () => { r.batch_no = batchControl.get_value(); };
+      if (batchControl.$input) {
+        batchControl.$input.on('change input awesomplete-selectcomplete', sync_batch_value);
+      }
 
       $itemInput.on('change', async e => {
         r.item_code = e.target.value;
