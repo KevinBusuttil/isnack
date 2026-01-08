@@ -309,7 +309,7 @@ def get_assigned_work_orders():
     user = frappe.session.user
     line = _get_user_line(user)
 
-    filters = {"docstatus": 1, "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]]}
+    filters = {"docstatus": 1, "status": ["in", ["Not Started", "In Process", "Stopped"]]}
     if line:
         meta = frappe.get_meta("Work Order")
         if meta.has_field("custom_line"):
@@ -392,7 +392,7 @@ def get_line_queue(line: Optional[str] = None):
 
     filters: dict = {
         "docstatus": 1,
-        "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]],
+        "status": ["in", ["Not Started", "In Process", "Stopped"]],
     }
     
     if line:
@@ -610,7 +610,7 @@ def set_work_order_state(
         if not wo.actual_end_date:
             updates["actual_end_date"] = now
     elif action_lc == "resume" or action_lc == "reopen":
-        updates["status"] = "Resumed"
+        updates["status"] = "In Process"
     else:
         frappe.throw(_("Unknown action"))
 

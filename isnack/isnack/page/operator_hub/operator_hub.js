@@ -149,8 +149,8 @@ function init_operator_hub($root) {
     const enableCore = hasEmp && hasWO;
     const status = state.current_wo_status;
 
-    // Disable Start button if status is "In Process" or "Resumed"
-    const isStartDisabled = !enableCore || (status === "In Process" || status === "Resumed");
+    // Disable Start button if status is "In Process"
+    const isStartDisabled = !enableCore || status === "In Process";
     $('#btn-start',  $root).prop('disabled', isStartDisabled);
 
     // Dynamic Pause/Resume button
@@ -340,7 +340,6 @@ function init_operator_hub($root) {
         'Not Started':'chip chip-ns',
         'In Process':'chip chip-running',
         'Stopped':'chip chip-paused',
-        'Resumed':'chip chip-running',
         'Completed':'chip chip-running'
       }[row.status] || 'chip chip-ns');
       const el = $(`
