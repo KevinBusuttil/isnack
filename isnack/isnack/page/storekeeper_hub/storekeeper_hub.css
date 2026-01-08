@@ -186,6 +186,7 @@
 .storekeeper-hub .cart-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   margin-top: 8px;
   font-size: 13px;
 }
@@ -217,10 +218,10 @@
   gap: 6px;
 }
 .storekeeper-hub .cart-table .item-cell .c-item {
-  flex: 0 0 60%;
+  flex: 0 0 36%;
 }
 .storekeeper-hub .cart-table .item-cell .item-name {
-  flex: 1 1 auto;
+  flex: 1 1 64%;
   font-size: 12px;
 }
 .storekeeper-hub .cart-table .c-qty::-webkit-outer-spin-button,
