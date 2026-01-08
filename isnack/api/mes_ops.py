@@ -652,6 +652,7 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     
     # Get materials currently in staging for this WO
     # Look for recent "Material Transfer" stock entries to this staging warehouse
+    # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
     items_in_staging = frappe.db.sql("""
         SELECT 
             sed.item_code,
@@ -921,9 +922,11 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
             se.submit()
             msg_txt = _("Consumed {0} × {1} (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
         else:
+            # Changed from "Material Transfer for Manufacture" to "Material Consumption for Manufacture"
+            # This properly consumes materials from WIP during production
             se = frappe.new_doc("Stock Entry")
-            se.purpose = "Material Consumption for Manufacture"  # Changed
-            se.stock_entry_type = "Material Consumption for Manufacture"  # Changed
+            se.purpose = "Material Consumption for Manufacture"
+            se.stock_entry_type = "Material Consumption for Manufacture"
             se.company = frappe.db.get_value("Work Order", work_order, "company")
             se.work_order = work_order
             se.from_bom = 0
@@ -933,7 +936,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 "item_code": item_code,
                 "qty": qty,
                 "uom": uom,
-                "s_warehouse": s_wh,  # Should be WIP warehouse
+                "s_warehouse": t_wh,  # Consume from WIP warehouse
                 "t_warehouse": None,  # Consumption has no target warehouse
                 "batch_no": parsed.get("batch_no"),
             })
