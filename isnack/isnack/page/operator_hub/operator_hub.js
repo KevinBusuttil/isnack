@@ -417,7 +417,7 @@ function init_operator_hub($root) {
     const row = (state.orders || []).find(x => x.name === state.current_wo);
     state.current_wo_status = row ? row.status : null;
     const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); 
-    banner.html(r.message.html); 
+    banner.html(r.message && r.message.html ? r.message.html : '—'); 
     refreshButtonStates();
   }
 

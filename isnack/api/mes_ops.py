@@ -392,7 +392,8 @@ def get_line_queue(line: Optional[str] = None):
 
     filters: dict = {
         "docstatus": 1,
-        "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]],    }
+        "status": ["in", ["Not Started", "In Process", "Stopped", "Resumed"]],
+    }
     
     if line:
         meta = frappe.get_meta("Work Order")
