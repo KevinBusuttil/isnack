@@ -509,6 +509,18 @@ def create_consolidated_transfers(
         se.work_order = wo_doc.name
         se.from_warehouse = source_warehouse
         se.to_warehouse = target_wh
+
+        # Set fg_completed_qty - represents the FG quantity this transfer is for
+        # This is critical for ERPNext to update material_transferred_for_manufacturing
+        remaining_qty = flt(wo_doc.qty) - flt(wo_doc.material_transferred_for_manufacturing)
+        se.fg_completed_qty = remaining_qty if remaining_qty > 0 else wo_doc.qty
+
+        # Set BOM-related fields for proper ERPNext integration
+        if wo_doc.bom_no:
+            se.from_bom = 1
+            se.bom_no = wo_doc.bom_no
+            se.use_multi_level_bom = wo_doc.use_multi_level_bom
+
         if pallet_id:
             se.remarks = (se.remarks or "") + f" Pallet: {pallet_id}"
 
