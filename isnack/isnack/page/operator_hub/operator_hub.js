@@ -30,7 +30,8 @@ function init_operator_hub($root) {
     current_line: localStorage.getItem('kiosk_line') || null,
     current_emp: null,
     current_emp_name: null,
-    current_is_fg: false
+    current_is_fg: false,
+    current_wo_status: null
   };
 
   // Status bar
@@ -146,9 +147,21 @@ function init_operator_hub($root) {
     const hasEmp  = !!state.current_emp;
     const hasWO   = !!state.current_wo;
     const enableCore = hasEmp && hasWO;
+    const status = state.current_wo_status;
 
-    $('#btn-start',  $root).prop('disabled', !enableCore);
-    $('#btn-pause',  $root).prop('disabled', !enableCore);
+    // Disable Start button if status is "In Process" or "Resumed"
+    const disableStart = enableCore && (status === "In Process" || status === "Resumed");
+    $('#btn-start',  $root).prop('disabled', !enableCore || disableStart);
+
+    // Dynamic Pause/Resume button
+    const $pauseBtn = $('#btn-pause', $root);
+    if (status === "Stopped") {
+      $pauseBtn.text('Resume').removeClass('btn-warning').addClass('btn-danger');
+    } else {
+      $pauseBtn.text('Pause').removeClass('btn-danger').addClass('btn-warning');
+    }
+    $pauseBtn.prop('disabled', !enableCore);
+
     $('#btn-stop',   $root).prop('disabled', !enableCore);
 
     $('#btn-load',    $root).prop('disabled', !enableCore);
@@ -198,6 +211,7 @@ function init_operator_hub($root) {
         // Reset current WO context when line changes
         state.current_wo = null;
         state.current_is_fg = false;
+        state.current_wo_status = null;
 
         // Clear banner + materials so we don't show data from previous line
         banner.html('');
@@ -307,6 +321,7 @@ function init_operator_hub($root) {
       } else {
         state.current_wo = null;
         state.current_is_fg = false;
+        state.current_wo_status = null;
         banner.html('');
         render_mat_empty('Select a Work Order to load materials.');
         refreshButtonStates();
@@ -324,8 +339,8 @@ function init_operator_hub($root) {
       const stClass = ({
         'Not Started':'chip chip-ns',
         'In Process':'chip chip-running',
-        'On Hold':'chip chip-paused',
         'Stopped':'chip chip-paused',
+        'Resumed':'chip chip-running',
         'Completed':'chip chip-running'
       }[row.status] || 'chip chip-ns');
       const el = $(`
@@ -350,6 +365,7 @@ function init_operator_hub($root) {
     state.current_wo = wo_name;
     const row = (state.orders || []).find(x => x.name === wo_name);
     state.current_is_fg = row ? (row.type === 'FG') : false;
+    state.current_wo_status = row ? row.status : null;
 
     rpc('isnack.api.mes_ops.get_wo_banner', { work_order: wo_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
@@ -400,21 +416,41 @@ function init_operator_hub($root) {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
     flashStatus(`Started — ${state.current_wo}`, 'success');
-    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
+    await load_queue();
+    // Update current status after the action
+    const row = (state.orders || []).find(x => x.name === state.current_wo);
+    state.current_wo_status = row ? row.status : null;
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); 
+    banner.html(r.message.html); 
+    refreshButtonStates();
   });
 
   $('#btn-pause',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Pause' });
-    flashStatus(`Paused — ${state.current_wo}`, 'warning');
-    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
+    // Check if we're in Stopped state -> this is a Resume action
+    const action = (state.current_wo_status === 'Stopped') ? 'Resume' : 'Pause';
+    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action });
+    flashStatus(`${action}d — ${state.current_wo}`, action === 'Resume' ? 'success' : 'warning');
+    await load_queue();
+    // Update current status after the action
+    const row = (state.orders || []).find(x => x.name === state.current_wo);
+    state.current_wo_status = row ? row.status : null;
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); 
+    banner.html(r.message.html); 
+    refreshButtonStates();
   });
 
   $('#btn-stop',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Stop' });
     flashStatus(`Stopped — ${state.current_wo}`, 'error');
-    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); banner.html(r.message.html); load_queue();
+    await load_queue();
+    // Update current status after the action
+    const row = (state.orders || []).find(x => x.name === state.current_wo);
+    state.current_wo_status = row ? row.status : null;
+    const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); 
+    banner.html(r.message.html); 
+    refreshButtonStates();
   });
 
   $('#btn-load',$root).on('click', () => {
