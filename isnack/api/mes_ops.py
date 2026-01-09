@@ -646,6 +646,10 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     1. Moves materials from Staging → WIP warehouse
     2. Updates material_transferred_for_manufacturing on Work Order
     3. Changes Work Order status to 'In Process' (if not already)
+    
+    Important: This function preserves individual Stock Entry Detail rows from staging
+    (no aggregation) to maintain serial_and_batch_bundle integrity. Each bundle
+    represents a specific batch allocation that must be transferred as-is to WIP.
     """
     from frappe.utils import flt
     
@@ -664,16 +668,17 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Look for recent "Material Transfer" stock entries to this staging warehouse
     # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
     # Using a more precise pattern match to avoid matching partial work order names
-    # IMPORTANT: When serial_and_batch_bundle exists, preserve each bundle as separate row
-    # to maintain correct batch allocations. No aggregation to preserve bundle integrity.
+    # 
+    # IMPORTANT: Preserve each bundle as separate row (no aggregation) to maintain batch allocation integrity
+    # - Fetch serial_and_batch_bundle created by staging transfer
+    # - ERPNext creates bundles automatically from batch_no, and we must reuse them
+    # - This avoids "Serial and Batch Bundle <id> has already created" validation error
+    # - ORDER BY preserves chronological order and row sequence from staging transfers
     wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
             sed.item_code,
             sed.batch_no,
-            -- Fetch serial_and_batch_bundle created by staging transfer
-            -- ERPNext creates bundles automatically from batch_no, and we must reuse them
-            -- to avoid "Serial and Batch Bundle <id> has already created" validation error
             sed.serial_and_batch_bundle,
             sed.uom,
             sed.qty
@@ -684,7 +689,6 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             AND sed.t_warehouse = %(staging_wh)s
             AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
             AND sed.qty > 0
-        -- Preserve chronological order and row sequence from staging transfers
         ORDER BY se.posting_date, se.posting_time, sed.idx
     """, {
         'staging_wh': staging_wh,
