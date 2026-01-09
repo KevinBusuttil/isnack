@@ -662,7 +662,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const assignments = [];
             let total_assigned = 0;
 
-            $('#batch-selection-table .batch-row').each(function() {
+            d.$wrapper.find('#batch-selection-table .batch-row').each(function() {
               const batch_no = $(this).data('batch');
               const qty_input = $(this).find('.batch-qty-input');
               const qty = parseFloat(qty_input.val() || 0);
