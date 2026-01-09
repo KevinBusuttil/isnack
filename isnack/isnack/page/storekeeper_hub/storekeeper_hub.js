@@ -746,6 +746,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
 
         available_batches.forEach(batch => {
+          // Note: batch.batch_id is the batch number from server
           const existing_qty = existing_map[batch.batch_id] || 0;
           const expiry = batch.expiry_date 
             ? frappe.datetime.str_to_user(batch.expiry_date) 
@@ -821,7 +822,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             available_batches[0].qty >= total_qty && 
             (!cart_row.batches || cart_row.batches.length === 0)) {
           const $first_input = $('.batch-qty-input').first();
-          $first_input.val(fmt_qty(total_qty));
+          $first_input.val(fmt_qty(total_qty)).trigger('change');
         }
 
         update_total();
