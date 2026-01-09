@@ -668,12 +668,12 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Look for recent "Material Transfer" stock entries to this staging warehouse
     # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
     # Using a more precise pattern match to avoid matching partial work order names
-    # 
+    #
     # IMPORTANT: Preserve each bundle as separate row (no aggregation) to maintain batch allocation integrity
-    # - Fetch serial_and_batch_bundle created by staging transfer
-    # - ERPNext creates bundles automatically from batch_no, and we must reuse them
-    # - This avoids "Serial and Batch Bundle <id> has already created" validation error
-    # - ORDER BY preserves chronological order and row sequence from staging transfers
+    #   - Fetch serial_and_batch_bundle created by staging transfer
+    #   - ERPNext creates bundles automatically from batch_no, and we must reuse them
+    #   - This avoids "Serial and Batch Bundle <id> has already created" validation error
+    #   - ORDER BY preserves chronological order and row sequence from staging transfers
     wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
