@@ -495,8 +495,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             </div>
           </td>
           <td>
-            <div class="batch-holder"></div>
-            ${batch_indicator}
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <div class="batch-holder" style="flex: 1;"></div>
+              ${batch_indicator}
+              ${r.has_batch_no ? '<button class="btn btn-xs btn-primary batch-select" style="margin-left: auto;">...</button>' : ''}
+            </div>
           </td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
           <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${fmt_qty(r.qty || 0)}"></td>
@@ -504,7 +507,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           <td>
             <div class="btn-group">
               <button class="btn btn-xs btn-default fill">Fill</button>
-              ${r.has_batch_no ? '<button class="btn btn-xs btn-primary batch-select">Batches</button>' : ''}
               <button class="btn btn-xs btn-default del">✕</button>
             </div>
           </td>
