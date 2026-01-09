@@ -115,6 +115,20 @@
 .op-teal .mes-operator > .card{
   margin-bottom:0.75rem !important;
 }
+
+/* Work Order grid: reserve space for sticky bottom toolbar */
+.op-teal #wo-grid{
+  padding-bottom: 180px;           /* match .mes-operator padding-bottom for consistency */
+  scroll-padding-bottom: 180px;    /* smooth scroll behavior, accounts for toolbar height */
+}
+
+/* Responsive: adjust for smaller screens where buttons may stack or be taller */
+@media (max-width:768px){
+  .op-teal #wo-grid{
+    padding-bottom: 220px;         /* extra room for potentially taller toolbar on mobile */
+    scroll-padding-bottom: 220px;
+  }
+}
 .op-teal #wo-banner,
 .op-teal .card{
   background:var(--panel);
