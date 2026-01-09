@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import frappe
 from frappe import _
+from isnack.page.storekeeper_hub.storekeeper_hub import _stage_status as _storekeeper_stage_status
 
 # ============================================================
 # Factory Settings helpers (Single doctype)
@@ -427,6 +428,7 @@ def get_line_queue(line: Optional[str] = None):
                 "line": wo_line,
                 "for_quantity": wo.qty,
                 "status": wo.status,
+                "stage_status": _storekeeper_stage_status(wo.name),
                 "production_item": wo.production_item,
                 "item_name": wo.item_name,
                 "type": "FG" if _is_fg(wo.production_item) else "SF",
@@ -585,6 +587,9 @@ def set_work_order_state(
     now = frappe.utils.now_datetime()
     action_lc = (action or "").strip().lower()
     updates: dict = {}
+    stage_status = _storekeeper_stage_status(work_order)
+    if stage_status != "Staged" and action_lc in ("start", "pause", "stop", "resume", "reopen"):
+        frappe.throw(_("Work Order must be fully allocated before this action."))
 
     if action_lc == "start":
         updates["status"] = "In Process"

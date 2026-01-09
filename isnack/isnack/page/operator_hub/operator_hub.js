@@ -31,7 +31,8 @@ function init_operator_hub($root) {
     current_emp: null,
     current_emp_name: null,
     current_is_fg: false,
-    current_wo_status: null
+    current_wo_status: null,
+    current_stage_status: null
   };
 
   // Status bar
@@ -147,10 +148,12 @@ function init_operator_hub($root) {
     const hasEmp  = !!state.current_emp;
     const hasWO   = !!state.current_wo;
     const enableCore = hasEmp && hasWO;
+    const isAllocated = state.current_stage_status === 'Staged';
+    const enableActions = enableCore && isAllocated;
     const status = state.current_wo_status;
 
     // Disable Start button if status is "In Process"
-    const isStartDisabled = !enableCore || status === "In Process";
+    const isStartDisabled = !enableActions || status === "In Process";
     $('#btn-start',  $root).prop('disabled', isStartDisabled);
 
     // Dynamic Pause/Resume button
@@ -160,17 +163,22 @@ function init_operator_hub($root) {
     } else {
       $pauseBtn.text('Pause').removeClass('btn-danger').addClass('btn-warning');
     }
-    $pauseBtn.prop('disabled', !enableCore);
+    $pauseBtn.prop('disabled', !enableActions);
 
-    $('#btn-stop',   $root).prop('disabled', !enableCore);
+    $('#btn-stop',   $root).prop('disabled', !enableActions);
 
-    $('#btn-load',    $root).prop('disabled', !enableCore);
-    $('#btn-request', $root).prop('disabled', !enableCore);
-    $('#btn-return',  $root).prop('disabled', !enableCore);
+    $('#btn-load',    $root).prop('disabled', !enableActions);
+    $('#btn-request', $root).prop('disabled', !enableActions);
+    $('#btn-return',  $root).prop('disabled', !enableActions);
 
-    $('#btn-label',   $root).prop('disabled', !(enableCore && state.current_is_fg));
-    $('#btn-close',   $root).prop('disabled', !(hasEmp && hasWO));
-    ensureOperatorNotice();
+    $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_is_fg));
+    $('#btn-close',   $root).prop('disabled', !enableActions);
+
+    if (!hasEmp) {
+      ensureOperatorNotice();
+    } else if (hasWO && !isAllocated) {
+      setStatus('<b>Work Order not fully allocated</b>', 'warning');
+    }
   }
 
   // Keep scanner focused
@@ -212,6 +220,7 @@ function init_operator_hub($root) {
         state.current_wo = null;
         state.current_is_fg = false;
         state.current_wo_status = null;
+        state.current_stage_status = null;
 
         // Clear banner + materials so we don't show data from previous line
         banner.html('');
@@ -322,6 +331,7 @@ function init_operator_hub($root) {
         state.current_wo = null;
         state.current_is_fg = false;
         state.current_wo_status = null;
+        state.current_stage_status = null;
         banner.html('');
         render_mat_empty('Select a Work Order to load materials.');
         refreshButtonStates();
@@ -336,6 +346,15 @@ function init_operator_hub($root) {
     if (!state.orders.length) { grid.html('<div class="text-muted">No work orders in queue for this line.</div>'); return; }
     state.orders.forEach(row => {
       const chipType = row.type === 'FG' ? 'chip chip-fg' : 'chip chip-sf';
+      const stage = (row.stage_status || '').toLowerCase();
+      let allocChip = '';
+      if (stage === 'staged') {
+        allocChip = '<span class="chip chip-allocated">Allocated</span>';
+      } else if (stage === 'partial') {
+        allocChip = '<span class="chip chip-partial">Partly Allocated</span>';
+      } else if (stage) {
+        allocChip = '<span class="chip chip-not-allocated">Not Allocated</span>';
+      }
       const stClass = ({
         'Not Started':'chip chip-ns',
         'In Process':'chip chip-running',
@@ -352,6 +371,7 @@ function init_operator_hub($root) {
           </div>
           <div class="d-flex gap-2 align-items-center">
             <span class="${chipType}">${row.type}</span>
+            ${allocChip}
             <span class="${stClass}">${row.status}</span>
           </div>
         </button>
@@ -365,6 +385,7 @@ function init_operator_hub($root) {
     const row = (state.orders || []).find(x => x.name === wo_name);
     state.current_is_fg = row ? (row.type === 'FG') : false;
     state.current_wo_status = row ? row.status : null;
+    state.current_stage_status = row ? row.stage_status : null;
 
     rpc('isnack.api.mes_ops.get_wo_banner', { work_order: wo_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
@@ -415,6 +436,7 @@ function init_operator_hub($root) {
     await load_queue();
     const row = (state.orders || []).find(x => x.name === state.current_wo);
     state.current_wo_status = row ? row.status : null;
+    state.current_stage_status = row ? row.stage_status : null;
     const r = await rpc('isnack.api.mes_ops.get_wo_banner', { work_order: state.current_wo }); 
     banner.html(r.message && r.message.html ? r.message.html : '—'); 
     refreshButtonStates();

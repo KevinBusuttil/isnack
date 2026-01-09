@@ -196,6 +196,9 @@
 .op-teal .chip-running{ background:#e6fbf7; color:#0f766e; border-color:#bdf3ea; }
 .op-teal .chip-paused{ background:#fff7e6; color:#92400e; border-color:#fde68a; }
 .op-teal .chip-stopped{ background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+.op-teal .chip-allocated{ background:#ecfdf5; color:#047857; border-color:#a7f3d0; }
+.op-teal .chip-partial{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
+.op-teal .chip-not-allocated{ background:#f3f4f6; color:#6b7280; border-color:#e5e7eb; }
 
 /* Scan input */
 .op-teal #scan{
