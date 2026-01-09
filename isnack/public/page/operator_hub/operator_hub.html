@@ -1,8 +1,8 @@
 <!-- Operator Hub — Single-Screen Layout (Bootstrap 5) -->
-<div class="mes-operator p-3 p-md-4">
+<div class="mes-operator p-2 p-md-3">
 
   <!-- Header toolbar: Operator / Line / Shift + actions -->
-  <div class="card shadow-sm border-0 mb-3">
+  <div class="card shadow-sm border-0 mb-2">
     <div class="card-body">
       <div id="op-toolbar" class="op-toolbar d-flex align-items-center justify-content-between">
         <div class="d-flex flex-wrap align-items-center gap-3">
@@ -19,10 +19,11 @@
           <span class="vr"></span>
 
           <span class="label">Shift:</span>
-          <span id="shift-label">—</span>
+          <span id="shift-label" class="badge op-badge op-badge-shift">—</span>
         </div>
 
         <div class="d-flex flex-wrap align-items-center gap-2">
+          <span id="scan-status" class="badge op-badge op-badge-status">Ready</span>
           <button id="kiosk-clear-emp" class="btn btn-sm btn-outline-danger">Clear</button>
           <button id="kiosk-fullscreen" class="btn btn-sm btn-outline-primary">Full Screen</button>
           <button id="kiosk-toggle-chrome" class="btn btn-sm btn-outline-secondary">Hide Header</button>
@@ -32,46 +33,52 @@
     </div>
   </div>
 
-  <!-- Current Work Order Panel -->
-  <div class="card shadow-sm border-0 mb-3">
-    <div class="card-header bg-white border-0 pt-3 pb-0">
-      <div class="h6 mb-0">Current Work Order</div>
+  <div class="row g-3">
+    <!-- Current Work Order Panel -->
+    <div class="col-lg-5">
+      <div class="card shadow-sm border-0 mb-2 op-panel op-panel-primary">
+        <div class="card-header bg-white border-0 pt-2 pb-0">
+          <div class="h6 mb-0">Current Work Order</div>
+        </div>
+        <div class="card-body op-wo-banner" id="wo-banner">
+          <div class="text-muted">Select a Work Order…</div>
+        </div>
+      </div>
     </div>
-    <div class="card-body" id="wo-banner">
-      <div class="text-muted">Select a Work Order…</div>
-    </div>
-  </div>
 
-  <!-- Materials panel -->
-  <div class="card shadow-sm border-0 mb-3">
-    <div class="card-header bg-white border-0 pt-3 pb-0 d-flex justify-content-between align-items-center">
-      <div class="h6 mb-0">Materials for WO: <span id="mat-wo-label">—</span></div>
-    </div>
-    <div class="card-body">
-      <div id="mat-empty" class="text-muted">Select a Work Order to load materials.</div>
+    <!-- Materials panel -->
+    <div class="col-lg-7">
+      <div class="card shadow-sm border-0 mb-2 op-panel op-panel-info">
+        <div class="card-header bg-white border-0 pt-2 pb-0 d-flex justify-content-between align-items-center">
+          <div class="h6 mb-0">Materials for WO: <span id="mat-wo-label">—</span></div>
+        </div>
+        <div class="card-body">
+          <div id="mat-empty" class="text-muted">Select a Work Order to load materials.</div>
 
-      <div id="mat-content" class="d-none">
-        <div class="row g-3">
-          <div class="col-lg-8">
-            <div class="table-responsive">
-              <table class="table table-sm align-middle">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th style="min-width:180px">Name</th>
-                    <th class="text-end">UoM</th>
-                    <th class="text-end">Required</th>
-                    <th class="text-end">Issued</th>
-                    <th class="text-end">Remaining</th>
-                  </tr>
-                </thead>
-                <tbody id="mat-req-tbody"></tbody>
-              </table>
+          <div id="mat-content" class="d-none">
+            <div class="row g-3">
+              <div class="col-lg-8">
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th style="min-width:180px">Name</th>
+                        <th class="text-end">UoM</th>
+                        <th class="text-end">Required</th>
+                        <th class="text-end">Issued</th>
+                        <th class="text-end">Remaining</th>
+                      </tr>
+                    </thead>
+                    <tbody id="mat-req-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="col-lg-4">
+                <div class="h6">Recent Issues/Transfers</div>
+                <ul class="list-group" id="mat-scans"></ul>
+              </div>
             </div>
-          </div>
-          <div class="col-lg-4">
-            <div class="h6">Recent Issues/Transfers</div>
-            <ul class="list-group" id="mat-scans"></ul>
           </div>
         </div>
       </div>
@@ -81,12 +88,9 @@
   <!-- Assigned Work Orders -->
   <div class="mb-2 d-flex align-items-center justify-content-between">
     <div class="h6 mb-0">Assigned Work Orders</div>
-    <div class="small text-muted">
-      <span id="scan-status" class="badge bg-light text-muted">Ready</span>
-    </div>
   </div>
 
-  <div class="card shadow-sm border-0 mb-4">
+  <div class="card shadow-sm border-0 mb-3 op-panel op-panel-neutral">
     <div class="list-group list-group-flush" id="wo-grid">
       <!-- JS renders rows here -->
     </div>
