@@ -740,6 +740,7 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             item_dict["batch_no"] = item.batch_no
             # Set use_serial_batch_fields=1 to tell ERPNext to create a bundle from batch_no
             item_dict["use_serial_batch_fields"] = 1
+        # else: No batch tracking - ERPNext will handle as a regular item without batch/serial
         
         se.append("items", item_dict)
     
