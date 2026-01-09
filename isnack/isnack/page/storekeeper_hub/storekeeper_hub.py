@@ -423,6 +423,44 @@ def get_buckets(factory_line: str | None = None, posting_date: str | None = None
 
 
 @frappe.whitelist()
+def get_available_batches(item_code: str, warehouse: str):
+    """Get available batches for an item in a warehouse with their quantities.
+    
+    Returns: [{'batch_id': str, 'qty': float, 'expiry_date': date, 'manufacturing_date': date}]
+    """
+    if not item_code or not warehouse:
+        return []
+    
+    # Get batches with available stock in the warehouse
+    query = """
+        SELECT 
+            b.name as batch_id,
+            b.expiry_date,
+            b.manufacturing_date,
+            COALESCE(SUM(sle.actual_qty), 0) as qty
+        FROM `tabBatch` b
+        LEFT JOIN `tabStock Ledger Entry` sle 
+            ON sle.batch_no = b.name 
+            AND sle.item_code = b.item
+            AND sle.warehouse = %(warehouse)s
+            AND sle.is_cancelled = 0
+        WHERE b.item = %(item_code)s
+            AND b.disabled = 0
+            AND (b.expiry_date IS NULL OR b.expiry_date >= CURDATE())
+        GROUP BY b.name, b.expiry_date, b.manufacturing_date
+        HAVING qty > 0
+        ORDER BY b.expiry_date ASC, b.creation DESC
+    """
+    
+    batches = frappe.db.sql(query, {
+        'item_code': item_code,
+        'warehouse': warehouse
+    }, as_dict=True)
+    
+    return batches
+
+
+@frappe.whitelist()
 def create_consolidated_transfers(
     pallet_id: str = "",
     source_warehouse: str = "",
@@ -463,10 +501,32 @@ def create_consolidated_transfers(
             item_code = row.get("item_code")
             if not item_code:
                 continue
-            if item_meta.get(item_code, {}).get("has_batch_no") and not row.get("batch_no"):
-                frappe.throw(_("Batch No is required for item {0}.").format(item_code))
+            
+            # Check if item requires batch
+            if item_meta.get(item_code, {}).get("has_batch_no"):
+                # Check if batches are assigned (either single or multi-batch)
+                has_batches = bool(row.get("batches") and len(row.get("batches")) > 0)
+                has_single_batch = bool(row.get("batch_no"))
+                
+                if not has_batches and not has_single_batch:
+                    frappe.throw(_("Batch No is required for item {0}.").format(item_code))
 
-    batch_map = {row.get("item_code"): row.get("batch_no") for row in items or [] if isinstance(row, dict)}
+    # Build batch information map: item_code -> list of {batch_no, qty} or single batch_no
+    batch_info_map = {}
+    for row in items or []:
+        if not isinstance(row, dict):
+            continue
+        item_code = row.get("item_code")
+        if not item_code:
+            continue
+        
+        # Check if item has multiple batches assigned
+        if row.get("batches") and isinstance(row.get("batches"), list) and len(row.get("batches")) > 0:
+            batch_info_map[item_code] = row.get("batches")  # list of {batch_no, qty}
+        elif row.get("batch_no"):
+            batch_info_map[item_code] = row.get("batch_no")  # single batch string
+        else:
+            batch_info_map[item_code] = None
 
     wo_order = _order_wos_fifo(selected_wos)
     remaining = {wo: _remaining_map_for_wo(wo) for wo in wo_order}
@@ -533,17 +593,52 @@ def create_consolidated_transfers(
                 remaining.get(wo, {}).get(item_code, {}).get("uom")
                 or frappe.db.get_value("Item", item_code, "stock_uom")
             )
-            se.append(
-                "items",
-                {
-                    "item_code": item_code,
-                    "qty": rounded_qty,
-                    "uom": uom,
-                    "s_warehouse": source_warehouse,
-                    "t_warehouse": target_wh,
-                    "batch_no": batch_map.get(item_code) or None,
-                },
-            )
+            
+            # Get batch info for this item
+            batch_info = batch_info_map.get(item_code)
+            
+            # Handle multiple batches
+            if isinstance(batch_info, list) and len(batch_info) > 0:
+                # Multiple batches: create one line per batch, proportionally allocating the WO qty
+                total_batch_qty = sum(float(b.get("qty", 0)) for b in batch_info)
+                
+                for batch_item in batch_info:
+                    batch_no = batch_item.get("batch_no")
+                    batch_qty = float(batch_item.get("qty", 0))
+                    
+                    if batch_qty <= 0 or total_batch_qty <= 0:
+                        continue
+                    
+                    # Proportional allocation: (batch_qty / total_batch_qty) * allocated_qty_for_this_wo
+                    proportion = batch_qty / total_batch_qty
+                    line_qty = _round_up_qty(rounded_qty * proportion, precision=3)
+                    
+                    if line_qty > 0:
+                        se.append(
+                            "items",
+                            {
+                                "item_code": item_code,
+                                "qty": line_qty,
+                                "uom": uom,
+                                "s_warehouse": source_warehouse,
+                                "t_warehouse": target_wh,
+                                "batch_no": batch_no,
+                            },
+                        )
+            else:
+                # Single batch or no batch
+                batch_no = batch_info if isinstance(batch_info, str) else None
+                se.append(
+                    "items",
+                    {
+                        "item_code": item_code,
+                        "qty": rounded_qty,
+                        "uom": uom,
+                        "s_warehouse": source_warehouse,
+                        "t_warehouse": target_wh,
+                        "batch_no": batch_no,
+                    },
+                )
 
         se.insert(ignore_permissions=True)
         se.submit()
