@@ -724,16 +724,21 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             "t_warehouse": wip_wh,
         }
         
-        # If the staging transfer already created a serial_and_batch_bundle, reuse it
-        # This prevents ERPNext from raising "Serial and Batch Bundle <id> has already created"
+        # Handle batch tracking: either reuse existing bundle or set batch_no
+        # Business rule: serial_and_batch_bundle takes precedence over batch_no
+        # When both exist, ERPNext will validate and reject, so we must choose one
         if item.serial_and_batch_bundle:
+            # Reuse the existing serial_and_batch_bundle from the staging transfer
+            # This prevents ERPNext from raising "Serial and Batch Bundle <id> has already created"
             item_dict["serial_and_batch_bundle"] = item.serial_and_batch_bundle
-            # Explicitly set use_serial_batch_fields to 0 to indicate we're using the bundle
+            # Set use_serial_batch_fields=0 to tell ERPNext we're using the new bundle system
+            # (not the legacy batch_no/serial_no fields)
             item_dict["use_serial_batch_fields"] = 0
         elif item.batch_no:
-            # Only set batch_no if there's no bundle (legacy or non-batch items)
+            # No bundle exists - use legacy batch_no field
+            # ERPNext will create a new bundle from this batch_no
             item_dict["batch_no"] = item.batch_no
-            # Set use_serial_batch_fields to 1 to let ERPNext create a new bundle from batch_no
+            # Set use_serial_batch_fields=1 to tell ERPNext to create a bundle from batch_no
             item_dict["use_serial_batch_fields"] = 1
         
         se.append("items", item_dict)
