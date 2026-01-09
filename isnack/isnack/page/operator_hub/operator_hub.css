@@ -12,6 +12,11 @@
 
   --teal:#15b79e;       /* primary accent (teal) */
   --teal-d:#109487;
+  --blue:#3b82f6;
+  --blue-soft:#e8f1ff;
+  --teal-soft:#e7fbf7;
+  --amber-soft:#fff3d6;
+  --red-soft:#ffe7e7;
   --red:#ef4444;
   --amber:#f59e0b;
   --gray:#9aa6b2;
@@ -53,8 +58,8 @@
   background:var(--panel);
   border:1px solid var(--line);
   border-radius:10px;
-  padding:8px 12px;
-  box-shadow:var(--shadow-sm);
+  padding:6px 10px;
+  box-shadow:0 4px 10px rgba(17,24,39,.06);
 }
 .op-teal .op-toolbar .label{ color:var(--muted); font-weight:600; }
 .op-teal .op-toolbar .vr{ width:1px; height:18px; background:var(--line); margin:0 14px; }
@@ -72,13 +77,13 @@
 /* Header time: larger & spaced */
 .op-teal .op-toolbar #op-time{
   margin-left:.75rem;
-  padding:.25rem .7rem;
+  padding:.2rem .6rem;
   border:1px solid var(--line);
   border-radius:8px;
   background:var(--panel-2);
   color:var(--ink);
   font-weight:700;
-  font-size:1.25rem;
+  font-size:1.1rem;
   line-height:1.1;
   letter-spacing:.3px;
   font-variant-numeric: tabular-nums lining-nums;
@@ -106,14 +111,14 @@
    ===================================== */
 /* Reduce excessive padding in card headers and bodies */
 .op-teal .mes-operator .card-header{
-  padding:0.5rem 1rem !important;
+  padding:0.4rem 0.8rem !important;
 }
 .op-teal .mes-operator .card-body{
-  padding:0.75rem 1rem !important;
+  padding:0.6rem 0.8rem !important;
 }
 /* Reduce margin between sections */
 .op-teal .mes-operator > .card{
-  margin-bottom:0.75rem !important;
+  margin-bottom:0.5rem !important;
 }
 
 /* Work Order grid: reserve space for sticky bottom toolbar */
@@ -134,14 +139,15 @@
   background:var(--panel);
   border:1px solid var(--line);
   border-radius:12px;
-  box-shadow:var(--shadow);
-  padding:12px 16px;
+  box-shadow:0 6px 16px rgba(17,24,39,.06);
+  padding:10px 12px;
 }
 .op-teal .list-group-item{
   background:var(--panel);
   border:1px solid var(--line);
   border-radius:12px;
-  margin-bottom:10px;
+  margin-bottom:8px;
+  padding:.6rem .8rem;
   color:var(--ink);
   transition:transform .08s ease, box-shadow .12s ease, border-color .12s ease;
 }
@@ -158,6 +164,31 @@
   font-size:.72rem; text-transform:uppercase;
   background:#f0f3f6; border:1px solid var(--line);
   color:#334155;
+}
+
+/* Badges in toolbar */
+.op-teal .op-badge{
+  border-radius:999px;
+  font-weight:700;
+  padding:.2rem .55rem;
+  border:1px solid var(--line);
+  background:var(--panel-2);
+  color:var(--ink);
+}
+.op-teal .op-badge-status{ background:var(--teal-soft); border-color:#b8f1e6; color:#0f766e; }
+.op-teal .op-badge-shift{ background:var(--blue-soft); border-color:#cfe0ff; color:#1d4ed8; }
+
+/* Panel accents */
+.op-teal .op-panel{
+  position:relative;
+  border-left:4px solid transparent;
+}
+.op-teal .op-panel-primary{ border-left-color:var(--teal); }
+.op-teal .op-panel-info{ border-left-color:var(--blue); }
+.op-teal .op-panel-neutral{ border-left-color:var(--line-strong); }
+
+.op-teal .op-wo-banner{
+  background:linear-gradient(120deg, var(--teal-soft) 0%, #ffffff 55%);
 }
 .op-teal .chip-fg{ background:#e6fbf7; border-color:#bdf3ea; color:#0f766e; }
 .op-teal .chip-sf{ background:#eef2ff; border-color:#dfe6ff; color:#3730a3; }
@@ -200,6 +231,22 @@
   background:#fff5f5!important; border-color:#fca5a5!important; color:#7f1d1d!important;
 }
 
+/* Operator-meaningful colors for action groups */
+.op-teal #btn-start{
+  background:var(--teal)!important; border-color:var(--teal-d)!important; color:#053b37!important;
+}
+.op-teal #btn-pause{
+  background:var(--amber)!important; border-color:#d97706!important; color:#3b2400!important;
+}
+.op-teal #btn-stop{
+  background:var(--red)!important; border-color:#dc2626!important; color:#fff5f5!important;
+}
+.op-teal #btn-load{ background:#0ea5e9!important; border-color:#0284c7!important; color:#07344a!important; }
+.op-teal #btn-request{ background:#f59e0b!important; border-color:#d97706!important; color:#3b2400!important; }
+.op-teal #btn-return{ background:#f3f4f6!important; border-color:#d1d5db!important; color:#111827!important; }
+.op-teal #btn-label{ background:#22c55e!important; border-color:#16a34a!important; color:#052e16!important; }
+.op-teal #btn-close{ background:#6b7280!important; border-color:#4b5563!important; color:#f8fafc!important; }
+
 /* =====================================
    Sticky Bottom Action Bar
    ===================================== */
@@ -223,9 +270,9 @@
 /* keep content clear of the fixed bar */
 .op-teal .mes-operator{
   padding-bottom:180px; /* height of action bar + status bar + extra margin */
-  padding-left:0.75rem !important;  /* reduce side padding */
-  padding-right:0.75rem !important; /* reduce side padding */
-  padding-top:0.75rem !important;   /* reduce top padding */
+  padding-left:0.6rem !important;  /* reduce side padding */
+  padding-right:0.6rem !important; /* reduce side padding */
+  padding-top:0.6rem !important;   /* reduce top padding */
 }
 
 /* container behaviours */
@@ -265,22 +312,22 @@
 
 /* compact tile buttons */
 .op-teal .tile-btn{
-  min-height:78px;
-  padding:.65rem .8rem;
-  font-size:.95rem;
+  min-height:70px;
+  padding:.55rem .7rem;
+  font-size:.92rem;
   border-radius:10px;
   letter-spacing:.12px;
   font-weight:700;
   white-space:normal;   /* allow wrap */
   line-height:1.2;
-  min-width:140px;
+  min-width:130px;
   text-align:center;
 }
 
 /* Double-width for run controls (Start / Pause / Stop) */
 .op-teal .op-bottom .bar-group .tile-btn.wide-2x{
   flex:2 1 0;
-  min-width:220px;
+  min-width:200px;
 }
 
 /* Fallback: ensure spacing if buttons are not wrapped in a .bar-group */
