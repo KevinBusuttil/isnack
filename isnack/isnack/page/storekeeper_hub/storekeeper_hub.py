@@ -428,7 +428,10 @@ def get_available_batches(item_code: str, warehouse: str):
     Returns: [{'batch_id': str, 'qty': float, 'expiry_date': date, 'manufacturing_date': date}]
     """
     if not item_code or not warehouse:
+        frappe.logger().debug(f"get_available_batches: Missing parameters - item_code={item_code}, warehouse={warehouse}")
         return []
+    
+    frappe.logger().debug(f"Fetching batches for item={item_code}, warehouse={warehouse}")
     
     # Get batches with available stock in the warehouse
     query = """
@@ -455,6 +458,8 @@ def get_available_batches(item_code: str, warehouse: str):
         'item_code': item_code,
         'warehouse': warehouse
     }, as_dict=True)
+    
+    frappe.logger().debug(f"Found {len(batches)} batches with stock for item={item_code} in warehouse={warehouse}")
     
     return batches
 
