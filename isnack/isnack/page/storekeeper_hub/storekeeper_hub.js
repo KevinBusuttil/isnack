@@ -7,6 +7,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     single_column: true
   });
 
+  // Constants
+  const QTY_PRECISION = 3;
+  const QTY_TOLERANCE = 0.001; // Math.pow(10, -QTY_PRECISION)
+
   // Load theme CSS (Deep Cerulean)
   $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">').appendTo(document.head);
 
@@ -23,7 +27,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     hours: 24,
     selected_bucket: null,  // full bucket object from server
     selected_wos: [],       // names of selected WOs from the chosen bucket
-    cart: [],                // [{item_code, item_name, has_batch_no, batch_no, uom, qty, note}]
+    cart: [],                // [{item_code, item_name, has_batch_no, batch_no, batches: [{batch_no, qty}], uom, qty, note}]
     selected_transfers: []  // names of Stock Entries selected for picklist
   };
 
@@ -438,6 +442,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       item_name: item.item_name || '',
       has_batch_no: !!item.has_batch_no,
       batch_no: '',
+      batches: [],  // for multi-batch support
       uom: item.uom || '',
       qty: round_qty(item.qty || 0),
       note: ''
@@ -475,6 +480,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
     state.cart.forEach((r, idx) => {
+      // Check if item has multiple batches assigned
+      const has_multi_batch = r.batches && r.batches.length > 0;
+      const batch_indicator = has_multi_batch 
+        ? `<span class="chip" style="font-size: 10px; padding: 1px 6px;">${r.batches.length} batches</span>`
+        : '';
+
       const $tr = $(`
         <tr>
           <td>
@@ -483,13 +494,17 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               <div class="muted item-name">${frappe.utils.escape_html(r.item_name || '')}</div>
             </div>
           </td>
-          <td><div class="batch-holder"></div></td>
+          <td>
+            <div class="batch-holder"></div>
+            ${batch_indicator}
+          </td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
           <td><input type="number" class="form-control form-control-sm c-qty" style="max-width: 100px;" value="${fmt_qty(r.qty || 0)}"></td>
           <td><input class="form-control form-control-sm c-notes" value="${frappe.utils.escape_html(r.note || '')}"></td>
           <td>
             <div class="btn-group">
               <button class="btn btn-xs btn-default fill">Fill</button>
+              ${r.has_batch_no ? '<button class="btn btn-xs btn-primary batch-select">Batches</button>' : ''}
               <button class="btn btn-xs btn-default del">✕</button>
             </div>
           </td>
@@ -528,6 +543,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         r.item_code = e.target.value;
         // reset batch on item change to force re-selection
         r.batch_no = '';
+        r.batches = [];
         r.item_name = '';
         r.has_batch_no = false;
         if (batchControl) {
@@ -562,6 +578,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       $tr.find('.c-notes').on('change', e => { r.note = e.target.value; });
       $tr.find('.del').on('click', () => { state.cart.splice(idx, 1); redraw_cart(); });
       $tr.find('.fill').on('click', () => set_auto_qty_for_row(idx));
+      
+      // Batch selection dialog
+      $tr.find('.batch-select').on('click', () => show_batch_selection_dialog(idx));
 
       $cart_rows.append($tr);
     });
@@ -600,6 +619,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       item_name: item_name,
       has_batch_no: has_batch_no,
       batch_no: '',
+      batches: [],  // for multi-batch support
       uom: stock_uom || '',
       qty: 1,
       note: ''
@@ -611,9 +631,217 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     set_auto_qty_for_row(idx);
   }
 
+  // Batch Selection Dialog
+  function show_batch_selection_dialog(cart_idx) {
+    const cart_row = state.cart[cart_idx];
+    if (!cart_row || !cart_row.has_batch_no) {
+      frappe.msgprint(__('This item does not require batch tracking.'));
+      return;
+    }
+
+    const item_code = cart_row.item_code;
+    const total_qty = cart_row.qty || 0;
+    const warehouse = src_wh.get_value() || state.src_warehouse;
+
+    if (!warehouse) {
+      frappe.msgprint(__('Please select a source warehouse first.'));
+      return;
+    }
+
+    // Initialize batches array if not exists
+    if (!cart_row.batches) {
+      cart_row.batches = [];
+    }
+
+    // Fetch available batches
+    frappe.call({
+      method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_available_batches',
+      args: {
+        item_code: item_code,
+        warehouse: warehouse
+      },
+      callback: (r) => {
+        if (!r.message || !r.message.length) {
+          frappe.msgprint(__('No batches available for this item in the selected warehouse.'));
+          return;
+        }
+
+        const available_batches = r.message;
+        
+        // Create dialog
+        const d = new frappe.ui.Dialog({
+          title: __('Select Batches for {0}', [item_code]),
+          size: 'large',
+          fields: [
+            {
+              fieldtype: 'HTML',
+              fieldname: 'batch_info',
+              options: `
+                <div style="margin-bottom: 12px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                  <div><strong>${__('Item')}:</strong> ${frappe.utils.escape_html(item_code)}</div>
+                  <div><strong>${__('Total Required Quantity')}:</strong> ${fmt_qty(total_qty)} ${frappe.utils.escape_html(cart_row.uom || '')}</div>
+                </div>
+              `
+            },
+            {
+              fieldtype: 'HTML',
+              fieldname: 'batch_table',
+              options: '<div id="batch-selection-table"></div>'
+            }
+          ],
+          primary_action_label: __('Save'),
+          primary_action: (values) => {
+            // Collect batch assignments
+            const assignments = [];
+            let total_assigned = 0;
+
+            $('#batch-selection-table .batch-row').each(function() {
+              const batch_no = $(this).data('batch');
+              const qty_input = $(this).find('.batch-qty-input');
+              const qty = parseFloat(qty_input.val() || 0);
+              
+              if (qty > 0) {
+                assignments.push({
+                  batch_no: batch_no,
+                  qty: round_qty(qty)
+                });
+                total_assigned += qty;
+              }
+            });
+
+            // Validate total
+            const diff = Math.abs(total_assigned - total_qty);
+            if (diff > QTY_TOLERANCE) {
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Total assigned quantity ({0}) must equal required quantity ({1})', 
+                  [fmt_qty(total_assigned), fmt_qty(total_qty)]),
+                indicator: 'red'
+              });
+              return;
+            }
+
+            // Save to cart row
+            cart_row.batches = assignments;
+            
+            // Also set the single batch_no for backwards compatibility (first batch)
+            if (assignments.length > 0) {
+              cart_row.batch_no = assignments[0].batch_no;
+            }
+
+            frappe.show_alert({
+              message: __('Batch assignments saved'),
+              indicator: 'green'
+            });
+            
+            d.hide();
+            redraw_cart();
+          }
+        });
+
+        d.show();
+
+        // Render batch table
+        const $table_container = d.$wrapper.find('#batch-selection-table');
+        
+        let table_html = `
+          <table class="table table-bordered" style="margin-top: 10px;">
+            <thead>
+              <tr>
+                <th style="width: 30%;">${__('Batch No')}</th>
+                <th style="width: 20%;">${__('Available Qty')}</th>
+                <th style="width: 20%;">${__('Expiry Date')}</th>
+                <th style="width: 30%;">${__('Assign Qty')}</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        // Pre-populate with existing assignments
+        const existing_map = {};
+        (cart_row.batches || []).forEach(b => {
+          existing_map[b.batch_no] = b.qty;
+        });
+
+        available_batches.forEach(batch => {
+          const existing_qty = existing_map[batch.batch_id] || 0;
+          const expiry = batch.expiry_date 
+            ? frappe.datetime.str_to_user(batch.expiry_date) 
+            : '-';
+          
+          table_html += `
+            <tr class="batch-row" data-batch="${frappe.utils.escape_html(batch.batch_id)}" data-available="${batch.qty}">
+              <td><strong>${frappe.utils.escape_html(batch.batch_id)}</strong></td>
+              <td>${fmt_qty(batch.qty)}</td>
+              <td>${expiry}</td>
+              <td>
+                <input type="number" 
+                  class="form-control form-control-sm batch-qty-input" 
+                  value="${existing_qty > 0 ? fmt_qty(existing_qty) : ''}"
+                  step="0.001"
+                  min="0"
+                  max="${batch.qty}"
+                  placeholder="0" />
+              </td>
+            </tr>
+          `;
+        });
+
+        table_html += `
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" style="text-align: right;"><strong>${__('Total Assigned')}:</strong></td>
+                <td><span id="total-assigned">0</span> / ${fmt_qty(total_qty)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        `;
+
+        $table_container.html(table_html);
+
+        // Update total on input change
+        const update_total = () => {
+          let total = 0;
+          $('.batch-qty-input').each(function() {
+            total += parseFloat($(this).val() || 0);
+          });
+          $('#total-assigned').text(fmt_qty(total));
+          
+          // Visual feedback
+          const diff = Math.abs(total - total_qty);
+          if (diff < QTY_TOLERANCE) {
+            $('#total-assigned').css('color', 'green');
+          } else {
+            $('#total-assigned').css('color', 'red');
+          }
+        };
+
+        $('.batch-qty-input').on('input change', function() {
+          const $input = $(this);
+          const max = parseFloat($input.attr('max'));
+          let val = parseFloat($input.val() || 0);
+          
+          // Validate against available quantity
+          if (val > max) {
+            $input.val(max);
+            frappe.show_alert({
+              message: __('Quantity cannot exceed available stock'),
+              indicator: 'orange'
+            });
+          }
+          
+          update_total();
+        });
+
+        update_total();
+      }
+    });
+  }
+
 
   $hub.find('.add-manual').on('click', () => {
-    state.cart.push({ item_code: '', item_name: '', has_batch_no: false, batch_no: '', uom: '', qty: 0, note: '' });
+    state.cart.push({ item_code: '', item_name: '', has_batch_no: false, batch_no: '', batches: [], uom: '', qty: 0, note: '' });
     redraw_cart();
   });
 
@@ -655,7 +883,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (!state.cart.length) return frappe.msgprint(__('Cart is empty.'));
     if (!state.selected_bucket || !state.selected_wos.length) return frappe.msgprint(__('Select a WO bucket and at least one Work Order.'));
     if (!src_wh.get_value()) return frappe.msgprint(__('Please select Source Warehouse.'));
-    const missing_batch = state.cart.filter(row => row.has_batch_no && !row.batch_no);
+    
+    // Check for batch-managed items that don't have batches assigned
+    const missing_batch = state.cart.filter(row => {
+      if (!row.has_batch_no) return false;
+      // Item requires batch but has neither single batch nor multi-batch assigned
+      const has_batches = row.batches && row.batches.length > 0;
+      const has_single_batch = row.batch_no && row.batch_no.trim();
+      return !has_batches && !has_single_batch;
+    });
+    
     if (missing_batch.length) {
       const codes = missing_batch.map(row => row.item_code).filter(Boolean).join(', ');
       frappe.msgprint(__('Select batch codes for batch-managed items before allocating. Missing: {0}', [codes || __('(unknown item)')]));
