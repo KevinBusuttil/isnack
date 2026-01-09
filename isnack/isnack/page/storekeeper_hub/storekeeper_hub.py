@@ -602,16 +602,25 @@ def create_consolidated_transfers(
                 # Multiple batches: create one line per batch, proportionally allocating the WO qty
                 total_batch_qty = sum(float(b.get("qty", 0)) for b in batch_info)
                 
-                for batch_item in batch_info:
+                if total_batch_qty <= 0:
+                    continue
+                
+                allocated_so_far = 0.0
+                for i, batch_item in enumerate(batch_info):
                     batch_no = batch_item.get("batch_no")
                     batch_qty = float(batch_item.get("qty", 0))
                     
-                    if batch_qty <= 0 or total_batch_qty <= 0:
+                    if batch_qty <= 0:
                         continue
                     
-                    # Proportional allocation: (batch_qty / total_batch_qty) * allocated_qty_for_this_wo
-                    proportion = batch_qty / total_batch_qty
-                    line_qty = _round_up_qty(rounded_qty * proportion, precision=3)
+                    # For the last batch, use remaining quantity to avoid rounding errors
+                    if i == len(batch_info) - 1:
+                        line_qty = rounded_qty - allocated_so_far
+                    else:
+                        # Proportional allocation: (batch_qty / total_batch_qty) * allocated_qty_for_this_wo
+                        proportion = batch_qty / total_batch_qty
+                        line_qty = _round_up_qty(rounded_qty * proportion, precision=3)
+                        allocated_so_far += line_qty
                     
                     if line_qty > 0:
                         se.append(

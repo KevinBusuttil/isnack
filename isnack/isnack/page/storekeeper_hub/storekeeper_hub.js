@@ -7,6 +7,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     single_column: true
   });
 
+  // Constants
+  const QTY_PRECISION = 3;
+  const QTY_TOLERANCE = 0.001; // Math.pow(10, -QTY_PRECISION)
+
   // Load theme CSS (Deep Cerulean)
   $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">').appendTo(document.head);
 
@@ -707,7 +711,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
             // Validate total
             const diff = Math.abs(total_assigned - total_qty);
-            if (diff > 0.001) {
+            if (diff > QTY_TOLERANCE) {
               frappe.msgprint({
                 title: __('Validation Error'),
                 message: __('Total assigned quantity ({0}) must equal required quantity ({1})', 
@@ -806,7 +810,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           
           // Visual feedback
           const diff = Math.abs(total - total_qty);
-          if (diff < 0.001) {
+          if (diff < QTY_TOLERANCE) {
             $('#total-assigned').css('color', 'green');
           } else {
             $('#total-assigned').css('color', 'red');
