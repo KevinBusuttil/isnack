@@ -664,11 +664,13 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Look for recent "Material Transfer" stock entries to this staging warehouse
     # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
     # Using a more precise pattern match to avoid matching partial work order names
+    # IMPORTANT: Group by serial_and_batch_bundle to properly handle existing bundles
     wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
             sed.item_code,
             sed.batch_no,
+            sed.serial_and_batch_bundle,
             sed.uom,
             SUM(sed.qty) as qty
         FROM `tabStock Entry` se
@@ -677,7 +679,7 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             AND se.purpose = 'Material Transfer'
             AND sed.t_warehouse = %(staging_wh)s
             AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
-        GROUP BY sed.item_code, sed.batch_no, sed.uom
+        GROUP BY sed.item_code, sed.batch_no, sed.serial_and_batch_bundle, sed.uom
         HAVING SUM(sed.qty) > 0
     """, {
         'staging_wh': staging_wh,
@@ -714,14 +716,27 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     
     # Add items from staging
     for item in items_in_staging:
-        se.append("items", {
+        item_dict = {
             "item_code": item.item_code,
             "qty": item.qty,
             "uom": item.uom,
             "s_warehouse": staging_wh,
             "t_warehouse": wip_wh,
-            "batch_no": item.batch_no,
-        })
+        }
+        
+        # If the staging transfer already created a serial_and_batch_bundle, reuse it
+        # This prevents ERPNext from raising "Serial and Batch Bundle <id> has already created"
+        if item.serial_and_batch_bundle:
+            item_dict["serial_and_batch_bundle"] = item.serial_and_batch_bundle
+            # Explicitly set use_serial_batch_fields to 0 to indicate we're using the bundle
+            item_dict["use_serial_batch_fields"] = 0
+        elif item.batch_no:
+            # Only set batch_no if there's no bundle (legacy or non-batch items)
+            item_dict["batch_no"] = item.batch_no
+            # Set use_serial_batch_fields to 1 to let ERPNext create a new bundle from batch_no
+            item_dict["use_serial_batch_fields"] = 1
+        
+        se.append("items", item_dict)
     
     se.flags.ignore_permissions = True
     se.insert()
