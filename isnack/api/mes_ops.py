@@ -664,7 +664,8 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Look for recent "Material Transfer" stock entries to this staging warehouse
     # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
     # Using a more precise pattern match to avoid matching partial work order names
-    # IMPORTANT: Group by serial_and_batch_bundle to properly handle existing bundles
+    # IMPORTANT: When serial_and_batch_bundle exists, preserve each bundle as separate row
+    # to maintain correct batch allocations. Only aggregate when no bundle exists (legacy).
     wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
@@ -672,15 +673,15 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             sed.batch_no,
             sed.serial_and_batch_bundle,
             sed.uom,
-            SUM(sed.qty) as qty
+            sed.qty
         FROM `tabStock Entry` se
         JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
         WHERE se.docstatus = 1
             AND se.purpose = 'Material Transfer'
             AND sed.t_warehouse = %(staging_wh)s
             AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
-        GROUP BY sed.item_code, sed.batch_no, sed.serial_and_batch_bundle, sed.uom
-        HAVING SUM(sed.qty) > 0
+            AND sed.qty > 0
+        ORDER BY se.posting_date, se.posting_time, sed.idx
     """, {
         'staging_wh': staging_wh,
         'wo_pattern1': f'%WO: {work_order}|%',
