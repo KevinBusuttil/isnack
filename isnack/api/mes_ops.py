@@ -670,16 +670,15 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     # Using a more precise pattern match to avoid matching partial work order names
     #
     # IMPORTANT: Preserve each bundle as separate row (no aggregation) to maintain batch allocation integrity
-    #   - Fetch serial_and_batch_bundle created by staging transfer
-    #   - ERPNext creates bundles automatically from batch_no, and we must reuse them
-    #   - This avoids "Serial and Batch Bundle <id> has already created" validation error
+    #   - Fetch batch_no from staging transfer
+    #   - Let ERPNext create NEW serial_and_batch_bundle records (don't reuse existing ones)
+    #   - Each Stock Entry needs its own unique bundle, even if referencing the same batch
     #   - ORDER BY preserves chronological order and row sequence from staging transfers
     wo_escaped = frappe.db.escape(work_order)
     items_in_staging = frappe.db.sql("""
         SELECT 
             sed.item_code,
             sed.batch_no,
-            sed.serial_and_batch_bundle,
             sed.uom,
             sed.qty
         FROM `tabStock Entry` se
@@ -733,21 +732,13 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             "t_warehouse": wip_wh,
         }
         
-        # Handle batch tracking: either reuse existing bundle or set batch_no
-        # Business rule: serial_and_batch_bundle takes precedence over batch_no
-        # When both exist, ERPNext will validate and reject, so we must choose one
-        if item.serial_and_batch_bundle:
-            # Reuse the existing serial_and_batch_bundle from the staging transfer
-            # This prevents ERPNext from raising "Serial and Batch Bundle <id> has already created"
-            item_dict["serial_and_batch_bundle"] = item.serial_and_batch_bundle
-            # use_serial_batch_fields=0 tells ERPNext we're using the new bundle system
-            # (not the legacy batch_no/serial_no fields)
-            item_dict["use_serial_batch_fields"] = 0
-        elif item.batch_no:
-            # No bundle exists - use legacy batch_no field
-            # ERPNext will create a new bundle from this batch_no
+        # Handle batch tracking: Use batch_no and let ERPNext create new bundles
+        # Don't reuse serial_and_batch_bundle as it's already linked to the staging transfer
+        # Each Stock Entry needs its own unique bundle, even if referencing the same batch
+        if item.batch_no:
+            # Use batch_no and let ERPNext create a new bundle
             item_dict["batch_no"] = item.batch_no
-            # use_serial_batch_fields=1 tells ERPNext to create a bundle from batch_no
+            # use_serial_batch_fields=1 tells ERPNext to create a new bundle from batch_no
             item_dict["use_serial_batch_fields"] = 1
         # else: No batch tracking - ERPNext will handle as a regular item without batch/serial
         
