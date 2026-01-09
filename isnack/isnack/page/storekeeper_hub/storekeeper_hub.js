@@ -662,7 +662,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const assignments = [];
             let total_assigned = 0;
 
-            $('#batch-selection-table .batch-row').each(function() {
+            d.$wrapper.find('#batch-selection-table .batch-row').each(function() {
               const batch_no = $(this).data('batch');
               const qty_input = $(this).find('.batch-qty-input');
               const qty = parseFloat(qty_input.val() || 0);
@@ -786,21 +786,21 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         // Update total on input change
         const update_total = () => {
           let total = 0;
-          $('.batch-qty-input').each(function() {
+          $table_container.find('.batch-qty-input').each(function() {
             total += parseFloat($(this).val() || 0);
           });
-          $('#total-assigned').text(fmt_qty(total));
+          $table_container.find('#total-assigned').text(fmt_qty(total));
           
           // Visual feedback
           const diff = Math.abs(total - total_qty);
           if (diff < QTY_TOLERANCE) {
-            $('#total-assigned').css('color', 'green');
+            $table_container.find('#total-assigned').css('color', 'green');
           } else {
-            $('#total-assigned').css('color', 'red');
+            $table_container.find('#total-assigned').css('color', 'red');
           }
         };
 
-        $('.batch-qty-input').on('input change', function() {
+        $table_container.find('.batch-qty-input').on('input change', function() {
           const $input = $(this);
           const max = parseFloat($input.attr('max'));
           let val = parseFloat($input.val() || 0);
@@ -821,7 +821,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         if (available_batches.length === 1 && 
             available_batches[0].qty >= total_qty && 
             (!cart_row.batches || cart_row.batches.length === 0)) {
-          const $first_input = $('.batch-qty-input').first();
+          const $first_input = $table_container.find('.batch-qty-input').first();
           $first_input.val(fmt_qty(total_qty)).trigger('change');
         }
 
