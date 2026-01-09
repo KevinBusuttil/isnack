@@ -658,6 +658,7 @@ def create_consolidated_transfers(
                                 "s_warehouse": source_warehouse,
                                 "t_warehouse": target_wh,
                                 "batch_no": batch_no,
+                                "use_serial_batch_fields": 1 if batch_no else 0,
                             },
                         )
             else:
@@ -672,6 +673,7 @@ def create_consolidated_transfers(
                         "s_warehouse": source_warehouse,
                         "t_warehouse": target_wh,
                         "batch_no": batch_no,
+                        "use_serial_batch_fields": 1 if batch_no else 0,
                     },
                 )
 
