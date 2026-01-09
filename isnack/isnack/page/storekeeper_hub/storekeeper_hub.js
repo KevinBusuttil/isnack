@@ -441,7 +441,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       item_code: item.item_code,
       item_name: item.item_name || '',
       has_batch_no: !!item.has_batch_no,
-      batch_no: '',
       batches: [],  // for multi-batch support
       uom: item.uom || '',
       qty: round_qty(item.qty || 0),
@@ -495,10 +494,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             </div>
           </td>
           <td>
-            <div style="display: flex; align-items: center; gap: 4px;">
-              <div class="batch-holder" style="flex: 1;"></div>
+            <div style="display: flex; align-items: center; gap: 4px; justify-content: flex-end;">
               ${batch_indicator}
-              ${r.has_batch_no ? '<button class="btn btn-xs batch-select" style="background-color: gold; color: #1f2933; border-color: #d4a017; margin-left: auto;">...</button>' : ''}
+              ${r.has_batch_no ? '<button class="btn btn-xs batch-select" style="background-color: gold; color: #1f2933; border-color: #d4a017;">...</button>' : ''}
             </div>
           </td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
@@ -516,42 +514,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       // Bind row handlers
       const $itemInput = $tr.find('.c-item');
       const $itemName = $tr.find('.item-name');
-      const $batchHolder = $tr.find('.batch-holder');
-
-      let batchControl = frappe.ui.form.make_control({
-        df: {
-          fieldtype: 'Link',
-          options: 'Batch',
-          placeholder: __('Batch'),
-          get_query: () => ({
-            query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.batch_link_query',
-            filters: {
-              item_code: r.item_code || null,
-              has_expired: 0,
-              warehouse: src_wh.get_value() || state.src_warehouse || null
-            }
-          })
-        },
-        parent: $batchHolder,
-        render_input: true
-      });
-      batchControl.set_value(r.batch_no || '');
-      const sync_batch_value = () => { r.batch_no = batchControl.get_value(); };
-      if (batchControl.$input) {
-        batchControl.$input.on('change input awesomplete-selectcomplete', sync_batch_value);
-      }
 
       $itemInput.on('change', async e => {
         r.item_code = e.target.value;
         // reset batch on item change to force re-selection
-        r.batch_no = '';
         r.batches = [];
         r.item_name = '';
         r.has_batch_no = false;
-        if (batchControl) {
-          batchControl.set_value('');
-          batchControl.refresh();
-        }
       });
 
       fetch_item_details(r.item_code).then(details => {
@@ -563,9 +532,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           $itemInput.val(details.name);
           $itemName.text(details.item_name || '');
           $tr.find('.c-uom').val(r.uom || '');
-          if (batchControl) {
-            batchControl.refresh();
-          }
         } else {
           $itemName.text('');
         }
@@ -620,7 +586,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       item_code: item_code,
       item_name: item_name,
       has_batch_no: has_batch_no,
-      batch_no: '',
       batches: [],  // for multi-batch support
       uom: stock_uom || '',
       qty: 1,
@@ -746,12 +711,27 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         // Render batch table
         const $table_container = d.$wrapper.find('#batch-selection-table');
         
-        let table_html = `
+        // Issue 3: Calculate total available quantity and show warning if insufficient
+        const total_available_qty = available_batches.reduce((sum, batch) => sum + (batch.qty || 0), 0);
+        const insufficient_stock = total_available_qty < total_qty;
+        
+        let table_html = '';
+        
+        // Issue 3: Show insufficient stock warning if needed
+        if (insufficient_stock) {
+          table_html += `
+            <div style="color: #d32f2f; background: #ffebee; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-weight: bold;">
+              ⚠️ Insufficient stock: Total available (${fmt_qty(total_available_qty)}) is less than required (${fmt_qty(total_qty)}) ${frappe.utils.escape_html(cart_row.uom || '')}
+            </div>
+          `;
+        }
+        
+        table_html += `
           <table class="table table-bordered" style="margin-top: 10px;">
             <thead>
               <tr>
                 <th style="width: 30%;">${__('Batch No')}</th>
-                <th style="width: 20%;">${__('Available Qty')}</th>
+                <th style="width: 20%;">${__('Available Qty')} ${cart_row.uom ? '(' + frappe.utils.escape_html(cart_row.uom) + ')' : ''}</th>
                 <th style="width: 20%;">${__('Expiry Date')}</th>
                 <th style="width: 30%;">${__('Assign Qty')}</th>
               </tr>
@@ -766,6 +746,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
 
         available_batches.forEach(batch => {
+          // Note: batch.batch_id is the batch number from server
           const existing_qty = existing_map[batch.batch_id] || 0;
           const expiry = batch.expiry_date 
             ? frappe.datetime.str_to_user(batch.expiry_date) 
@@ -794,7 +775,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             <tfoot>
               <tr>
                 <td colspan="3" style="text-align: right;"><strong>${__('Total Assigned')}:</strong></td>
-                <td><span id="total-assigned">0</span> / ${fmt_qty(total_qty)}</td>
+                <td><span id="total-assigned">0</span> / ${fmt_qty(total_qty)} ${frappe.utils.escape_html(cart_row.uom || '')}</td>
               </tr>
             </tfoot>
           </table>
@@ -836,6 +817,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           update_total();
         });
 
+        // Issue 2: Auto-initialize "Assign Qty" for single batch with sufficient quantity
+        if (available_batches.length === 1 && 
+            available_batches[0].qty >= total_qty && 
+            (!cart_row.batches || cart_row.batches.length === 0)) {
+          const $first_input = $('.batch-qty-input').first();
+          $first_input.val(fmt_qty(total_qty)).trigger('change');
+        }
+
         update_total();
       }
     });
@@ -843,7 +832,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
 
   $hub.find('.add-manual').on('click', () => {
-    state.cart.push({ item_code: '', item_name: '', has_batch_no: false, batch_no: '', batches: [], uom: '', qty: 0, note: '' });
+    state.cart.push({ item_code: '', item_name: '', has_batch_no: false, batches: [], uom: '', qty: 0, note: '' });
     redraw_cart();
   });
 
