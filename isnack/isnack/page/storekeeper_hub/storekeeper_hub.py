@@ -614,7 +614,7 @@ def create_consolidated_transfers(
                     
                     # For the last batch, use remaining quantity to avoid rounding errors
                     if i == len(batch_info) - 1:
-                        line_qty = rounded_qty - allocated_so_far
+                        line_qty = max(0.0, rounded_qty - allocated_so_far)
                     else:
                         # Proportional allocation: (batch_qty / total_batch_qty) * allocated_qty_for_this_wo
                         proportion = batch_qty / total_batch_qty
