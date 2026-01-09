@@ -7,7 +7,9 @@ from typing import Optional, Tuple
 
 import frappe
 from frappe import _
-from isnack.page.storekeeper_hub.storekeeper_hub import _stage_status as _storekeeper_stage_status
+from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
+    _stage_status as _storekeeper_stage_status,
+)
 
 # ============================================================
 # Factory Settings helpers (Single doctype)
