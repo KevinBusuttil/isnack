@@ -90,8 +90,7 @@ def _required_leaf_map_for_wo(wo_name: str) -> dict:
 def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
     """Return already-transferred qty per item_code into the WIP warehouse for this WO.
     
-    Only counts 'Material Transfer for Manufacture' which moves materials to WIP.
-    Does NOT count 'Material Transfer' which moves to staging.
+    Counts both 'Material Transfer for Manufacture' and 'Material Transfer' which move materials to staging/WIP.
     """
     if not target_wh:
         return {}
@@ -101,7 +100,7 @@ def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
         from `tabStock Entry` se
         join `tabStock Entry Detail` sei on sei.parent = se.name
         where se.docstatus = 1
-          and se.purpose = 'Material Transfer for Manufacture'
+          and se.purpose in ('Material Transfer for Manufacture', 'Material Transfer')
           and se.work_order = %s
           and coalesce(sei.t_warehouse, se.to_warehouse) = %s
         group by sei.item_code
@@ -191,7 +190,7 @@ def _stage_status(work_order_name: str) -> str:
         from `tabStock Entry` se
         join `tabStock Entry Detail` sei on sei.parent = se.name
         where se.docstatus = 1
-          and se.purpose = 'Material Transfer for Manufacture'
+          and se.purpose in ('Material Transfer for Manufacture', 'Material Transfer')
           and se.work_order = %s
           and coalesce(sei.t_warehouse, se.to_warehouse) = %s
         group by sei.item_code
@@ -334,7 +333,7 @@ def get_queue(factory_line: str | None = None, posting_date: str | None = None):
                     "Stock Entry",
                     {
                         "work_order": w["name"],
-                        "purpose": "Material Transfer for Manufacture",
+                        "purpose": ["in", ["Material Transfer for Manufacture", "Material Transfer"]],
                         "docstatus": 1,
                     },
                 )
@@ -410,7 +409,7 @@ def get_buckets(factory_line: str | None = None, posting_date: str | None = None
                     "Stock Entry",
                     {
                         "work_order": w["name"],
-                        "purpose": "Material Transfer for Manufacture",
+                        "purpose": ["in", ["Material Transfer for Manufacture", "Material Transfer"]],
                         "docstatus": 1,
                     },
                 )
