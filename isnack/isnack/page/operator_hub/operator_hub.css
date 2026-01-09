@@ -45,6 +45,10 @@
 /* =====================================
    Header toolbar (Operator | Line | Shift + actions)
    ===================================== */
+/* Remove extra card-body padding around toolbar */
+.op-teal .mes-operator > .card:first-child .card-body{
+  padding:0;
+}
 .op-teal .op-toolbar{
   background:var(--panel);
   border:1px solid var(--line);
@@ -100,6 +104,17 @@
 /* =====================================
    Panels & Work Order list
    ===================================== */
+/* Reduce excessive padding in card headers and bodies */
+.op-teal .mes-operator .card-header{
+  padding:0.5rem 1rem !important;
+}
+.op-teal .mes-operator .card-body{
+  padding:0.75rem 1rem !important;
+}
+/* Reduce margin between sections */
+.op-teal .mes-operator > .card{
+  margin-bottom:0.75rem !important;
+}
 .op-teal #wo-banner,
 .op-teal .card{
   background:var(--panel);
@@ -193,7 +208,10 @@
 
 /* keep content clear of the fixed bar */
 .op-teal .mes-operator{
-  padding-bottom:160px; /* height of action bar + status bar */
+  padding-bottom:180px; /* height of action bar + status bar + extra margin */
+  padding-left:0.75rem !important;  /* reduce side padding */
+  padding-right:0.75rem !important; /* reduce side padding */
+  padding-top:0.75rem !important;   /* reduce top padding */
 }
 
 /* container behaviours */
