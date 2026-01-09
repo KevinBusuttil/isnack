@@ -498,7 +498,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             <div style="display: flex; align-items: center; gap: 4px;">
               <div class="batch-holder" style="flex: 1;"></div>
               ${batch_indicator}
-              ${r.has_batch_no ? '<button class="btn btn-xs btn-primary batch-select" style="margin-left: auto;">...</button>' : ''}
+              ${r.has_batch_no ? '<button class="btn btn-xs batch-select" style="background-color: gold; color: #1f2933; border-color: #d4a017; margin-left: auto;">...</button>' : ''}
             </div>
           </td>
           <td><input class="form-control form-control-sm c-uom"   style="max-width: 80px;" value="${frappe.utils.escape_html(r.uom || '')}"></td>
@@ -664,7 +664,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       },
       callback: (r) => {
         if (!r.message || !r.message.length) {
-          frappe.msgprint(__('No batches available for this item in the selected warehouse.'));
+          frappe.msgprint(__('No batches available for this item in warehouse {0}.', [warehouse]));
           return;
         }
 
