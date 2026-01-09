@@ -596,7 +596,7 @@ def create_consolidated_transfers(
         se.company = wo_doc.company
         se.stock_entry_type = "Material Transfer"  # Changed from "Material Transfer for Manufacture"
         se.purpose = "Material Transfer"  # Explicitly set purpose
-        # Note: we still link to work_order for reference tracking in remarks
+        se.work_order = wo_doc.name  # Link to Work Order for status tracking
         se.from_warehouse = source_warehouse
         se.to_warehouse = target_wh
 
