@@ -6,6 +6,7 @@ from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
 from frappe.utils.print_format import print_by_server 
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 from isnack.utils.printing import get_label_printer 
+from erpnext.stock.doctype.batch.batch import get_batch_qty
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -433,35 +434,56 @@ def get_available_batches(item_code: str, warehouse: str):
     
     frappe.logger().debug(f"Fetching batches for item={item_code}, warehouse={warehouse}")
     
-    # Get batches with available stock in the warehouse
-    query = """
-        SELECT 
-            b.name as batch_id,
-            b.expiry_date,
-            b.manufacturing_date,
-            COALESCE(SUM(sle.actual_qty), 0) as qty
-        FROM `tabBatch` b
-        LEFT JOIN `tabStock Ledger Entry` sle 
-            ON sle.batch_no = b.name 
-            AND sle.item_code = b.item
-            AND sle.warehouse = %(warehouse)s
-            AND sle.is_cancelled = 0
-        WHERE b.item = %(item_code)s
-            AND b.disabled = 0
-            AND (b.expiry_date IS NULL OR b.expiry_date >= CURDATE())
-        GROUP BY b.name, b.expiry_date, b.manufacturing_date
-        HAVING qty > 0
-        ORDER BY b.expiry_date ASC, b.creation DESC
-    """
+    # Use ERPNext's built-in batch query
+    batches = get_batch_qty(
+        item_code=item_code,
+        warehouse=warehouse,
+        for_stock_levels=True
+    )
     
-    batches = frappe.db.sql(query, {
-        'item_code': item_code,
-        'warehouse': warehouse
-    }, as_dict=True)
+    if not batches:
+        frappe.logger().debug(f"No batches found for item={item_code} in warehouse={warehouse}")
+        return []
     
-    frappe.logger().debug(f"Found {len(batches)} batches with stock for item={item_code} in warehouse={warehouse}")
+    # Get additional batch details (expiry_date, manufacturing_date)
+    batch_nos = [b.get('batch_no') for b in batches if b.get('batch_no')]
     
-    return batches
+    if not batch_nos:
+        return []
+    
+    batch_details = frappe.get_all(
+        'Batch',
+        filters={
+            'name': ['in', batch_nos],
+            'disabled': 0
+        },
+        fields=['name', 'expiry_date', 'manufacturing_date']
+    )
+    
+    # Create a map for quick lookup
+    details_map = {b.name: b for b in batch_details}
+    
+    # Combine qty data with batch details
+    result = []
+    for batch in batches:
+        batch_no = batch.get('batch_no')
+        qty = batch.get('qty', 0)
+        
+        if qty > 0 and batch_no in details_map:
+            details = details_map[batch_no]
+            result.append({
+                'batch_id': batch_no,
+                'qty': qty,
+                'expiry_date': details.expiry_date,
+                'manufacturing_date': details.manufacturing_date
+            })
+    
+    # Sort by expiry date (nulls last) then by creation
+    result.sort(key=lambda x: (x['expiry_date'] or '9999-12-31', x['batch_id']))
+    
+    frappe.logger().debug(f"Found {len(result)} batches with stock for item={item_code} in warehouse={warehouse}")
+    
+    return result
 
 
 @frappe.whitelist()
