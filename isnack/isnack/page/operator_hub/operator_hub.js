@@ -152,16 +152,16 @@ function init_operator_hub($root) {
     const enableActions = enableCore && isAllocated;
     const status = state.current_wo_status;
 
-    // Disable Start button if status is "In Process"
-    const isStartDisabled = !enableActions || status === "In Process";
+    // Enable Start button only if status is "Not Started" and fully allocated
+    const isStartDisabled = !enableActions || status !== "Not Started";
     $('#btn-start',  $root).prop('disabled', isStartDisabled);
 
     // Dynamic Pause/Resume button
     const $pauseBtn = $('#btn-pause', $root);
     if (status === "Stopped") {
-      $pauseBtn.text('Resume').removeClass('btn-warning').addClass('btn-danger');
+      $pauseBtn.text('Resume').removeClass('btn-warning').addClass('btn-success');
     } else {
-      $pauseBtn.text('Pause').removeClass('btn-danger').addClass('btn-warning');
+      $pauseBtn.text('Pause').removeClass('btn-success').addClass('btn-warning');
     }
     $pauseBtn.prop('disabled', !enableActions);
 
