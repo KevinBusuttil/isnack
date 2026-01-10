@@ -27,8 +27,15 @@ def _fs():
         return _Dummy()
 
 def _consume_on_scan() -> bool:
-    fs = _fs()
-    return bool(int((getattr(fs, "consume_on_scan", None) or 1)))
+    """Always consume materials immediately on scan (Material Consumption for Manufacture).
+    
+    This is hardcoded to True. Materials scanned via the Load button are directly
+    consumed from source warehouse into the Work Order, not transferred to WIP.
+    
+    Returns:
+        bool: Always True
+    """
+    return True
 
 def _scan_dup_ttl() -> int:
     fs = _fs()
@@ -100,11 +107,93 @@ def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[s
             )
     return None, None, None
 
+def _default_line_scrap(work_order: str) -> Optional[str]:
+    """Get scrap/reject warehouse for the work order's line."""
+    line = _line_for_work_order(work_order)
+    if not line:
+        return None
+    
+    fs = _fs()
+    rows = getattr(fs, "line_warehouse_map", []) or []
+    for r in rows:
+        row_line = (
+            getattr(r, "factory_line", None)
+            or getattr(r, "workstation", None)
+            or ""
+        ).strip()
+        if row_line.lower() == str(line).strip().lower():
+            return getattr(r, "scrap_warehouse", None) or None
+    
+    return None
+
+def _get_consumed_materials_from_load(work_order: str) -> dict:
+    """
+    Get materials already consumed via LOAD button (Material Consumption for Manufacture entries).
+    
+    Args:
+        work_order: Work Order name
+    
+    Returns:
+        dict: {item_code: total_qty_consumed, ...}
+    """
+    consumed = frappe.db.sql("""
+        SELECT 
+            sed.item_code,
+            SUM(sed.qty) as total_qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+            AND se.work_order = %(work_order)s
+            AND se.purpose = 'Material Consumption for Manufacture'
+            AND sed.s_warehouse IS NOT NULL
+            AND sed.is_finished_item = 0
+            AND sed.is_scrap_item = 0
+        GROUP BY sed.item_code
+    """, {"work_order": work_order}, as_dict=True)
+    
+    return {row.item_code: row.total_qty for row in consumed}
+
+def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
+    """
+    Get BOM items scaled for the production quantity.
+    
+    Args:
+        bom_no: BOM name
+        qty: Production quantity
+    
+    Returns:
+        list: [{"item_code": str, "qty": float, "uom": str, ...}, ...]
+    """
+    from erpnext.manufacturing.doctype.bom.bom import get_bom_items_as_dict
+    
+    # Get BOM items (exploded if multi-level)
+    items_dict = get_bom_items_as_dict(
+        bom_no,
+        company=frappe.db.get_value("BOM", bom_no, "company"),
+        qty=qty,
+        fetch_exploded=1,
+        fetch_qty_in_stock_uom=True
+    )
+    
+    items = []
+    for item_code, item_data in items_dict.items():
+        items.append({
+            "item_code": item_code,
+            "qty": item_data.get("qty", 0),
+            "uom": item_data.get("stock_uom", "Nos"),
+        })
+    
+    return items
+
+
 # ============================================================
 # Generic helpers
 # ============================================================
 
 ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
+
+# Tolerance for floating point quantity comparisons
+QTY_EPSILON = 0.0001
 
 def _is_fg(item_code: str) -> bool:
     """Treat sales items as FG by policy (adjust to Item Group if you prefer)."""
@@ -874,9 +963,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
       - Enforces batch when Item has_batch_no = 1
       - Optionally restricts by global Allowed Item Groups (Factory Settings)
       - Skips BOM-membership validation for Packaging Item Groups (Factory Settings)
-      - Posts either:
-          * "Material Consumption for Manufacture" (consume_on_scan = 1), or
-          * "Material Transfer for Manufacture"   (consume_on_scan = 0)
+      - Always posts "Material Consumption for Manufacture" (consume_on_scan is hardcoded to True)
         with warehouses derived from Factory Settings -> Line Warehouse Map, falling
         back to Stock Settings default warehouse.
       - Soft idempotency: ignores duplicates within the configured TTL.
@@ -928,71 +1015,39 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         s_wh = parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging)
         t_wh = _default_line_wip(work_order)
         
-        # Post either Consumption or Transfer for Manufacture (based on Factory Settings)
-        if _consume_on_scan():
-            wo_doc = frappe.get_doc("Work Order", work_order)
+        # Always consume materials directly (Material Consumption for Manufacture)
+        wo_doc = frappe.get_doc("Work Order", work_order)
 
-            se = frappe.new_doc("Stock Entry")
-            # Be explicit so the controller doesn’t treat this like a Manufacture entry
-            se.purpose = "Material Consumption for Manufacture"
-            se.stock_entry_type = "Material Consumption for Manufacture"
-            se.company = wo_doc.company
-            se.work_order = work_order
+        se = frappe.new_doc("Stock Entry")
+        se.purpose = "Material Consumption for Manufacture"
+        se.stock_entry_type = "Material Consumption for Manufacture"
+        se.company = wo_doc.company
+        se.work_order = work_order
+        se.from_bom = 0
+        se.use_multi_level_bom = 0
+        se.fg_completed_qty = 0
 
-            # Prevent ERPNext from trying to derive items from BOM (which triggers the FG qty check)
-            se.from_bom = 0
-            se.use_multi_level_bom = 0
+        se.append("items", {
+            "item_code": item_code,
+            "qty": qty,
+            "uom": uom,
+            "s_warehouse": s_wh,
+            # For Consumption entries, t_warehouse can be blank or set to WIP for audit trail
+            "t_warehouse": t_wh if t_wh else None,
+            "batch_no": parsed.get("batch_no"),
+        })
 
-            # Some versions expect this field to exist when a WO is linked; set a neutral value
-            # (it is ignored for 'Material Consumption for Manufacture')
-            se.fg_completed_qty = 0
+        se.flags.ignore_permissions = True
+        se.insert()
+        se.submit()
 
-            se.append("items", {
-                "item_code": item_code,
-                "qty": qty,
-                "uom": uom,
-                "s_warehouse": s_wh,
-                "batch_no": parsed.get("batch_no"),
-                # t_warehouse is optional for consumption; omit or leave None
-            })
+        return {"ok": True, "msg": _("Consumed {0} {1} of {2}").format(qty, uom, item_code)}
 
-            se.flags.ignore_permissions = True
-            se.insert()
-            se.submit()
-            msg_txt = _("Consumed {0} × {1} (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
-        else:
-            # Changed from "Material Transfer for Manufacture" to "Material Consumption for Manufacture"
-            # This properly consumes materials from WIP during production
-            se = frappe.new_doc("Stock Entry")
-            se.purpose = "Material Consumption for Manufacture"
-            se.stock_entry_type = "Material Consumption for Manufacture"
-            se.company = frappe.db.get_value("Work Order", work_order, "company")
-            se.work_order = work_order
-            se.from_bom = 0
-            se.use_multi_level_bom = 0
-
-            se.append("items", {
-                "item_code": item_code,
-                "qty": qty,
-                "uom": uom,
-                "s_warehouse": t_wh,  # Consume from WIP warehouse
-                "t_warehouse": None,  # Consumption has no target warehouse
-                "batch_no": parsed.get("batch_no"),
-            })
-
-            se.flags.ignore_permissions = True
-            se.insert()
-            se.submit()
-            msg_txt = _("Consumed {0} × {1} from WIP (Batch {2})").format(qty, item_code, parsed.get("batch_no", "-"))
+    except Exception as e:
+        frappe.log_error(f"scan_material error: {str(e)}", "Material Scan Error")
+        return {"ok": False, "msg": _("Failed to consume material. Please contact administrator.")}
 
 
-        return {"ok": True, "msg": msg_txt}
-
-    except Exception:
-        frappe.log_error(frappe.get_traceback(), "iSnack scan_material")
-        return {"ok": False, "msg": _("Scan failed")}
-
-@frappe.whitelist()
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
     _require_roles(["Stores User", *ROLES_OPERATOR])
 
@@ -1062,6 +1117,16 @@ def get_wo_progress(work_order):
 
 @frappe.whitelist()
 def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=None):
+    """
+    Complete a Work Order by:
+    1. Creating a Manufacture Stock Entry for the finished goods
+    2. Consuming any remaining BOM materials not already consumed via LOAD button
+    3. Handling semi-finished goods usage if provided
+    4. Recording rejects and remarks
+    
+    Materials already consumed via LOAD button (Material Consumption for Manufacture)
+    are accounted for and not re-consumed.
+    """
     _require_roles(ROLES_OPERATOR)
 
     good = float(good or 0)
@@ -1078,15 +1143,19 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         or frappe.db.get_single_value("Stock Settings", "default_warehouse")
     )
     uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
+    wip_wh = wo.wip_warehouse or _default_line_wip(work_order)
 
-    # 1) Manufacture (FG/SFG receipt)
+    # 1) Manufacture (FG/SFG receipt) with material consumption
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Manufacture"
     se.work_order = work_order
     se.to_warehouse = fg_wh
     se.fg_completed_qty = good
+    se.from_bom = 1
+    se.bom_no = wo.bom_no
 
+    # Add finished item
     se.append("items", {
         "item_code": wo.production_item,
         "qty": good,
@@ -1094,6 +1163,42 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         "is_finished_item": 1,
         "t_warehouse": fg_wh,
     })
+
+    # Get materials already consumed via LOAD button
+    consumed_from_load = _get_consumed_materials_from_load(work_order)
+
+    # Get BOM items scaled for production quantity
+    if wo.bom_no:
+        bom_items = _get_bom_items_for_quantity(wo.bom_no, good)
+        
+        # Add remaining materials to consume (subtract what was already consumed via LOAD)
+        for bom_item in bom_items:
+            item_code = bom_item["item_code"]
+            required_qty = bom_item["qty"]
+            already_consumed = consumed_from_load.get(item_code, 0)
+            remaining_qty = required_qty - already_consumed
+            
+            # Only add items that still need to be consumed (with tolerance for floating point precision)
+            if remaining_qty > QTY_EPSILON:  # Use epsilon constant to handle floating point errors
+                se.append("items", {
+                    "item_code": item_code,
+                    "qty": remaining_qty,
+                    "uom": bom_item["uom"],
+                    "s_warehouse": wip_wh,
+                    "is_finished_item": 0,
+                })
+
+    # Add scrap/rejects if applicable
+    if rejects > 0:
+        scrap_wh = _default_line_scrap(work_order)
+        if scrap_wh:
+            se.append("items", {
+                "item_code": wo.production_item,
+                "qty": rejects,
+                "uom": uom,
+                "is_scrap_item": 1,
+                "t_warehouse": scrap_wh,
+            })
 
     se.flags.ignore_permissions = True
     se.insert()
@@ -1214,6 +1319,15 @@ def list_workstations():
 
 @frappe.whitelist()
 def get_materials_snapshot(work_order: str):
+    """
+    Get materials required, transferred, and consumed for a Work Order.
+    
+    Returns detailed breakdown:
+    - Required: From BOM
+    - Transferred: Via START button (Material Transfer for Manufacture)
+    - Consumed: Via LOAD button (Material Consumption for Manufacture)
+    - Remaining: Required - (Transferred + Consumed)
+    """
     _require_roles(["Factory Operator", "Stores User", "Production Manager"])
 
     wo = frappe.get_doc("Work Order", work_order)
@@ -1222,8 +1336,8 @@ def get_materials_snapshot(work_order: str):
 
     bom = frappe.get_doc("BOM", wo.bom_no)
     bom_qty = float(bom.get("quantity") or 1) or 1
-    wo_qty  = float(wo.get("qty") or 0)
-    factor  = wo_qty / bom_qty if bom_qty else 1.0
+    wo_qty = float(wo.get("qty") or 0)
+    factor = wo_qty / bom_qty if bom_qty else 1.0
 
     rows = []
     for it in bom.items:
@@ -1233,35 +1347,56 @@ def get_materials_snapshot(work_order: str):
             "item_name": it.item_name or "",
             "uom": (it.stock_uom or it.uom or ""),
             "required": required,
-            "issued": 0.0,
+            "transferred": 0.0,
+            "consumed": 0.0,
             "remain": required,
         })
 
-    issued = frappe.db.sql("""
-        select sed.item_code, sum(sed.qty) as qty
-        from `tabStock Entry` se
-        join `tabStock Entry Detail` sed on sed.parent = se.name
-        where se.docstatus=1
-          and se.work_order=%s
-          and se.purpose in ('Material Consumption for Manufacture','Material Transfer for Manufacture')
-        group by sed.item_code
+    # Get transferred quantities (from START button)
+    transferred = frappe.db.sql("""
+        SELECT sed.item_code, SUM(sed.qty) as qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+          AND se.work_order = %s
+          AND se.purpose = 'Material Transfer for Manufacture'
+          AND sed.t_warehouse IS NOT NULL
+        GROUP BY sed.item_code
     """, (work_order,), as_dict=True)
-    issued_map = {r.item_code: float(r.qty or 0) for r in issued}
 
-    for r in rows:
-        iss = issued_map.get(r["item_code"], 0.0)
-        r["issued"] = iss
-        r["remain"] = max(float(r["required"]) - iss, 0.0)
+    # Get consumed quantities (from LOAD button)
+    consumed = frappe.db.sql("""
+        SELECT sed.item_code, SUM(sed.qty) as qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+          AND se.work_order = %s
+          AND se.purpose = 'Material Consumption for Manufacture'
+          AND sed.is_finished_item = 0
+          AND sed.is_scrap_item = 0
+        GROUP BY sed.item_code
+    """, (work_order,), as_dict=True)
+
+    transferred_map = {r.item_code: float(r.qty or 0) for r in transferred}
+    consumed_map = {r.item_code: float(r.qty or 0) for r in consumed}
+
+    for row in rows:
+        item = row["item_code"]
+        row["transferred"] = transferred_map.get(item, 0.0)
+        row["consumed"] = consumed_map.get(item, 0.0)
+        row["remain"] = row["required"] - row["transferred"] - row["consumed"]
 
     scans = frappe.db.sql("""
-        select sed.item_code, sed.batch_no, sed.qty, sed.uom, sed.parent, sed.creation
-        from `tabStock Entry` se
-        join `tabStock Entry Detail` sed on sed.parent = se.name
-        where se.docstatus=1
-          and se.work_order=%s
-          and se.purpose in ('Material Consumption for Manufacture','Material Transfer for Manufacture')
-        order by sed.creation desc
-        limit 12
+        SELECT sed.item_code, sed.batch_no, sed.qty, sed.uom,
+               se.posting_date, se.posting_time
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+          AND se.work_order = %s
+          AND se.purpose = 'Material Consumption for Manufacture'
+          AND sed.is_finished_item = 0
+        ORDER BY se.creation DESC
+        LIMIT 12
     """, (work_order,), as_dict=True)
 
     return {"ok": True, "wo": wo.name, "rows": rows, "scans": scans}

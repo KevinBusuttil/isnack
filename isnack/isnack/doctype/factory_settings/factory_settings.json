@@ -26,9 +26,12 @@
  "fields": [
   {
    "default": "1",
+   "description": "This setting is now hardcoded to enabled. Materials scanned via Load button are always consumed directly.",
    "fieldname": "consume_on_scan",
    "fieldtype": "Check",
-   "label": "Consume On Scan"
+   "hidden": 1,
+   "label": "Consume Materials On Scan",
+   "read_only": 1
   },
   {
    "default": "45",

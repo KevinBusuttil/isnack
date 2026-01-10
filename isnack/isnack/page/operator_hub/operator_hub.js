@@ -280,7 +280,8 @@ function init_operator_hub($root) {
         <td class="text-truncate" title="${frappe.utils.escape_html(it.item_name || '')}">${frappe.utils.escape_html(it.item_name || '')}</td>
         <td class="text-end">${frappe.utils.escape_html(it.uom || '')}</td>
         <td class="text-end">${fmt(it.required)}</td>
-        <td class="text-end">${fmt(it.issued)}</td>
+        <td class="text-end">${fmt(it.transferred)}</td>
+        <td class="text-end"><span class="badge bg-info">${fmt(it.consumed)}</span></td>
         <td class="text-end ${(+it.remain>0?'text-danger':'text-success')}">${fmt(it.remain)}</td>
       `;
       frag.appendChild(tr);
