@@ -192,6 +192,9 @@ def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
 
 ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
 
+# Tolerance for floating point quantity comparisons
+QTY_EPSILON = 0.0001
+
 def _is_fg(item_code: str) -> bool:
     """Treat sales items as FG by policy (adjust to Item Group if you prefer)."""
     return bool(frappe.db.get_value("Item", item_code, "is_sales_item"))
@@ -1176,7 +1179,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             remaining_qty = required_qty - already_consumed
             
             # Only add items that still need to be consumed (with tolerance for floating point precision)
-            if remaining_qty > 0.0001:  # Small epsilon to handle floating point errors
+            if remaining_qty > QTY_EPSILON:  # Use epsilon constant to handle floating point errors
                 se.append("items", {
                     "item_code": item_code,
                     "qty": remaining_qty,
