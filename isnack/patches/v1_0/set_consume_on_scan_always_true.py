@@ -10,8 +10,8 @@ def execute():
             frappe.db.set_single_value("Factory Settings", "consume_on_scan", 1)
             frappe.db.commit()
             
-            print("✓ Set consume_on_scan to 1 in Factory Settings")
-            print("  This setting is now hardcoded and will always be True")
+            frappe.logger().info("Set consume_on_scan to 1 in Factory Settings")
+            frappe.logger().info("This setting is now hardcoded and will always be True")
     except Exception as e:
-        print(f"Note: Could not update consume_on_scan field: {str(e)}")
-        print("  This is expected if the field was already removed")
+        frappe.logger().warning(f"Could not update consume_on_scan field: {str(e)}")
+        frappe.logger().warning("This is expected if the field was already removed")

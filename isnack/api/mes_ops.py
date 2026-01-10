@@ -953,7 +953,6 @@ def _post_sfg_consumption(wo, rows: list[dict]):
 # ============================================================
 
 @frappe.whitelist()
-@frappe.whitelist()
 def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str] = None):
     """
     Handle a material scan for a job:
@@ -1042,8 +1041,8 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         return {"ok": True, "msg": _("Consumed {0} {1} of {2}").format(qty, uom, item_code)}
 
     except Exception as e:
-        frappe.log_error(f"scan_material error: {str(e)}")
-        return {"ok": False, "msg": str(e)}
+        frappe.log_error(f"scan_material error: {str(e)}", "Material Scan Error")
+        return {"ok": False, "msg": _("Failed to consume material. Please contact administrator.")}
 
 
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
@@ -1176,8 +1175,8 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
             
-            # Only add items that still need to be consumed
-            if remaining_qty > 0:
+            # Only add items that still need to be consumed (with tolerance for floating point precision)
+            if remaining_qty > 0.0001:  # Small epsilon to handle floating point errors
                 se.append("items", {
                     "item_code": item_code,
                     "qty": remaining_qty,
