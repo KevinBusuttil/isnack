@@ -1025,7 +1025,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 LIMIT 1
             """, (bom, item_code), as_dict=True)
             
-            if bom_item_qty:
+            if bom_item_qty and len(bom_item_qty) > 0:
                 bom_required = float(bom_item_qty[0].qty_per_unit) * wo_qty
                 
                 # Get already consumed quantity
@@ -1050,7 +1050,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 if total_after_scan > threshold_qty:
                     return {
                         "ok": False, 
-                        "msg": _("Excessive quantity: {0} total (BOM requires {1}, threshold {2}%). Contact supervisor.").format(
+                        "msg": _("Excessive quantity: {0:.2f} total (BOM requires {1:.2f}, threshold {2:.0f}%). Contact supervisor.").format(
                             total_after_scan, bom_required, threshold_pct
                         )
                     }
@@ -1250,20 +1250,30 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
                     })
                 else:
                     # Over-consumed: log variance for tracking
-                    variance_pct = (abs(remaining_qty) / required_qty * 100) if required_qty > 0 else 0
+                    # Calculate variance percentage safely
+                    if required_qty > QTY_EPSILON:
+                        variance_pct = (abs(remaining_qty) / required_qty * 100)
+                    else:
+                        # Should not happen - BOM items with zero qty indicate data issue
+                        variance_pct = 0
+                        frappe.log_error(
+                            f"BOM item with zero required quantity for WO {work_order}: {item_code}",
+                            "BOM Data Issue"
+                        )
+                    
                     frappe.log_error(
                         f"Over-consumption detected for WO {work_order}\n"
                         f"Item: {item_code}\n"
-                        f"Required: {required_qty}\n"
-                        f"Consumed: {already_consumed}\n"
-                        f"Excess: {abs(remaining_qty)} ({variance_pct:.1f}%)",
+                        f"Required: {required_qty:.4f}\n"
+                        f"Consumed: {already_consumed:.4f}\n"
+                        f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)",
                         "Material Over-Consumption"
                     )
                     
                     # Add comment to Work Order for audit trail
                     wo.add_comment(
                         "Comment",
-                        f"Over-consumption: {item_code} - Required: {required_qty}, Consumed: {already_consumed} ({variance_pct:.1f}% excess)"
+                        f"Over-consumption: {item_code} - Required: {required_qty:.4f}, Consumed: {already_consumed:.4f} ({variance_pct:.1f}% excess)"
                     )
 
     # Add scrap/rejects if applicable
