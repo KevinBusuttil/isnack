@@ -241,9 +241,6 @@
 .op-teal #btn-pause{
   background:var(--amber)!important; border-color:#d97706!important; color:#3b2400!important;
 }
-.op-teal #btn-stop{
-  background:var(--red)!important; border-color:#dc2626!important; color:#fff5f5!important;
-}
 .op-teal #btn-load{ background:#0ea5e9!important; border-color:#0284c7!important; color:#07344a!important; }
 .op-teal #btn-request{ background:#f59e0b!important; border-color:#d97706!important; color:#3b2400!important; }
 .op-teal #btn-return{ background:#f3f4f6!important; border-color:#d1d5db!important; color:#111827!important; }
@@ -365,6 +362,43 @@
 @media (prefers-reduced-motion: reduce){
   .op-teal .list-group-item{ transition:none!important; }
   .op-teal .btn{ transition:none!important; }
+}
+
+/* =====================================
+   Scan History Dialog Styles
+   ===================================== */
+.op-teal .scan-history-container{
+  margin-top: 1rem;
+}
+.op-teal .scan-history-list{
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #e3e8ee;
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: #f7f9fb;
+}
+.op-teal .scan-history-empty{
+  text-align: center;
+  padding: 1rem;
+}
+.op-teal .scan-entry{
+  border-radius: 6px;
+  border-left: 3px solid;
+}
+.op-teal .scan-success{
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+.op-teal .scan-failed{
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+.op-teal .scan-code{
+  font-size: 0.85em;
+  background: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
 }
 
 /* =====================================

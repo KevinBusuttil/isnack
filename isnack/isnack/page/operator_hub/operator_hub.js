@@ -12,6 +12,14 @@ frappe.pages['operator-hub'].on_page_load = function (wrapper) {
 };
 
 function init_operator_hub($root) {
+  // Scan history configuration constants
+  const SCAN_CODE_MAX_LENGTH = 60;
+  const SCAN_HISTORY_MAX_ENTRIES = 20;
+  // Pattern to extract item code from backend messages like "Consumed X unit of ITEM123" or "item ABC-XYZ"
+  const SCAN_ITEM_PATTERN = /(?:of|item)\s+([A-Z0-9_-]+)/i;
+  // Pattern to extract quantity from backend messages like "Consumed 12.5 Kg" or "consumed 1 Nos"
+  const SCAN_QTY_PATTERN = /consumed\s+([\d.]+)\s+(\w+)/i;
+
   const banner = $('#wo-banner', $root);
   const grid   = $('#wo-grid',   $root);
   const alerts = $('#alerts',    $root);
@@ -164,8 +172,6 @@ function init_operator_hub($root) {
       $pauseBtn.text('Pause').removeClass('btn-success').addClass('btn-warning');
     }
     $pauseBtn.prop('disabled', !enableActions);
-
-    $('#btn-stop',   $root).prop('disabled', !enableActions);
 
     $('#btn-load',    $root).prop('disabled', !enableActions);
     $('#btn-request', $root).prop('disabled', !enableActions);
@@ -411,20 +417,84 @@ function init_operator_hub($root) {
     if (!state.current_wo){ flashStatus('Pick a Work Order first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
 
     setStatus('Processing scan…');
+    
+    // Add timestamp for this scan
+    const scanTime = new Date().toLocaleTimeString();
+    
     rpc('isnack.api.mes_ops.scan_material', { work_order: state.current_wo, code: raw })
       .then(async r => {
         const { ok, msg } = r.message || {};
-        frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
+        const safeMsg = msg || 'Scan processed';
+        frappe.show_alert({ message: safeMsg, indicator: ok ? 'green' : 'red' });
+        
+        // Update scan history in dialog if it exists
+        const $scanHistoryList = $('#scan-history-list');
+        if ($scanHistoryList.length > 0) {
+          // Remove "no scans yet" message if it exists
+          if ($scanHistoryList.find('.scan-history-empty').length > 0) {
+            $scanHistoryList.empty();
+          }
+          
+          // Parse the barcode to extract item info from backend response message
+          // Using configurable patterns to match various message formats
+          let itemInfo = 'Unknown';
+          let qtyInfo = '';
+          
+          // Try to extract item code from the message
+          const itemMatch = safeMsg.match(SCAN_ITEM_PATTERN);
+          if (itemMatch) {
+            itemInfo = itemMatch[1];
+          }
+          
+          // Try to extract quantity from message
+          const qtyMatch = safeMsg.match(SCAN_QTY_PATTERN);
+          if (qtyMatch) {
+            qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
+          }
+          
+          // Create scan entry with proper styling
+          const statusClass = ok ? 'scan-success' : 'scan-failed';
+          const statusIcon = ok ? '✓' : '✗';
+          const statusText = ok ? 'Success' : 'Failed';
+          const badgeClass = ok ? 'bg-success' : 'bg-danger';
+          
+          const scanEntry = $(`
+            <div class="scan-entry ${statusClass} mb-2 p-2">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <span class="badge ${badgeClass} me-2">${statusIcon} ${statusText}</span>
+                <span class="text-muted small">${scanTime}</span>
+              </div>
+              <div class="small mb-1">
+                <strong>Raw Code:</strong> <code class="scan-code">${frappe.utils.escape_html(raw.substring(0, SCAN_CODE_MAX_LENGTH))}${raw.length > SCAN_CODE_MAX_LENGTH ? '...' : ''}</code>
+              </div>
+              ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
+              ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
+              <div class="small text-muted">${frappe.utils.escape_html(safeMsg)}</div>
+            </div>
+          `);
+          
+          // Prepend to show newest first
+          $scanHistoryList.prepend(scanEntry);
+          
+          // Limit to configured max entries
+          if ($scanHistoryList.children().length > SCAN_HISTORY_MAX_ENTRIES) {
+            $scanHistoryList.children().last().remove();
+          }
+          
+          // Auto-scroll to show the newest entry
+          $scanHistoryList.scrollTop(0);
+        }
+        
         if (ok) {
           alerts.length && alerts.addClass('d-none').text('');
           $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
-          flashStatus(msg || 'Loaded material', 'success');
+          flashStatus(safeMsg || 'Loaded material', 'success');
           if (state.current_wo) await load_materials_snapshot(state.current_wo);
           try { okTone.play().catch(()=>{}); } catch(_) {}
         } else {
-          alerts.length && alerts.removeClass('d-none').text(msg || 'Scan failed');
+          alerts.length && alerts.removeClass('d-none').text(safeMsg || 'Scan failed');
           $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
-          flashStatus(msg || 'Scan failed', 'error'); try { errTone.play().catch(()=>{}); } catch(_) {}
+          flashStatus(safeMsg || 'Scan failed', 'error'); try { errTone.play().catch(()=>{}); } catch(_) {}
         }
       });
   }
@@ -460,20 +530,41 @@ function init_operator_hub($root) {
     await updateAfterAction();
   });
 
-  $('#btn-stop',$root).on('click', async () => {
-    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Stop' });
-    flashStatus(`Stopped — ${state.current_wo}`, 'error');
-    await updateAfterAction();
-  });
-
   $('#btn-load',$root).on('click', () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
-    new frappe.ui.Dialog({ title: 'Load / Scan Materials',
-      fields: [{ fieldname:'info', fieldtype:'HTML', options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' }]
-    }).show();
+    
+    // Create scan history container HTML
+    const scanHistoryHTML = `
+      <div class="scan-history-container">
+        <div class="h6 mb-2">Scan History</div>
+        <div id="scan-history-list" class="scan-history-list">
+          <div class="text-muted small scan-history-empty">
+            No scans yet. Start scanning materials...
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const d = new frappe.ui.Dialog({ 
+      title: 'Load / Scan Materials',
+      fields: [
+        { 
+          fieldname:'info', 
+          fieldtype:'HTML', 
+          options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' 
+        },
+        { 
+          fieldname:'scan_history', 
+          fieldtype:'HTML', 
+          options: scanHistoryHTML 
+        }
+      ]
+    });
+    
+    d.show();
     setScanMode(true);
-    flashStatus(`Ready to scan for ${state.current_wo}`); focus_scan();
+    flashStatus(`Ready to scan for ${state.current_wo}`); 
+    focus_scan();
   });
 
   $('#btn-request',$root).on('click', () => {
