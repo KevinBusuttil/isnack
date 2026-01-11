@@ -1076,6 +1076,8 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
             }
         
         # Always consume materials directly (Material Consumption for Manufacture)
+        from frappe.utils import flt
+        
         wo_doc = frappe.get_doc("Work Order", work_order)
 
         se = frappe.new_doc("Stock Entry")
@@ -1083,9 +1085,10 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         se.stock_entry_type = "Material Consumption for Manufacture"
         se.company = wo_doc.company
         se.work_order = work_order
-        se.from_bom = 0
-        se.use_multi_level_bom = 0
-        se.fg_completed_qty = qty  # Set to material qty to satisfy ERPNext validation (actual FG qty determined at completion)
+        se.from_bom = 1
+        se.bom_no = wo_doc.bom_no
+        se.use_multi_level_bom = wo_doc.use_multi_level_bom
+        se.fg_completed_qty = flt(wo_doc.qty) - flt(wo_doc.produced_qty)
 
         se.append("items", {
             "item_code": item_code,
