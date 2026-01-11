@@ -288,7 +288,7 @@ function init_operator_hub($root) {
         <td class="text-end">${fmt(it.required)}</td>
         <td class="text-end">${fmt(it.transferred)}</td>
         <td class="text-end"><span class="badge bg-info">${fmt(it.consumed)}</span></td>
-        <td class="text-end ${(+it.remain>0?'text-danger':'text-success')}">${fmt(it.remain)}</td>
+        <td class="text-end ${(+it.remain<0?'text-danger':'text-success')}">${fmt(it.remain)}</td>
       `;
       frag.appendChild(tr);
     });
