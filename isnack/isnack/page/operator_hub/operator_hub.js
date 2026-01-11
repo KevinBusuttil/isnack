@@ -422,7 +422,8 @@ function init_operator_hub($root) {
     rpc('isnack.api.mes_ops.scan_material', { work_order: state.current_wo, code: raw })
       .then(async r => {
         const { ok, msg } = r.message || {};
-        frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
+        const safeMsg = msg || 'Scan processed';
+        frappe.show_alert({ message: safeMsg, indicator: ok ? 'green' : 'red' });
         
         // Update scan history in dialog if it exists
         const $scanHistoryList = $('#scan-history-list');
@@ -432,20 +433,20 @@ function init_operator_hub($root) {
             $scanHistoryList.empty();
           }
           
-          // Parse the barcode to extract item info
+          // Parse the barcode to extract item info (safe with default empty string)
           let itemInfo = 'Unknown';
           let qtyInfo = '';
           
           // Try to extract item code from the message (flexible pattern)
           // Matches patterns like "of ITEM123", "item ABC-XYZ", etc.
-          const itemMatch = msg.match(SCAN_ITEM_PATTERN);
+          const itemMatch = safeMsg.match(SCAN_ITEM_PATTERN);
           if (itemMatch) {
             itemInfo = itemMatch[1];
           }
           
           // Try to extract quantity from message (flexible pattern)
           // Matches "consumed X unit", etc.
-          const qtyMatch = msg.match(SCAN_QTY_PATTERN);
+          const qtyMatch = safeMsg.match(SCAN_QTY_PATTERN);
           if (qtyMatch) {
             qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
           }
@@ -467,7 +468,7 @@ function init_operator_hub($root) {
               </div>
               ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
               ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
-              <div class="small text-muted">${frappe.utils.escape_html(msg)}</div>
+              <div class="small text-muted">${frappe.utils.escape_html(safeMsg)}</div>
             </div>
           `);
           
@@ -486,13 +487,13 @@ function init_operator_hub($root) {
         if (ok) {
           alerts.length && alerts.addClass('d-none').text('');
           $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
-          flashStatus(msg || 'Loaded material', 'success');
+          flashStatus(safeMsg || 'Loaded material', 'success');
           if (state.current_wo) await load_materials_snapshot(state.current_wo);
           try { okTone.play().catch(()=>{}); } catch(_) {}
         } else {
-          alerts.length && alerts.removeClass('d-none').text(msg || 'Scan failed');
+          alerts.length && alerts.removeClass('d-none').text(safeMsg || 'Scan failed');
           $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
-          flashStatus(msg || 'Scan failed', 'error'); try { errTone.play().catch(()=>{}); } catch(_) {}
+          flashStatus(safeMsg || 'Scan failed', 'error'); try { errTone.play().catch(()=>{}); } catch(_) {}
         }
       });
   }
@@ -533,10 +534,10 @@ function init_operator_hub($root) {
     
     // Create scan history container HTML
     const scanHistoryHTML = `
-      <div class="scan-history-container" style="margin-top: 1rem;">
+      <div class="scan-history-container">
         <div class="h6 mb-2">Scan History</div>
-        <div id="scan-history-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #e3e8ee; border-radius: 8px; padding: 0.5rem; background: #f7f9fb;">
-          <div class="text-muted small" style="text-align: center; padding: 1rem;">
+        <div id="scan-history-list" class="scan-history-list">
+          <div class="text-muted small scan-history-empty">
             No scans yet. Start scanning materials...
           </div>
         </div>

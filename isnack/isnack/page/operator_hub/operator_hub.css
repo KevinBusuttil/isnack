@@ -367,6 +367,21 @@
 /* =====================================
    Scan History Dialog Styles
    ===================================== */
+.op-teal .scan-history-container{
+  margin-top: 1rem;
+}
+.op-teal .scan-history-list{
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #e3e8ee;
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: #f7f9fb;
+}
+.op-teal .scan-history-empty{
+  text-align: center;
+  padding: 1rem;
+}
 .op-teal .scan-entry{
   border-radius: 6px;
   border-left: 3px solid;
