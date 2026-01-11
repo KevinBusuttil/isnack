@@ -1084,6 +1084,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         se.work_order = work_order
         se.from_bom = 0
         se.use_multi_level_bom = 0
+        se.fg_completed_qty = qty  # Required by ERPNext validation for Material Consumption
 
         se.append("items", {
             "item_code": item_code,
