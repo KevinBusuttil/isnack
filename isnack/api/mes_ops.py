@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import frappe
 from frappe import _
+from frappe.utils import flt
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
 )
@@ -740,8 +741,6 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     (no aggregation) to maintain serial_and_batch_bundle integrity. Each bundle
     represents a specific batch allocation that must be transferred as-is to WIP.
     """
-    from frappe.utils import flt
-    
     _require_roles(ROLES_OPERATOR)
     
     wo = frappe.get_doc("Work Order", work_order)
@@ -1076,8 +1075,6 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
             }
         
         # Always consume materials directly (Material Consumption for Manufacture)
-        from frappe.utils import flt
-        
         wo_doc = frappe.get_doc("Work Order", work_order)
 
         se = frappe.new_doc("Stock Entry")
