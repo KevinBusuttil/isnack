@@ -1011,9 +1011,68 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
         qty = float(parsed.get("qty") or 1)
 
+        # Check for over-consumption (only for non-packaging items already in BOM)
+        if not is_packaging:
+            # Get BOM required quantity for this item
+            bom = frappe.db.get_value("Work Order", work_order, "bom_no")
+            wo_qty = float(frappe.db.get_value("Work Order", work_order, "qty") or 0)
+            
+            # Get BOM item qty per unit
+            bom_item_qty = frappe.db.sql("""
+                SELECT COALESCE(qty_consumed_per_unit, qty, 0) as qty_per_unit
+                FROM `tabBOM Item`
+                WHERE parent = %s AND item_code = %s
+                LIMIT 1
+            """, (bom, item_code), as_dict=True)
+            
+            if bom_item_qty:
+                bom_required = float(bom_item_qty[0].qty_per_unit) * wo_qty
+                
+                # Get already consumed quantity
+                already_consumed = frappe.db.sql("""
+                    SELECT COALESCE(SUM(sed.qty), 0) as total
+                    FROM `tabStock Entry` se
+                    JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+                    WHERE se.docstatus = 1
+                        AND se.work_order = %s
+                        AND se.purpose = 'Material Consumption for Manufacture'
+                        AND sed.item_code = %s
+                        AND sed.is_finished_item = 0
+                """, (work_order, item_code))[0][0] or 0
+                
+                total_after_scan = float(already_consumed) + qty
+                
+                # Get threshold from Factory Settings (default 150%)
+                fs = _fs()
+                threshold_pct = float(getattr(fs, "material_overconsumption_threshold", 150))
+                threshold_qty = bom_required * (threshold_pct / 100.0)
+                
+                if total_after_scan > threshold_qty:
+                    return {
+                        "ok": False, 
+                        "msg": _("Excessive quantity: {0} total (BOM requires {1}, threshold {2}%). Contact supervisor.").format(
+                            total_after_scan, bom_required, threshold_pct
+                        )
+                    }
+
         # Warehouses from line-map (falls back to Stock Settings default)
         s_wh = parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging)
         t_wh = _default_line_wip(work_order)
+        
+        # Check stock availability before attempting consumption
+        available_qty = frappe.db.get_value(
+            "Bin", 
+            {"warehouse": s_wh, "item_code": item_code}, 
+            "actual_qty"
+        ) or 0
+
+        if qty > available_qty:
+            return {
+                "ok": False, 
+                "msg": _("Insufficient stock in {0}: {1} available, {2} requested").format(
+                    s_wh, available_qty, qty
+                )
+            }
         
         # Always consume materials directly (Material Consumption for Manufacture)
         wo_doc = frappe.get_doc("Work Order", work_order)
@@ -1178,15 +1237,34 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
             
-            # Only add items that still need to be consumed (with tolerance for floating point precision)
-            if remaining_qty > QTY_EPSILON:  # Use epsilon constant to handle floating point errors
-                se.append("items", {
-                    "item_code": item_code,
-                    "qty": remaining_qty,
-                    "uom": bom_item["uom"],
-                    "s_warehouse": wip_wh,
-                    "is_finished_item": 0,
-                })
+            # Handle both under-consumption and over-consumption
+            if abs(remaining_qty) > QTY_EPSILON:  # Use epsilon for floating point tolerance
+                if remaining_qty > 0:
+                    # Under-consumed: add remaining quantity
+                    se.append("items", {
+                        "item_code": item_code,
+                        "qty": remaining_qty,
+                        "uom": bom_item["uom"],
+                        "s_warehouse": wip_wh,
+                        "is_finished_item": 0,
+                    })
+                else:
+                    # Over-consumed: log variance for tracking
+                    variance_pct = (abs(remaining_qty) / required_qty * 100) if required_qty > 0 else 0
+                    frappe.log_error(
+                        f"Over-consumption detected for WO {work_order}\n"
+                        f"Item: {item_code}\n"
+                        f"Required: {required_qty}\n"
+                        f"Consumed: {already_consumed}\n"
+                        f"Excess: {abs(remaining_qty)} ({variance_pct:.1f}%)",
+                        "Material Over-Consumption"
+                    )
+                    
+                    # Add comment to Work Order for audit trail
+                    wo.add_comment(
+                        "Comment",
+                        f"Over-consumption: {item_code} - Required: {required_qty}, Consumed: {already_consumed} ({variance_pct:.1f}% excess)"
+                    )
 
     # Add scrap/rejects if applicable
     if rejects > 0:
