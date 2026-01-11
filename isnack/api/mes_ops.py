@@ -1056,7 +1056,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                     }
 
         # Warehouses from line-map (falls back to Stock Settings default)
-        s_wh = parsed.get("warehouse") or _default_line_staging(work_order, is_packaging=is_packaging)
+        s_wh = parsed.get("warehouse") or _default_line_wip(work_order)
         t_wh = _default_line_wip(work_order)
         
         # Check stock availability before attempting consumption
