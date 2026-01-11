@@ -15,7 +15,9 @@ function init_operator_hub($root) {
   // Scan history configuration constants
   const SCAN_CODE_MAX_LENGTH = 60;
   const SCAN_HISTORY_MAX_ENTRIES = 20;
+  // Pattern to extract item code from backend messages like "Consumed X unit of ITEM123" or "item ABC-XYZ"
   const SCAN_ITEM_PATTERN = /(?:of|item)\s+([A-Z0-9_-]+)/i;
+  // Pattern to extract quantity from backend messages like "Consumed 12.5 Kg" or "consumed 1 Nos"
   const SCAN_QTY_PATTERN = /consumed\s+([\d.]+)\s+(\w+)/i;
 
   const banner = $('#wo-banner', $root);
@@ -429,23 +431,22 @@ function init_operator_hub($root) {
         const $scanHistoryList = $('#scan-history-list');
         if ($scanHistoryList.length > 0) {
           // Remove "no scans yet" message if it exists
-          if ($scanHistoryList.find('.text-muted').length > 0) {
+          if ($scanHistoryList.find('.scan-history-empty').length > 0) {
             $scanHistoryList.empty();
           }
           
-          // Parse the barcode to extract item info (safe with default empty string)
+          // Parse the barcode to extract item info from backend response message
+          // Using configurable patterns to match various message formats
           let itemInfo = 'Unknown';
           let qtyInfo = '';
           
-          // Try to extract item code from the message (flexible pattern)
-          // Matches patterns like "of ITEM123", "item ABC-XYZ", etc.
+          // Try to extract item code from the message
           const itemMatch = safeMsg.match(SCAN_ITEM_PATTERN);
           if (itemMatch) {
             itemInfo = itemMatch[1];
           }
           
-          // Try to extract quantity from message (flexible pattern)
-          // Matches "consumed X unit", etc.
+          // Try to extract quantity from message
           const qtyMatch = safeMsg.match(SCAN_QTY_PATTERN);
           if (qtyMatch) {
             qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
