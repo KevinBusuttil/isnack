@@ -1087,15 +1087,23 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         se.use_multi_level_bom = wo_doc.use_multi_level_bom
         se.fg_completed_qty = flt(wo_doc.qty) - flt(wo_doc.produced_qty)
 
-        se.append("items", {
+        item_dict = {
             "item_code": item_code,
             "qty": qty,
             "uom": uom,
             "s_warehouse": s_wh,
             # For Consumption entries, t_warehouse can be blank or set to WIP for audit trail
             "t_warehouse": t_wh if t_wh else None,
-            "batch_no": parsed.get("batch_no"),
-        })
+        }
+        
+        # Handle batch tracking: Use batch_no and let ERPNext create new bundles
+        batch_no = parsed.get("batch_no")
+        if batch_no:
+            item_dict["batch_no"] = batch_no
+            # use_serial_batch_fields=1 tells ERPNext to create a new bundle from batch_no
+            item_dict["use_serial_batch_fields"] = 1
+        
+        se.append("items", item_dict)
 
         se.flags.ignore_permissions = True
         se.insert()
