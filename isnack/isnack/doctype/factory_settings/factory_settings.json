@@ -9,6 +9,7 @@
   "consume_on_scan",
   "scan_dup_ttl_sec",
   "max_active_operators",
+  "material_overconsumption_threshold",
   "item_group_policies_section",
   "packaging_item_groups",
   "backflush_item_groups",
@@ -45,6 +46,13 @@
    "fieldname": "max_active_operators",
    "fieldtype": "Int",
    "label": "Max Active Operators per Job"
+  },
+  {
+   "default": "150",
+   "description": "Alert operators when material consumption exceeds this percentage of BOM requirement (default: 150%)",
+   "fieldname": "material_overconsumption_threshold",
+   "fieldtype": "Percent",
+   "label": "Material Over-consumption Threshold"
   },
   {
    "fieldname": "general_section",
