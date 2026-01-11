@@ -914,7 +914,7 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     se.company = wo.company
     se.purpose = "Material Consumption for Manufacture"
     se.work_order = wo.name
-    se.fg_completed_qty = fg_completed_qty  # Required by ERPNext validation for Material Consumption
+    se.fg_completed_qty = fg_completed_qty  # Set to satisfy ERPNext validation - represents finished goods quantity
 
     for r in rows:
         item_code = (r.get("item_code") or "").strip()
@@ -1085,7 +1085,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         se.work_order = work_order
         se.from_bom = 0
         se.use_multi_level_bom = 0
-        se.fg_completed_qty = qty  # Required by ERPNext validation for Material Consumption
+        se.fg_completed_qty = qty  # Set to material qty to satisfy ERPNext validation (actual FG qty determined at completion)
 
         se.append("items", {
             "item_code": item_code,
