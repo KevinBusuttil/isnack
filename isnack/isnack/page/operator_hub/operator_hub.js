@@ -12,6 +12,12 @@ frappe.pages['operator-hub'].on_page_load = function (wrapper) {
 };
 
 function init_operator_hub($root) {
+  // Scan history configuration constants
+  const SCAN_CODE_MAX_LENGTH = 60;
+  const SCAN_HISTORY_MAX_ENTRIES = 20;
+  const SCAN_ITEM_PATTERN = /(?:of|item)\s+([A-Z0-9_-]+)/i;
+  const SCAN_QTY_PATTERN = /consumed\s+([\d.]+)\s+(\w+)/i;
+
   const banner = $('#wo-banner', $root);
   const grid   = $('#wo-grid',   $root);
   const alerts = $('#alerts',    $root);
@@ -432,14 +438,14 @@ function init_operator_hub($root) {
           
           // Try to extract item code from the message (flexible pattern)
           // Matches patterns like "of ITEM123", "item ABC-XYZ", etc.
-          const itemMatch = msg.match(/(?:of|item)\s+([A-Z0-9_-]+)/i);
+          const itemMatch = msg.match(SCAN_ITEM_PATTERN);
           if (itemMatch) {
             itemInfo = itemMatch[1];
           }
           
           // Try to extract quantity from message (flexible pattern)
-          // Matches "Consumed X unit", "X unit of", etc.
-          const qtyMatch = msg.match(/(?:Consumed|consumed)\s+([\d.]+)\s+(\w+)/i);
+          // Matches "consumed X unit", etc.
+          const qtyMatch = msg.match(SCAN_QTY_PATTERN);
           if (qtyMatch) {
             qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
           }
@@ -449,7 +455,6 @@ function init_operator_hub($root) {
           const statusIcon = ok ? '✓' : '✗';
           const statusText = ok ? 'Success' : 'Failed';
           const badgeClass = ok ? 'bg-success' : 'bg-danger';
-          const maxCodeLength = 60;
           
           const scanEntry = $(`
             <div class="scan-entry ${statusClass} mb-2 p-2">
@@ -458,7 +463,7 @@ function init_operator_hub($root) {
                 <span class="text-muted small">${scanTime}</span>
               </div>
               <div class="small mb-1">
-                <strong>Raw Code:</strong> <code class="scan-code">${frappe.utils.escape_html(raw.substring(0, maxCodeLength))}${raw.length > maxCodeLength ? '...' : ''}</code>
+                <strong>Raw Code:</strong> <code class="scan-code">${frappe.utils.escape_html(raw.substring(0, SCAN_CODE_MAX_LENGTH))}${raw.length > SCAN_CODE_MAX_LENGTH ? '...' : ''}</code>
               </div>
               ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
               ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
@@ -469,8 +474,8 @@ function init_operator_hub($root) {
           // Prepend to show newest first
           $scanHistoryList.prepend(scanEntry);
           
-          // Limit to last 20 entries
-          if ($scanHistoryList.children().length > 20) {
+          // Limit to configured max entries
+          if ($scanHistoryList.children().length > SCAN_HISTORY_MAX_ENTRIES) {
             $scanHistoryList.children().last().remove();
           }
           
