@@ -365,6 +365,28 @@
 }
 
 /* =====================================
+   Scan History Dialog Styles
+   ===================================== */
+.op-teal .scan-entry{
+  border-radius: 6px;
+  border-left: 3px solid;
+}
+.op-teal .scan-success{
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+.op-teal .scan-failed{
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+.op-teal .scan-code{
+  font-size: 0.85em;
+  background: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+/* =====================================
    Kiosk mode: hide ERPNext chrome on Operator Hub only
    ===================================== */
 body[data-route="operator-hub"].op-kiosk .navbar,

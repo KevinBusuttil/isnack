@@ -428,34 +428,37 @@ function init_operator_hub($root) {
           
           // Parse the barcode to extract item info
           let itemInfo = 'Unknown';
-          let batchInfo = '';
           let qtyInfo = '';
           
-          // Try to extract item code from the message or parse the code
-          const itemMatch = msg.match(/of\s+([A-Z0-9-]+)/i);
+          // Try to extract item code from the message (flexible pattern)
+          // Matches patterns like "of ITEM123", "item ABC-XYZ", etc.
+          const itemMatch = msg.match(/(?:of|item)\s+([A-Z0-9_-]+)/i);
           if (itemMatch) {
             itemInfo = itemMatch[1];
           }
           
-          // Try to extract quantity from message
-          const qtyMatch = msg.match(/Consumed\s+([\d.]+)\s+(\w+)/i);
+          // Try to extract quantity from message (flexible pattern)
+          // Matches "Consumed X unit", "X unit of", etc.
+          const qtyMatch = msg.match(/(?:Consumed|consumed)\s+([\d.]+)\s+(\w+)/i);
           if (qtyMatch) {
             qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
           }
           
-          // Create scan entry
-          const statusClass = ok ? 'bg-success' : 'bg-danger';
+          // Create scan entry with proper styling
+          const statusClass = ok ? 'scan-success' : 'scan-failed';
           const statusIcon = ok ? '✓' : '✗';
           const statusText = ok ? 'Success' : 'Failed';
+          const badgeClass = ok ? 'bg-success' : 'bg-danger';
+          const maxCodeLength = 60;
           
           const scanEntry = $(`
-            <div class="scan-entry mb-2 p-2" style="border-left: 3px solid ${ok ? '#22c55e' : '#ef4444'}; background: ${ok ? '#f0fdf4' : '#fef2f2'}; border-radius: 6px;">
+            <div class="scan-entry ${statusClass} mb-2 p-2">
               <div class="d-flex justify-content-between align-items-start mb-1">
-                <span class="badge ${statusClass} me-2">${statusIcon} ${statusText}</span>
+                <span class="badge ${badgeClass} me-2">${statusIcon} ${statusText}</span>
                 <span class="text-muted small">${scanTime}</span>
               </div>
               <div class="small mb-1">
-                <strong>Raw Code:</strong> <code style="font-size: 0.85em; background: #ffffff; padding: 2px 4px; border-radius: 3px;">${frappe.utils.escape_html(raw.substring(0, 60))}${raw.length > 60 ? '...' : ''}</code>
+                <strong>Raw Code:</strong> <code class="scan-code">${frappe.utils.escape_html(raw.substring(0, maxCodeLength))}${raw.length > maxCodeLength ? '...' : ''}</code>
               </div>
               ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
               ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
