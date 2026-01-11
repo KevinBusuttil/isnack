@@ -241,9 +241,6 @@
 .op-teal #btn-pause{
   background:var(--amber)!important; border-color:#d97706!important; color:#3b2400!important;
 }
-.op-teal #btn-stop{
-  background:var(--red)!important; border-color:#dc2626!important; color:#fff5f5!important;
-}
 .op-teal #btn-load{ background:#0ea5e9!important; border-color:#0284c7!important; color:#07344a!important; }
 .op-teal #btn-request{ background:#f59e0b!important; border-color:#d97706!important; color:#3b2400!important; }
 .op-teal #btn-return{ background:#f3f4f6!important; border-color:#d1d5db!important; color:#111827!important; }

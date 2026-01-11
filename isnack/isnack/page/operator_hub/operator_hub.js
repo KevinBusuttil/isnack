@@ -165,8 +165,6 @@ function init_operator_hub($root) {
     }
     $pauseBtn.prop('disabled', !enableActions);
 
-    $('#btn-stop',   $root).prop('disabled', !enableActions);
-
     $('#btn-load',    $root).prop('disabled', !enableActions);
     $('#btn-request', $root).prop('disabled', !enableActions);
     $('#btn-return',  $root).prop('disabled', !enableActions);
@@ -411,10 +409,72 @@ function init_operator_hub($root) {
     if (!state.current_wo){ flashStatus('Pick a Work Order first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
 
     setStatus('Processing scan…');
+    
+    // Add timestamp for this scan
+    const scanTime = new Date().toLocaleTimeString();
+    
     rpc('isnack.api.mes_ops.scan_material', { work_order: state.current_wo, code: raw })
       .then(async r => {
         const { ok, msg } = r.message || {};
         frappe.show_alert({ message: msg || 'Scan processed', indicator: ok ? 'green' : 'red' });
+        
+        // Update scan history in dialog if it exists
+        const $scanHistoryList = $('#scan-history-list');
+        if ($scanHistoryList.length > 0) {
+          // Remove "no scans yet" message if it exists
+          if ($scanHistoryList.find('.text-muted').length > 0) {
+            $scanHistoryList.empty();
+          }
+          
+          // Parse the barcode to extract item info
+          let itemInfo = 'Unknown';
+          let batchInfo = '';
+          let qtyInfo = '';
+          
+          // Try to extract item code from the message or parse the code
+          const itemMatch = msg.match(/of\s+([A-Z0-9-]+)/i);
+          if (itemMatch) {
+            itemInfo = itemMatch[1];
+          }
+          
+          // Try to extract quantity from message
+          const qtyMatch = msg.match(/Consumed\s+([\d.]+)\s+(\w+)/i);
+          if (qtyMatch) {
+            qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
+          }
+          
+          // Create scan entry
+          const statusClass = ok ? 'bg-success' : 'bg-danger';
+          const statusIcon = ok ? '✓' : '✗';
+          const statusText = ok ? 'Success' : 'Failed';
+          
+          const scanEntry = $(`
+            <div class="scan-entry mb-2 p-2" style="border-left: 3px solid ${ok ? '#22c55e' : '#ef4444'}; background: ${ok ? '#f0fdf4' : '#fef2f2'}; border-radius: 6px;">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <span class="badge ${statusClass} me-2">${statusIcon} ${statusText}</span>
+                <span class="text-muted small">${scanTime}</span>
+              </div>
+              <div class="small mb-1">
+                <strong>Raw Code:</strong> <code style="font-size: 0.85em; background: #ffffff; padding: 2px 4px; border-radius: 3px;">${frappe.utils.escape_html(raw.substring(0, 60))}${raw.length > 60 ? '...' : ''}</code>
+              </div>
+              ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
+              ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
+              <div class="small text-muted">${frappe.utils.escape_html(msg)}</div>
+            </div>
+          `);
+          
+          // Prepend to show newest first
+          $scanHistoryList.prepend(scanEntry);
+          
+          // Limit to last 20 entries
+          if ($scanHistoryList.children().length > 20) {
+            $scanHistoryList.children().last().remove();
+          }
+          
+          // Auto-scroll to show the newest entry
+          $scanHistoryList.scrollTop(0);
+        }
+        
         if (ok) {
           alerts.length && alerts.addClass('d-none').text('');
           $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
@@ -460,20 +520,41 @@ function init_operator_hub($root) {
     await updateAfterAction();
   });
 
-  $('#btn-stop',$root).on('click', async () => {
-    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
-    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Stop' });
-    flashStatus(`Stopped — ${state.current_wo}`, 'error');
-    await updateAfterAction();
-  });
-
   $('#btn-load',$root).on('click', () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
-    new frappe.ui.Dialog({ title: 'Load / Scan Materials',
-      fields: [{ fieldname:'info', fieldtype:'HTML', options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' }]
-    }).show();
+    
+    // Create scan history container HTML
+    const scanHistoryHTML = `
+      <div class="scan-history-container" style="margin-top: 1rem;">
+        <div class="h6 mb-2">Scan History</div>
+        <div id="scan-history-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #e3e8ee; border-radius: 8px; padding: 0.5rem; background: #f7f9fb;">
+          <div class="text-muted small" style="text-align: center; padding: 1rem;">
+            No scans yet. Start scanning materials...
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const d = new frappe.ui.Dialog({ 
+      title: 'Load / Scan Materials',
+      fields: [
+        { 
+          fieldname:'info', 
+          fieldtype:'HTML', 
+          options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' 
+        },
+        { 
+          fieldname:'scan_history', 
+          fieldtype:'HTML', 
+          options: scanHistoryHTML 
+        }
+      ]
+    });
+    
+    d.show();
     setScanMode(true);
-    flashStatus(`Ready to scan for ${state.current_wo}`); focus_scan();
+    flashStatus(`Ready to scan for ${state.current_wo}`); 
+    focus_scan();
   });
 
   $('#btn-request',$root).on('click', () => {
