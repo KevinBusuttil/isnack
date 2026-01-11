@@ -893,7 +893,7 @@ def get_sfg_components_for_wo(work_order: str):
 
     return {"items": items}
 
-def _post_sfg_consumption(wo, rows: list[dict]):
+def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     """Post Material Consumption for Manufacture for semi-finished items.
 
     Expects rows like: {"item_code": "SFG10003", "qty": 123.45}.
@@ -914,6 +914,7 @@ def _post_sfg_consumption(wo, rows: list[dict]):
     se.company = wo.company
     se.purpose = "Material Consumption for Manufacture"
     se.work_order = wo.name
+    se.fg_completed_qty = fg_completed_qty  # Set to satisfy ERPNext validation - represents finished goods quantity
 
     for r in rows:
         item_code = (r.get("item_code") or "").strip()
@@ -1084,6 +1085,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         se.work_order = work_order
         se.from_bom = 0
         se.use_multi_level_bom = 0
+        se.fg_completed_qty = qty  # Set to material qty to satisfy ERPNext validation (actual FG qty determined at completion)
 
         se.append("items", {
             "item_code": item_code,
@@ -1303,7 +1305,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             sfg_rows = list(sfg_usage)
 
     if sfg_rows:
-        _post_sfg_consumption(wo, sfg_rows)
+        _post_sfg_consumption(wo, sfg_rows, good)
 
     # 3) Remarks + rejects
     if remarks:
