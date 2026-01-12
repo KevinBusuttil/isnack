@@ -178,6 +178,7 @@ function init_operator_hub($root) {
     $('#btn-return',  $root).prop('disabled', !enableActions);
 
     $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_is_fg));
+    $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
     $('#btn-close',   $root).prop('disabled', !enableActions);
 
     if (!hasEmp) {
@@ -643,11 +644,7 @@ function init_operator_hub($root) {
     d.show(); redraw(); setTimeout(() => d.get_field('scan').$input && d.get_field('scan').$input.focus(), 60);
   });
 
-  // Print Label (FG) — uses Factory Settings defaults for template/printer
-  $('#btn-label',$root).on('click', async () => {
-    if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
-    setScanMode(false);
-
+  async function showPrintLabelDialog() {
     // Pull defaults from Factory Settings
     const [tplDefault, prnDefault] = await Promise.all([
       frappe.db.get_single_value('Factory Settings', 'default_label_template'),
@@ -669,6 +666,148 @@ function init_operator_hub($root) {
       }
     });
     d.show();
+  }
+
+  async function showLabelHistoryDialog() {
+    if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
+    setScanMode(false);
+
+    const prnDefault = await frappe.db.get_single_value('Factory Settings', 'default_label_printer');
+
+    const d = new frappe.ui.Dialog({
+      title:`Label History — ${state.current_wo}`,
+      fields: [
+        { label:'Printer', fieldname:'printer', fieldtype:'Data', reqd:1, default: prnDefault || '' },
+        { fieldtype:'Section Break' },
+        { fieldname:'labels_html', fieldtype:'HTML' }
+      ],
+      primary_action_label:'Print New Label',
+      primary_action: () => {
+        d.hide();
+        showPrintLabelDialog();
+      }
+    });
+
+    d.show();
+    const $box = d.fields_dict.labels_html.$wrapper;
+    $box.html('<div class="text-muted">Loading labels…</div>');
+
+    try {
+      const resp = await rpc('isnack.api.mes_ops.list_label_records', { work_order: state.current_wo });
+      const rows = (resp && resp.message) || [];
+      if (!rows.length) {
+        $box.html('<div class="text-muted">No labels recorded for this Work Order yet.</div>');
+        return;
+      }
+
+      const table = $(`
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Qty</th>
+                <th>Item</th>
+                <th>Batch</th>
+                <th>Template</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      `);
+      const $tbody = table.find('tbody');
+      rows.forEach((row) => {
+        const $tr = $(`
+          <tr>
+            <td>${frappe.utils.escape_html(row.name)}</td>
+            <td>${row.quantity ?? ''}</td>
+            <td>${frappe.utils.escape_html(row.item_code || '')}</td>
+            <td>${frappe.utils.escape_html(row.batch_no || '')}</td>
+            <td>${frappe.utils.escape_html(row.label_template || '')}</td>
+            <td>${frappe.utils.escape_html(row.creation || '')}</td>
+            <td>
+              <button class="btn btn-xs btn-primary me-1" data-action="reprint">Reprint</button>
+              <button class="btn btn-xs btn-outline-secondary" data-action="split">Split</button>
+            </td>
+          </tr>
+        `);
+        $tr.data('row', row);
+        $tbody.append($tr);
+      });
+      $box.html(table);
+
+      $tbody.on('click', 'button[data-action]', async (e) => {
+        const $btn = $(e.currentTarget);
+        const action = $btn.data('action');
+        const row = $btn.closest('tr').data('row');
+        const printer = d.get_value('printer');
+        if (!printer) {
+          frappe.msgprint('Printer is required.');
+          return;
+        }
+
+        if (action === 'reprint') {
+          setStatus('Sending label to printer…');
+          await rpc('isnack.api.mes_ops.print_label_record', {
+            label_record: row.name,
+            printer,
+            reason_code: 'reprint'
+          });
+          frappe.show_alert({message:`Label reprinted — ${row.name}`, indicator:'green'});
+          return;
+        }
+
+        if (action === 'split') {
+          const splitDialog = new frappe.ui.Dialog({
+            title: `Split Label — ${row.name}`,
+            fields: [
+              { label:'Quantities (comma-separated)', fieldname:'quantities', fieldtype:'Data', reqd:1 },
+              { label:'Reason', fieldname:'reason', fieldtype:'Data', default:'split' }
+            ],
+            primary_action_label:'Split & Print',
+            primary_action: async (v) => {
+              const quantities = (v.quantities || '')
+                .split(',')
+                .map((val) => parseFloat(val.trim()))
+                .filter((val) => !Number.isNaN(val) && val > 0);
+              if (!quantities.length) {
+                frappe.msgprint('Provide one or more positive quantities.');
+                return;
+              }
+              setStatus('Sending label splits to printer…');
+              await rpc('isnack.api.mes_ops.print_label_record', {
+                label_record: row.name,
+                printer,
+                quantities,
+                reason_code: v.reason || 'split'
+              });
+              splitDialog.hide();
+              frappe.show_alert({message:`Label split queued — ${row.name}`, indicator:'green'});
+            }
+          });
+          splitDialog.show();
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      $box.html('<div class="text-danger">Failed to load label history.</div>');
+    }
+  }
+
+  // Print Label (FG)
+  $('#btn-label',$root).on('click', async () => {
+    if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
+    setScanMode(false);
+    await showPrintLabelDialog();
+  });
+
+  // Label History — list, reprint, and split labels tied to current Work Order
+  $('#btn-label-history',$root).on('click', async () => {
+    if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
+    await showLabelHistoryDialog();
   });
 
   // >>> NEW: Close / End Work Order with semi-finished usage <<<
