@@ -1388,6 +1388,35 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
             BATCH=wo.get("batch_no") or "", QTY=carton_qty,
         )
 
+    label_record = None
+    if frappe.db.exists("DocType", "Label Record"):
+        template_engine = frappe.db.get_value("Label Template", template, "engine")
+        payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        label_record = frappe.new_doc("Label Record")
+        label_record.label_template = template
+        label_record.template_engine = template_engine
+        label_record.payload = payload
+        label_record.payload_hash = payload_hash
+        label_record.quantity = carton_qty
+        label_record.item_code = wo.production_item
+        label_record.item_name = wo.item_name
+        label_record.batch_no = wo.get("batch_no")
+        label_record.source_doctype = "Work Order"
+        label_record.source_docname = wo.name
+        label_record.flags.ignore_permissions = True
+        label_record.insert()
+
+        if frappe.db.exists("DocType", "Label Print Job"):
+            print_job = frappe.new_doc("Label Print Job")
+            print_job.label_record = label_record.name
+            print_job.quantity = carton_qty
+            print_job.printer = printer
+            print_job.status = "Queued"
+            print_job.requested_by = frappe.session.user
+            print_job.requested_at = frappe.utils.now_datetime()
+            print_job.flags.ignore_permissions = True
+            print_job.insert()
+
     frappe.publish_realtime("isnack_print", {"printer": printer, "raw": payload},
                             user=frappe.session.user, after_commit=True)
 
@@ -1401,6 +1430,90 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         pc.flags.ignore_permissions = True
         pc.insert()
     return True
+
+
+def _create_label_print_job(label_record, printer, quantity, reason_code=None, parent_print_job=None):
+    if not frappe.db.exists("DocType", "Label Print Job"):
+        return None
+
+    print_job = frappe.new_doc("Label Print Job")
+    print_job.label_record = label_record.name
+    print_job.quantity = quantity
+    print_job.printer = printer
+    print_job.status = "Queued"
+    print_job.requested_by = frappe.session.user
+    print_job.requested_at = frappe.utils.now_datetime()
+    print_job.reason_code = reason_code
+    print_job.parent_print_job = parent_print_job
+    print_job.flags.ignore_permissions = True
+    print_job.insert()
+    return print_job
+
+
+@frappe.whitelist()
+def list_label_records(work_order: str):
+    _require_roles(ROLES_OPERATOR)
+
+    if not frappe.db.exists("DocType", "Label Record"):
+        return []
+
+    return frappe.get_all(
+        "Label Record",
+        fields=[
+            "name",
+            "label_template",
+            "quantity",
+            "item_code",
+            "item_name",
+            "batch_no",
+            "creation",
+        ],
+        filters={
+            "source_doctype": "Work Order",
+            "source_docname": work_order,
+        },
+        order_by="creation desc",
+        limit=20,
+    )
+
+
+@frappe.whitelist()
+def print_label_record(label_record: str, printer: Optional[str] = None, quantities=None, reason_code: Optional[str] = None):
+    _require_roles(ROLES_OPERATOR)
+
+    if not frappe.db.exists("DocType", "Label Record"):
+        frappe.throw(_("Label Record is not enabled."))
+
+    record = frappe.get_doc("Label Record", label_record)
+    if not record.payload:
+        frappe.throw(_("Label payload is missing."))
+
+    fs = _fs()
+    target_printer = printer or getattr(fs, "default_label_printer", None)
+    if not target_printer:
+        frappe.throw(_("No printer provided and no default set in Factory Settings"))
+
+    raw_quantities = quantities or [record.quantity]
+    if isinstance(raw_quantities, str):
+        raw_quantities = json.loads(raw_quantities)
+    if not isinstance(raw_quantities, (list, tuple)):
+        raw_quantities = [raw_quantities]
+
+    cleaned_quantities = [flt(qty) for qty in raw_quantities if flt(qty) > 0]
+    if not cleaned_quantities:
+        frappe.throw(_("No valid quantities provided."))
+
+    jobs = []
+    for qty in cleaned_quantities:
+        jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
+        frappe.publish_realtime(
+            "isnack_print",
+            {"printer": target_printer, "raw": record.payload},
+            user=frappe.session.user,
+            after_commit=True,
+        )
+
+    return {"label_record": record.name, "jobs": [job.name for job in jobs if job]}
 
 # ============================================================
 # Small helpers used by UI (replace client get_list)
