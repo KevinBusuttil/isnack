@@ -1338,6 +1338,9 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     except Exception:
         pass
 
+    # Reload the document to get the updated modified timestamp
+    wo.reload()
+    
     wo.add_comment("Info", _("WO FG receipt: Good={0}, Rejects={1}, Remarks={2}").format(good, rejects, (remarks or "")))
     wo.flags.ignore_permissions = True
     wo.save()
