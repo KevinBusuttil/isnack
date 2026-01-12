@@ -109,23 +109,33 @@
       <div class="op-bottom d-flex flex-nowrap align-items-stretch" style="gap:1rem">
 
         <!-- Group 1: Run controls -->
-        <div class="tile-group">
-          <button id="btn-start" class="btn btn-lg btn-primary tile-btn">Start</button>
-          <button id="btn-pause" class="btn btn-lg btn-warning tile-btn">Pause</button>
+        <div class="bar-group" aria-label="Run controls">
+          <button id="btn-start" class="btn btn-lg tile-btn op-btn-run-start">Start</button>
+          <button id="btn-pause" class="btn btn-lg btn-warning tile-btn op-btn-run-toggle">Pause</button>
         </div>
+
+        <div class="bar-sep" aria-hidden="true"></div>
 
         <!-- Group 2: Materials -->
-        <div class="tile-group">
-          <button id="btn-load"    class="btn btn-lg btn-info tile-btn">Load Materials</button>
-          <button id="btn-request" class="btn btn-lg btn-warning tile-btn">Request More Material</button>
-          <button id="btn-return"  class="btn btn-lg btn-outline-secondary tile-btn">Return Materials</button>
+        <div class="bar-group" aria-label="Materials">
+          <button id="btn-load" class="btn btn-lg tile-btn op-btn-material">Load Materials</button>
+          <button id="btn-request" class="btn btn-lg tile-btn op-btn-material-strong">Request More Material</button>
+          <button id="btn-return" class="btn btn-lg tile-btn op-btn-material-outline">Return Materials</button>
         </div>
 
-        <!-- Group 3: Output -->
-        <div class="tile-group">
-          <button id="btn-label" class="btn btn-lg btn-success tile-btn" disabled>Print Label</button>
-          <button id="btn-label-history" class="btn btn-lg btn-outline-success tile-btn" disabled>Label History</button>
-          <button id="btn-close" class="btn btn-lg btn-secondary tile-btn">Close / End</button>
+        <div class="bar-sep" aria-hidden="true"></div>
+
+        <!-- Group 3: Labels -->
+        <div class="bar-group" aria-label="Labels">
+          <button id="btn-label" class="btn btn-lg tile-btn op-btn-label" disabled>Print Label</button>
+          <button id="btn-label-history" class="btn btn-lg tile-btn op-btn-label-outline" disabled>Label History</button>
+        </div>
+
+        <div class="bar-sep" aria-hidden="true"></div>
+
+        <!-- Group 4: Close / End -->
+        <div class="bar-group" aria-label="Close or End">
+          <button id="btn-close" class="btn btn-lg tile-btn op-btn-close">Close / End</button>
         </div>
 
       </div>
