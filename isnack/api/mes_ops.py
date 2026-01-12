@@ -1672,6 +1672,132 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
     return {"ok": True, "stock_entry": se.name}
 
 
+@frappe.whitelist()
+def get_wip_inventory(line: Optional[str] = None):
+    """
+    Get current WIP inventory for a Factory Line.
+    Returns list of items with item_code, item_name, qty, batch_no, uom.
+    """
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+    
+    if not line:
+        frappe.throw(_("Missing line parameter"))
+    
+    # Get WIP warehouse for the line
+    _staging_wh, wip_wh, _target_wh = _warehouses_for_line(line)
+    
+    if not wip_wh:
+        frappe.throw(_("WIP warehouse not configured for line {0}").format(line))
+    
+    # Query current stock in WIP warehouse
+    bins = frappe.get_all(
+        "Bin",
+        filters={"warehouse": wip_wh, "actual_qty": [">", 0]},
+        fields=["item_code", "actual_qty"]
+    )
+    
+    result = []
+    for b in bins:
+        item_name = frappe.db.get_value("Item", b.item_code, "item_name")
+        uom = frappe.db.get_value("Item", b.item_code, "stock_uom") or "Nos"
+        
+        # Check if item has batch tracking
+        has_batch = frappe.db.get_value("Item", b.item_code, "has_batch_no")
+        
+        if has_batch:
+            # Get batch details for items with batch tracking
+            batches = frappe.get_all(
+                "Stock Ledger Entry",
+                filters={
+                    "warehouse": wip_wh,
+                    "item_code": b.item_code,
+                    "batch_no": ["!=", ""]
+                },
+                fields=["batch_no", "sum(actual_qty) as qty"],
+                group_by="batch_no",
+                having="sum(actual_qty) > 0"
+            )
+            
+            for batch in batches:
+                result.append({
+                    "item_code": b.item_code,
+                    "item_name": item_name,
+                    "qty": batch.qty,
+                    "batch_no": batch.batch_no,
+                    "uom": uom
+                })
+        else:
+            # For non-batch items, just add the total quantity
+            result.append({
+                "item_code": b.item_code,
+                "item_name": item_name,
+                "qty": b.actual_qty,
+                "batch_no": None,
+                "uom": uom
+            })
+    
+    return {"ok": True, "items": result}
+
+
+@frappe.whitelist()
+def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = None):
+    """
+    Return WIP materials to staging warehouse without requiring a work order.
+    items = JSON list of {item_code, qty, batch_no?}
+    """
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+    
+    if not line:
+        frappe.throw(_("Missing line parameter"))
+    
+    try:
+        items_list = json.loads(items or "[]")
+    except Exception:
+        items_list = []
+    
+    if not items_list:
+        frappe.throw(_("No items to return"))
+    
+    # Get warehouses for the line
+    staging_wh, wip_wh, _target_wh = _warehouses_for_line(line)
+    
+    if not wip_wh or not staging_wh:
+        frappe.throw(_("WIP or Staging warehouse not configured for line {0}").format(line))
+    
+    # Create Stock Entry for Material Transfer
+    se = frappe.new_doc("Stock Entry")
+    se.purpose = "Material Transfer"
+    se.custom_factory_line = line
+    
+    for it in items_list:
+        item_code = (it.get("item_code") or "").strip()
+        qty = float(it.get("qty") or 0)
+        if not item_code or qty <= 0:
+            continue
+        
+        row = {
+            "item_code": item_code,
+            "qty": qty,
+            "uom": frappe.db.get_value("Item", item_code, "stock_uom") or "Nos",
+            "s_warehouse": wip_wh,
+            "t_warehouse": staging_wh,
+        }
+        
+        if it.get("batch_no"):
+            row["batch_no"] = it["batch_no"]
+        
+        se.append("items", row)
+    
+    if not se.items:
+        frappe.throw(_("No valid items to transfer"))
+    
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+    
+    return {"ok": True, "stock_entry": se.name}
+
+
 def apply_line_warehouses_to_work_order(doc, method=None):
     """
     Auto-fill Work Order WIP / Target warehouses from Factory Settings → Line Warehouse Map.
