@@ -1217,6 +1217,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Manufacture"
+    se.stock_entry_type = "Manufacture"
     se.work_order = work_order
     se.to_warehouse = fg_wh
     se.fg_completed_qty = good
