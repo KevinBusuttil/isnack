@@ -1706,17 +1706,16 @@ def get_wip_inventory(line: Optional[str] = None):
         
         if has_batch:
             # Get batch details for items with batch tracking
-            batches = frappe.get_all(
-                "Stock Ledger Entry",
-                filters={
-                    "warehouse": wip_wh,
-                    "item_code": b.item_code,
-                    "batch_no": ["!=", ""]
-                },
-                fields=["batch_no", "sum(actual_qty) as qty"],
-                group_by="batch_no",
-                having="sum(actual_qty) > 0"
-            )
+            batches = frappe.db.sql("""
+                SELECT batch_no, SUM(actual_qty) as qty
+                FROM `tabStock Ledger Entry`
+                WHERE warehouse = %(wip_wh)s
+                  AND item_code = %(item_code)s
+                  AND batch_no IS NOT NULL
+                  AND batch_no != ''
+                GROUP BY batch_no
+                HAVING SUM(actual_qty) > 0
+            """, {"wip_wh": wip_wh, "item_code": b.item_code}, as_dict=True)
             
             for batch in batches:
                 result.append({
