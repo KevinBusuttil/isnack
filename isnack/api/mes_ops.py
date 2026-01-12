@@ -1705,16 +1705,22 @@ def get_wip_inventory(line: Optional[str] = None):
         has_batch = frappe.db.get_value("Item", b.item_code, "has_batch_no")
         
         if has_batch:
-            # Get batch details for items with batch tracking
+            # ERPNext 15: Get batch details via Serial and Batch Bundle
+            # Join Stock Ledger Entry -> Serial and Batch Bundle -> Serial and Batch Entry
             batches = frappe.db.sql("""
-                SELECT batch_no, SUM(actual_qty) as qty
-                FROM `tabStock Ledger Entry`
-                WHERE warehouse = %(wip_wh)s
-                  AND item_code = %(item_code)s
-                  AND batch_no IS NOT NULL
-                  AND batch_no != ''
-                GROUP BY batch_no
-                HAVING SUM(actual_qty) > 0
+                SELECT 
+                    sbe.batch_no,
+                    SUM(sbe.qty) as qty
+                FROM `tabStock Ledger Entry` sle
+                INNER JOIN `tabSerial and Batch Entry` sbe 
+                    ON sle.serial_and_batch_bundle = sbe.parent
+                WHERE sle.warehouse = %(wip_wh)s
+                    AND sle.item_code = %(item_code)s
+                    AND sle.is_cancelled = 0
+                    AND sbe.batch_no IS NOT NULL
+                    AND sbe.batch_no != ''
+                GROUP BY sbe.batch_no
+                HAVING SUM(sbe.qty) > 0
             """, {"wip_wh": wip_wh, "item_code": b.item_code}, as_dict=True)
             
             for batch in batches:
