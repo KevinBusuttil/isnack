@@ -92,6 +92,7 @@
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Label Record",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

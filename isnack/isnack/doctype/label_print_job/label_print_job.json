@@ -78,6 +78,7 @@
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Label Print Job",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
