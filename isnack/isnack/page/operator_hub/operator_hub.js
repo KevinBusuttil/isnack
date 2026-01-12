@@ -176,6 +176,9 @@ function init_operator_hub($root) {
     $('#btn-load',    $root).prop('disabled', !enableActions);
     $('#btn-request', $root).prop('disabled', !enableActions);
     $('#btn-return',  $root).prop('disabled', !enableActions);
+    
+    // End Shift Return only requires operator and line (no work order needed)
+    $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_line));
 
     $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_is_fg));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
@@ -642,6 +645,118 @@ function init_operator_hub($root) {
     d.$wrapper.on('keydown', '[data-fieldname="scan"] input', (e) => { if (e.key === 'Enter') { e.preventDefault(); addLine(); } });
 
     d.show(); redraw(); setTimeout(() => d.get_field('scan').$input && d.get_field('scan').$input.focus(), 60);
+  });
+
+  // End Shift Return - return WIP without work order
+  $('#btn-end-shift-return', $root).on('click', async () => {
+    if (!state.current_line) {
+      frappe.msgprint('Please set a Factory Line first');
+      return;
+    }
+    if (!state.current_emp) {
+      ensureOperatorNotice();
+      return;
+    }
+    
+    setScanMode(false);
+    setStatus('Loading WIP inventory…');
+    
+    try {
+      const resp = await rpc('isnack.api.mes_ops.get_wip_inventory', { line: state.current_line });
+      const wipItems = (resp && resp.message && resp.message.items) || [];
+      
+      if (!wipItems.length) {
+        frappe.msgprint(`No items in WIP for line ${state.current_line}`);
+        flashStatus('No WIP inventory', 'neutral');
+        return;
+      }
+      
+      // Build table HTML for WIP items
+      const tableHTML = `
+        <div class="table-responsive" style="max-height:400px; overflow:auto;">
+          <table class="table table-sm table-bordered">
+            <thead style="position:sticky; top:0; background:white; z-index:1;">
+              <tr>
+                <th>Item Code</th>
+                <th>Item Name</th>
+                <th>Available Qty</th>
+                <th>Return Qty</th>
+                <th>Batch</th>
+                <th>UoM</th>
+              </tr>
+            </thead>
+            <tbody id="wip-items-tbody"></tbody>
+          </table>
+        </div>
+      `;
+      
+      const d = new frappe.ui.Dialog({
+        title: `End Shift Return — ${state.current_line}`,
+        fields: [
+          { fieldname: 'wip_table', fieldtype: 'HTML', options: tableHTML }
+        ],
+        primary_action_label: 'Post Return',
+        primary_action: async () => {
+          const itemsToReturn = [];
+          const $tbody = d.$wrapper.find('#wip-items-tbody');
+          
+          $tbody.find('tr').each((idx, tr) => {
+            const $tr = $(tr);
+            const returnQty = parseFloat($tr.find('.return-qty-input').val()) || 0;
+            if (returnQty > 0) {
+              const itemCode = $tr.data('item-code');
+              const batchNo = $tr.data('batch-no') || null;
+              itemsToReturn.push({
+                item_code: itemCode,
+                qty: returnQty,
+                batch_no: batchNo
+              });
+            }
+          });
+          
+          if (!itemsToReturn.length) {
+            frappe.msgprint('No items to return (all quantities are 0)');
+            return;
+          }
+          
+          setStatus('Posting WIP return…');
+          try {
+            await rpc('isnack.api.mes_ops.return_wip_to_staging', {
+              line: state.current_line,
+              items: JSON.stringify(itemsToReturn)
+            });
+            d.hide();
+            frappe.show_alert({ message: 'WIP return posted successfully', indicator: 'green' });
+            flashStatus('WIP return completed', 'success');
+          } catch (err) {
+            console.error('Error posting WIP return', err);
+          }
+        }
+      });
+      
+      d.show();
+      
+      // Populate table with WIP items
+      const $tbody = d.$wrapper.find('#wip-items-tbody');
+      wipItems.forEach((item) => {
+        const row = $(`
+          <tr data-item-code="${frappe.utils.escape_html(item.item_code)}" data-batch-no="${frappe.utils.escape_html(item.batch_no || '')}">
+            <td><strong>${frappe.utils.escape_html(item.item_code)}</strong></td>
+            <td>${frappe.utils.escape_html(item.item_name || '')}</td>
+            <td class="text-end">${item.qty}</td>
+            <td><input type="number" class="form-control form-control-sm return-qty-input" value="${item.qty}" min="0" max="${item.qty}" step="0.01" style="width:100px;"></td>
+            <td>${frappe.utils.escape_html(item.batch_no || '—')}</td>
+            <td>${frappe.utils.escape_html(item.uom)}</td>
+          </tr>
+        `);
+        $tbody.append(row);
+      });
+      
+      flashStatus('WIP inventory loaded', 'neutral');
+      
+    } catch (err) {
+      console.error('Error loading WIP inventory', err);
+    }
   });
 
   async function showPrintLabelDialog() {
