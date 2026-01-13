@@ -9,7 +9,6 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 from frappe.utils.print_format import print_by_server
-from isnack.utils.printing import get_label_printer
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
 )
