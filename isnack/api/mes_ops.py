@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 import frappe
 from frappe import _
 from frappe.utils import flt
+from frappe.utils.print_format import print_by_server
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
 )
@@ -1351,7 +1352,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
 def print_label(carton_qty, template: Optional[str] = None, printer: Optional[str] = None,
                 work_order: Optional[str] = None, job_card: Optional[str] = None):
     """
-    Render ZPL/TSPL from 'Label Template' (preferred) or fall back to 'Print Template'.
+    Print labels using Print Format via print_by_server() or fall back to Label Template.
     Defaults (template/printer) are taken from Factory Settings if not provided.
     """
     _require_roles(ROLES_OPERATOR)
@@ -1374,55 +1375,106 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     if not printer:
         frappe.throw(_("No printer provided and no default set in Factory Settings"))
 
-    tpl = frappe.db.get_value("Label Template", template, "template")
-    if not tpl:
-        # Fall back to Print Template (if you're still using those)
-        tpl = frappe.db.get_value("Print Template", template, "template_body")
-    if not tpl:
-        frappe.throw(_("Template not found"))
+    # Check if template is a Print Format (new method)
+    is_print_format = frappe.db.exists("Print Format", template)
+    
+    if is_print_format:
+        # New method: Use print_by_server with Network Printer Settings
+        # Store the work order's qty temporarily as it may be needed by the print format
+        original_qty = wo.qty
+        wo.qty = carton_qty
+        wo.save(ignore_permissions=True)
+        
+        try:
+            print_by_server(
+                "Work Order",
+                work_order,
+                printer_setting=printer,
+                print_format=template
+            )
+        finally:
+            # Restore original quantity
+            wo.qty = original_qty
+            wo.save(ignore_permissions=True)
+        
+        # Create audit trail records
+        label_record = None
+        if frappe.db.exists("DocType", "Label Record"):
+            label_record = frappe.new_doc("Label Record")
+            label_record.label_template = template
+            label_record.template_engine = "Jinja"
+            label_record.payload = f"Print Format: {template}"
+            label_record.payload_hash = hashlib.sha256(f"{template}_{carton_qty}_{work_order}".encode("utf-8")).hexdigest()
+            label_record.quantity = carton_qty
+            label_record.item_code = wo.production_item
+            label_record.item_name = wo.item_name
+            label_record.batch_no = wo.get("batch_no")
+            label_record.source_doctype = "Work Order"
+            label_record.source_docname = wo.name
+            label_record.flags.ignore_permissions = True
+            label_record.insert()
 
-    if "$" in tpl:
-        payload = Template(tpl).safe_substitute(
-            ITEM=wo.production_item, ITEM_NAME=wo.item_name, WO=wo.name,
-            BATCH=wo.get("batch_no") or "", QTY=carton_qty,
-        )
+            if frappe.db.exists("DocType", "Label Print Job"):
+                print_job = frappe.new_doc("Label Print Job")
+                print_job.label_record = label_record.name
+                print_job.quantity = carton_qty
+                print_job.printer = printer
+                print_job.status = "Printed"
+                print_job.requested_by = frappe.session.user
+                print_job.requested_at = frappe.utils.now_datetime()
+                print_job.flags.ignore_permissions = True
+                print_job.insert()
     else:
-        payload = tpl.format(
-            ITEM=wo.production_item, ITEM_NAME=wo.item_name, WO=wo.name,
-            BATCH=wo.get("batch_no") or "", QTY=carton_qty,
-        )
+        # Legacy method: Check for Label Template with raw ZPL/TSPL
+        tpl = frappe.db.get_value("Label Template", template, "template")
+        if not tpl:
+            # Fall back to Print Template (if you're still using those)
+            tpl = frappe.db.get_value("Print Template", template, "template_body")
+        if not tpl:
+            frappe.throw(_("Template not found"))
 
-    label_record = None
-    if frappe.db.exists("DocType", "Label Record"):
-        template_engine = frappe.db.get_value("Label Template", template, "engine")
-        payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        label_record = frappe.new_doc("Label Record")
-        label_record.label_template = template
-        label_record.template_engine = template_engine
-        label_record.payload = payload
-        label_record.payload_hash = payload_hash
-        label_record.quantity = carton_qty
-        label_record.item_code = wo.production_item
-        label_record.item_name = wo.item_name
-        label_record.batch_no = wo.get("batch_no")
-        label_record.source_doctype = "Work Order"
-        label_record.source_docname = wo.name
-        label_record.flags.ignore_permissions = True
-        label_record.insert()
+        if "$" in tpl:
+            payload = Template(tpl).safe_substitute(
+                ITEM=wo.production_item, ITEM_NAME=wo.item_name, WO=wo.name,
+                BATCH=wo.get("batch_no") or "", QTY=carton_qty,
+            )
+        else:
+            payload = tpl.format(
+                ITEM=wo.production_item, ITEM_NAME=wo.item_name, WO=wo.name,
+                BATCH=wo.get("batch_no") or "", QTY=carton_qty,
+            )
 
-        if frappe.db.exists("DocType", "Label Print Job"):
-            print_job = frappe.new_doc("Label Print Job")
-            print_job.label_record = label_record.name
-            print_job.quantity = carton_qty
-            print_job.printer = printer
-            print_job.status = "Queued"
-            print_job.requested_by = frappe.session.user
-            print_job.requested_at = frappe.utils.now_datetime()
-            print_job.flags.ignore_permissions = True
-            print_job.insert()
+        label_record = None
+        if frappe.db.exists("DocType", "Label Record"):
+            template_engine = frappe.db.get_value("Label Template", template, "engine")
+            payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            label_record = frappe.new_doc("Label Record")
+            label_record.label_template = template
+            label_record.template_engine = template_engine
+            label_record.payload = payload
+            label_record.payload_hash = payload_hash
+            label_record.quantity = carton_qty
+            label_record.item_code = wo.production_item
+            label_record.item_name = wo.item_name
+            label_record.batch_no = wo.get("batch_no")
+            label_record.source_doctype = "Work Order"
+            label_record.source_docname = wo.name
+            label_record.flags.ignore_permissions = True
+            label_record.insert()
 
-    frappe.publish_realtime("isnack_print", {"printer": printer, "raw": payload},
-                            user=frappe.session.user, after_commit=True)
+            if frappe.db.exists("DocType", "Label Print Job"):
+                print_job = frappe.new_doc("Label Print Job")
+                print_job.label_record = label_record.name
+                print_job.quantity = carton_qty
+                print_job.printer = printer
+                print_job.status = "Queued"
+                print_job.requested_by = frappe.session.user
+                print_job.requested_at = frappe.utils.now_datetime()
+                print_job.flags.ignore_permissions = True
+                print_job.insert()
+
+        frappe.publish_realtime("isnack_print", {"printer": printer, "raw": payload},
+                                user=frappe.session.user, after_commit=True)
 
     if frappe.db.exists("DocType", "Packed Carton"):
         pc = frappe.new_doc("Packed Carton")
@@ -1507,15 +1559,49 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     if not cleaned_quantities:
         frappe.throw(_("No valid quantities provided."))
 
+    # Check if the label_template is a Print Format (new method)
+    is_print_format = frappe.db.exists("Print Format", record.label_template)
+    
     jobs = []
     for qty in cleaned_quantities:
         jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
-        frappe.publish_realtime(
-            "isnack_print",
-            {"printer": target_printer, "raw": record.payload},
-            user=frappe.session.user,
-            after_commit=True,
-        )
+        
+        if is_print_format:
+            # New method: Use print_by_server with Network Printer Settings
+            if record.source_doctype and record.source_docname:
+                # Temporarily update work order quantity if needed
+                if record.source_doctype == "Work Order":
+                    wo = frappe.get_doc("Work Order", record.source_docname)
+                    original_qty = wo.qty
+                    wo.qty = qty
+                    wo.save(ignore_permissions=True)
+                    
+                    try:
+                        print_by_server(
+                            record.source_doctype,
+                            record.source_docname,
+                            printer_setting=target_printer,
+                            print_format=record.label_template
+                        )
+                    finally:
+                        # Restore original quantity
+                        wo.qty = original_qty
+                        wo.save(ignore_permissions=True)
+                else:
+                    print_by_server(
+                        record.source_doctype,
+                        record.source_docname,
+                        printer_setting=target_printer,
+                        print_format=record.label_template
+                    )
+        else:
+            # Legacy method: Use realtime publish for Label Template
+            frappe.publish_realtime(
+                "isnack_print",
+                {"printer": target_printer, "raw": record.payload},
+                user=frappe.session.user,
+                after_commit=True,
+            )
 
     return {"label_record": record.name, "jobs": [job.name for job in jobs if job]}
 
