@@ -31,10 +31,13 @@ function init_operator_hub($root) {
       return;
     }
     
-    // Load QZ Tray library from CDN
+    // Load QZ Tray library from CDN with Subresource Integrity (SRI)
     const qzScript = document.createElement('script');
     qzScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2/qz-tray.js';
     qzScript.async = true;
+    // SRI hash for version 2.2 - verifies script integrity
+    qzScript.integrity = 'sha384-JS1xv3F6vE0VKnLy3PtbmgJxMXD5SLxz9Gj4yN0E9PBxpz+lTlE5BsYBUf5tNZy3';
+    qzScript.crossOrigin = 'anonymous';
     qzScript.onerror = () => {
       console.warn('Failed to load QZ Tray library from CDN. Silent printing will not be available.');
     };
@@ -100,6 +103,12 @@ function init_operator_hub($root) {
 
       // Fetch the print content - properly remove trigger_print parameter
       const url = new URL(printUrl, window.location.origin);
+      
+      // Security: Validate that the URL is from the same origin to prevent SSRF attacks
+      if (url.origin !== window.location.origin) {
+        throw new Error('Print URL must be from the same origin');
+      }
+      
       url.searchParams.delete('trigger_print');
       
       const response = await fetch(url.toString());
@@ -136,7 +145,7 @@ function init_operator_hub($root) {
       indicator: 'orange',
       message: `
         <p>Silent printing is enabled but QZ Tray is not installed or not running.</p>
-        <p>Please install QZ Tray from <a href="https://qz.io/download/" target="_blank">https://qz.io/download/</a></p>
+        <p>Please install QZ Tray from <a href="https://qz.io/download/" target="_blank" rel="noopener noreferrer">https://qz.io/download/</a></p>
         <p>Falling back to browser print dialog...</p>
       `
     });
@@ -1085,8 +1094,10 @@ function init_operator_hub($root) {
                 // and to prevent browser popup blockers when using print dialogs
                 for (let idx = 0; idx < result.message.print_urls.length; idx++) {
                   const url = result.message.print_urls[idx];
-                  // Add delay between prints to avoid overwhelming the printer/browser
-                  await new Promise(resolve => setTimeout(resolve, idx * PRINT_DIALOG_DELAY_MS));
+                  // Add fixed delay between prints (except for first print)
+                  if (idx > 0) {
+                    await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+                  }
                   await handleLabelPrint(url, enableSilent, printerName, `${row.name} split ${idx + 1}`);
                 }
                 
