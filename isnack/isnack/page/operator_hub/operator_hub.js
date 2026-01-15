@@ -19,6 +19,8 @@ function init_operator_hub($root) {
   const SCAN_ITEM_PATTERN = /(?:of|item)\s+([A-Z0-9_-]+)/i;
   // Pattern to extract quantity from backend messages like "Consumed 12.5 Kg" or "consumed 1 Nos"
   const SCAN_QTY_PATTERN = /consumed\s+([\d.]+)\s+(\w+)/i;
+  // Delay between opening multiple print dialogs to prevent browser blocking
+  const PRINT_DIALOG_DELAY_MS = 500;
 
   const banner = $('#wo-banner', $root);
   const grid   = $('#wo-grid',   $root);
@@ -900,7 +902,7 @@ function init_operator_hub($root) {
               if (result.message && result.message.print_urls) {
                 // Open a print window for each split quantity
                 result.message.print_urls.forEach((url, idx) => {
-                  setTimeout(() => window.open(url, '_blank'), idx * 500);
+                  setTimeout(() => window.open(url, '_blank'), idx * PRINT_DIALOG_DELAY_MS);
                 });
                 frappe.show_alert({message:`${result.message.print_urls.length} print dialog(s) opened`, indicator:'green'});
               }

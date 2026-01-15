@@ -1353,6 +1353,16 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     """
     Create label record and return print information for client-side printing.
     The label record is kept for audit trail, but printing happens on the client.
+    
+    Args:
+        carton_qty: Quantity to print on the label
+        template: Label template name (defaults to Factory Settings)
+        printer: DEPRECATED - Kept for backward compatibility only, not used for printing
+        work_order: Work Order name
+        job_card: Job Card name (will resolve to work_order if provided)
+    
+    Returns:
+        dict: Contains print_url, doctype, docname, print_format, and label_record
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -1477,6 +1487,15 @@ def list_label_records(work_order: str):
 def print_label_record(label_record: str, printer: Optional[str] = None, quantities=None, reason_code: Optional[str] = None):
     """
     Reprint or split a label record. Returns print URLs for client-side printing.
+    
+    Args:
+        label_record: Name of the Label Record to reprint
+        printer: OPTIONAL - Only used for audit trail in Print Jobs, not for actual printing
+        quantities: Optional list of quantities for split printing (defaults to original quantity)
+        reason_code: Reason for reprinting (e.g., 'reprint', 'split', 'damaged')
+    
+    Returns:
+        dict: Contains label_record, jobs (print job names), print_urls, doctype, docname, print_format
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -1498,7 +1517,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     # Check if the label_template is a Print Format (new method)
     is_print_format = frappe.db.exists("Print Format", record.label_template)
     
-    # Create print jobs for audit trail
+    # Create print jobs for audit trail (only if printer is provided)
     fs = _fs()
     target_printer = printer or getattr(fs, "default_label_printer", None)
     
