@@ -32,9 +32,9 @@ function init_operator_hub($root) {
     }
     
     // QZ Tray is typically loaded from the local installation at http://localhost:8182/qz-tray.js
-    // Try loading from local installation first, fall back to CDN
+    // Try loading from local installation first (HTTP for compatibility), fall back to CDN
     const qzScript = document.createElement('script');
-    qzScript.src = 'https://localhost:8182/qz-tray.js';
+    qzScript.src = 'http://localhost:8182/qz-tray.js';
     qzScript.async = true;
     qzScript.onerror = () => {
       console.info('QZ Tray not found at localhost, trying CDN fallback...');
@@ -1107,8 +1107,11 @@ function init_operator_hub($root) {
                   await handleLabelPrint(url, enableSilent, printerName, `${row.name} split ${idx + 1}`);
                 }
                 
+                // Show success message
+                const action = enableSilent ? 'sent to printer' : 'dialog(s) opened';
+                const count = result.message.print_urls.length;
                 frappe.show_alert({
-                  message: `${result.message.print_urls.length} label(s) ${enableSilent ? 'sent to printer' : 'dialog(s) opened'}`, 
+                  message: `${count} label(s) ${action}`, 
                   indicator: 'green'
                 });
               }
