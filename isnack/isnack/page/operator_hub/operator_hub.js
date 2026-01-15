@@ -26,20 +26,26 @@ function init_operator_hub($root) {
   // Load QZ Tray Library (for silent printing support)
   // ============================================================
   (function loadQzTray() {
-    // Check if QZ Tray is already loaded
+    // Check if QZ Tray is already loaded (typically from local installation)
     if (typeof qz !== 'undefined') {
       return;
     }
     
-    // Load QZ Tray library from CDN with Subresource Integrity (SRI)
+    // QZ Tray is typically loaded from the local installation at http://localhost:8182/qz-tray.js
+    // Try loading from local installation first, fall back to CDN
     const qzScript = document.createElement('script');
-    qzScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2/qz-tray.js';
+    qzScript.src = 'https://localhost:8182/qz-tray.js';
     qzScript.async = true;
-    // SRI hash for version 2.2 - verifies script integrity
-    qzScript.integrity = 'sha384-JS1xv3F6vE0VKnLy3PtbmgJxMXD5SLxz9Gj4yN0E9PBxpz+lTlE5BsYBUf5tNZy3';
-    qzScript.crossOrigin = 'anonymous';
     qzScript.onerror = () => {
-      console.warn('Failed to load QZ Tray library from CDN. Silent printing will not be available.');
+      console.info('QZ Tray not found at localhost, trying CDN fallback...');
+      // Fallback to CDN if local installation is not available
+      const cdnScript = document.createElement('script');
+      cdnScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2/qz-tray.js';
+      cdnScript.async = true;
+      cdnScript.onerror = () => {
+        console.warn('Failed to load QZ Tray library. Silent printing will not be available.');
+      };
+      document.head.appendChild(cdnScript);
     };
     document.head.appendChild(qzScript);
   })();

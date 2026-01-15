@@ -1428,7 +1428,7 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     )
     
     # Get silent printing settings
-    enable_silent_printing = bool(getattr(fs, "enable_silent_printing", False))
+    enable_silent_printing = getattr(fs, "enable_silent_printing", False)
     default_label_printer = getattr(fs, "default_label_printer", None)
     
     return {
@@ -1542,7 +1542,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
             print_urls.append(print_url)
 
     # Get silent printing settings
-    enable_silent_printing = bool(getattr(fs, "enable_silent_printing", False))
+    enable_silent_printing = getattr(fs, "enable_silent_printing", False)
     
     return {
         "label_record": record.name,
