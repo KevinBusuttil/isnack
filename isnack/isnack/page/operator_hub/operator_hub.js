@@ -760,24 +760,28 @@ function init_operator_hub($root) {
   });
 
   async function showPrintLabelDialog() {
-    // Pull defaults from Factory Settings
-    const [tplDefault, prnDefault] = await Promise.all([
-      frappe.db.get_single_value('Factory Settings', 'default_label_template'),
-      frappe.db.get_single_value('Factory Settings', 'default_label_printer'),
-    ]);
+    // Pull default template from Factory Settings
+    const tplDefault = await frappe.db.get_single_value('Factory Settings', 'default_label_template');
 
     const d = new frappe.ui.Dialog({
       title:'Print Carton Label (FG only)',
       fields: [
         { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 },
-        { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Label Template', reqd:1, default: tplDefault || '' },
-        { label:'Printer',    fieldname:'printer', fieldtype:'Data', reqd:1, default: prnDefault || '' }
+        { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Label Template', reqd:1, default: tplDefault || '' }
       ],
       primary_action_label:'Print',
       primary_action: (v) => {
-        setStatus('Sending label to printer…');
-        rpc('isnack.api.mes_ops.print_label', { work_order: state.current_wo, carton_qty: v.qty, template: v.template, printer: v.printer })
-          .then(() => { d.hide(); frappe.show_alert({message:'Label sent', indicator:'green'}); flashStatus(`Label printed — ${state.current_wo}`, 'success'); });
+        setStatus('Creating label and opening print dialog…');
+        rpc('isnack.api.mes_ops.print_label', { work_order: state.current_wo, carton_qty: v.qty, template: v.template })
+          .then((r) => {
+            d.hide();
+            if (r.message && r.message.print_url) {
+              // Open print dialog in new window
+              window.open(r.message.print_url, '_blank');
+              frappe.show_alert({message:'Print dialog opened', indicator:'green'});
+              flashStatus(`Label ready for ${state.current_wo}`, 'success');
+            }
+          });
       }
     });
     d.show();
@@ -787,13 +791,10 @@ function init_operator_hub($root) {
     if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
     setScanMode(false);
 
-    const prnDefault = await frappe.db.get_single_value('Factory Settings', 'default_label_printer');
-
     const d = new frappe.ui.Dialog({
       title:`Label History — ${state.current_wo}`,
       fields: [
-        { label:'Printer', fieldname:'printer', fieldtype:'Data', reqd:1, default: prnDefault || '' },
-        { fieldtype:'Section Break' },
+        { fieldtype:'Section Break', label:'Previously Printed Labels' },
         { fieldname:'labels_html', fieldtype:'HTML' }
       ],
       primary_action_label:'Print New Label',
@@ -858,20 +859,17 @@ function init_operator_hub($root) {
         const $btn = $(e.currentTarget);
         const action = $btn.data('action');
         const row = $btn.closest('tr').data('row');
-        const printer = d.get_value('printer');
-        if (!printer) {
-          frappe.msgprint('Printer is required.');
-          return;
-        }
 
         if (action === 'reprint') {
-          setStatus('Sending label to printer…');
-          await rpc('isnack.api.mes_ops.print_label_record', {
+          setStatus('Opening print dialog…');
+          const result = await rpc('isnack.api.mes_ops.print_label_record', {
             label_record: row.name,
-            printer,
             reason_code: 'reprint'
           });
-          frappe.show_alert({message:`Label reprinted — ${row.name}`, indicator:'green'});
+          if (result.message && result.message.print_urls && result.message.print_urls.length > 0) {
+            window.open(result.message.print_urls[0], '_blank');
+            frappe.show_alert({message:`Print dialog opened for ${row.name}`, indicator:'green'});
+          }
           return;
         }
 
@@ -892,15 +890,20 @@ function init_operator_hub($root) {
                 frappe.msgprint('Provide one or more positive quantities.');
                 return;
               }
-              setStatus('Sending label splits to printer…');
-              await rpc('isnack.api.mes_ops.print_label_record', {
+              setStatus('Opening print dialogs for splits…');
+              const result = await rpc('isnack.api.mes_ops.print_label_record', {
                 label_record: row.name,
-                printer,
                 quantities,
                 reason_code: v.reason || 'split'
               });
               splitDialog.hide();
-              frappe.show_alert({message:`Label split queued — ${row.name}`, indicator:'green'});
+              if (result.message && result.message.print_urls) {
+                // Open a print window for each split quantity
+                result.message.print_urls.forEach((url, idx) => {
+                  setTimeout(() => window.open(url, '_blank'), idx * 500);
+                });
+                frappe.show_alert({message:`${result.message.print_urls.length} print dialog(s) opened`, indicator:'green'});
+              }
             }
           });
           splitDialog.show();

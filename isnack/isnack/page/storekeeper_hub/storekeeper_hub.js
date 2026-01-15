@@ -57,6 +57,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return { item_code: code, item_name: '', stock_uom: '', has_batch_no: 0 };
   };
 
+  // Helper function for client-side printing
+  function printStockEntryLabel(stockEntryName) {
+    const printFormat = 'Pallet Label Material Transfer';
+    const url = frappe.urllib.get_full_url(
+      `/printview?doctype=Stock%20Entry&name=${encodeURIComponent(stockEntryName)}&format=${encodeURIComponent(printFormat)}&trigger_print=1`
+    );
+    window.open(url, '_blank');
+    frappe.show_alert({ message: __('Opening print dialog...'), indicator: 'blue' });
+  }
+
   // ---------- Toolbar Controls ----------
   const $filters = $hub.find('.filters');
 
@@ -931,12 +941,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               </div>
             `);
             $row.find('.open').on('click', () => frappe.set_route('Form', 'Stock Entry', se.name));
-            $row.find('.print').on('click', async () => {
-              await frappe.call({
-                method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
-                args: { stock_entry: se.name }
-              });
-              frappe.show_alert({ message: __('Sent to printer'), indicator: 'green' });
+            $row.find('.print').on('click', () => {
+              printStockEntryLabel(se.name);
             });
             $out.append($row);
           });
@@ -977,13 +983,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
 
       const print_btn = $(`<button class="btn btn-xs btn-secondary">Reprint</button>`)
-        .on('click', async (e) => {
+        .on('click', (e) => {
           e.stopPropagation();
-          await frappe.call({
-            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
-            args: { stock_entry: se.name }
-          });
-          frappe.show_alert({ message: __('Sent to printer'), indicator: 'green' });
+          printStockEntryLabel(se.name);
         });
 
       const info = (se.remarks || '').includes('Pallet:')
