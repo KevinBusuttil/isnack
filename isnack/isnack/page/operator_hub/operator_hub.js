@@ -22,6 +22,139 @@ function init_operator_hub($root) {
   // Delay between opening multiple print dialogs to prevent browser blocking
   const PRINT_DIALOG_DELAY_MS = 500;
 
+  // ============================================================
+  // QZ Tray Silent Printing Support
+  // ============================================================
+  
+  /**
+   * Check if QZ Tray is available and ready to use
+   * @returns {boolean} True if QZ Tray is available
+   */
+  function isQzTrayAvailable() {
+    return typeof qz !== 'undefined' && qz.websocket;
+  }
+
+  /**
+   * Connect to QZ Tray WebSocket if not already connected
+   * @returns {Promise<boolean>} Resolves to true if connected, false otherwise
+   */
+  async function ensureQzConnection() {
+    if (!isQzTrayAvailable()) {
+      return false;
+    }
+    
+    try {
+      if (!qz.websocket.isActive()) {
+        await qz.websocket.connect();
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to connect to QZ Tray:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Print a label using QZ Tray (silent printing)
+   * @param {string} printUrl - The URL to print
+   * @param {string} printerName - Name of the printer from Network Printer Settings
+   * @returns {Promise<boolean>} Resolves to true if successful, false otherwise
+   */
+  async function printWithQzTray(printUrl, printerName) {
+    if (!isQzTrayAvailable()) {
+      console.warn('QZ Tray is not available');
+      return false;
+    }
+
+    try {
+      // Ensure connection
+      const connected = await ensureQzConnection();
+      if (!connected) {
+        throw new Error('Could not connect to QZ Tray');
+      }
+
+      // Fetch the print content
+      const response = await fetch(printUrl.replace('trigger_print=1', ''));
+      if (!response.ok) {
+        throw new Error(`Failed to fetch print content: ${response.status}`);
+      }
+      const htmlContent = await response.text();
+
+      // Configure QZ printer
+      const config = qz.configs.create(printerName);
+
+      // Print as HTML/pixel format
+      const data = [{
+        type: 'pixel',
+        format: 'html',
+        flavor: 'plain',
+        data: htmlContent
+      }];
+
+      await qz.print(config, data);
+      return true;
+    } catch (err) {
+      console.error('QZ Tray print error:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Show a warning dialog when QZ Tray is required but not available
+   */
+  function showQzTrayWarning() {
+    frappe.msgprint({
+      title: __('QZ Tray Required'),
+      indicator: 'orange',
+      message: `
+        <p>Silent printing is enabled but QZ Tray is not installed or not running.</p>
+        <p>Please install QZ Tray from <a href="https://qz.io/download/" target="_blank">https://qz.io/download/</a></p>
+        <p>Falling back to browser print dialog...</p>
+      `
+    });
+  }
+
+  /**
+   * Handle label printing - either silent via QZ Tray or via browser dialog
+   * @param {string} printUrl - The URL to print
+   * @param {boolean} enableSilentPrinting - Whether silent printing is enabled
+   * @param {string} printerName - Name of the printer to use
+   * @param {string} context - Context for logging (e.g., 'new label', 'reprint')
+   */
+  async function handleLabelPrint(printUrl, enableSilentPrinting, printerName, context = 'label') {
+    if (enableSilentPrinting && printerName) {
+      // Attempt silent printing via QZ Tray
+      if (!isQzTrayAvailable()) {
+        showQzTrayWarning();
+        // Fallback to browser dialog
+        window.open(printUrl, '_blank');
+        frappe.show_alert({message: `Print dialog opened for ${context}`, indicator: 'green'});
+        return;
+      }
+
+      try {
+        const success = await printWithQzTray(printUrl, printerName);
+        if (success) {
+          frappe.show_alert({message: `Label sent to printer for ${context}`, indicator: 'green'});
+        } else {
+          throw new Error('QZ Tray printing failed');
+        }
+      } catch (err) {
+        console.error('Silent printing failed, falling back to dialog:', err);
+        frappe.show_alert({message: 'Silent printing failed, opening print dialog', indicator: 'orange'});
+        window.open(printUrl, '_blank');
+      }
+    } else {
+      // Use standard browser print dialog
+      window.open(printUrl, '_blank');
+      frappe.show_alert({message: `Print dialog opened for ${context}`, indicator: 'green'});
+    }
+  }
+
+  // ============================================================
+  // End QZ Tray Support
+  // ============================================================
+
   const banner = $('#wo-banner', $root);
   const grid   = $('#wo-grid',   $root);
   const alerts = $('#alerts',    $root);
@@ -772,18 +905,29 @@ function init_operator_hub($root) {
         { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Label Template', reqd:1, default: tplDefault || '' }
       ],
       primary_action_label:'Print',
-      primary_action: (v) => {
+      primary_action: async (v) => {
         setStatus('Creating label and opening print dialog…');
-        rpc('isnack.api.mes_ops.print_label', { work_order: state.current_wo, carton_qty: v.qty, template: v.template })
-          .then((r) => {
-            d.hide();
-            if (r.message && r.message.print_url) {
-              // Open print dialog in new window
-              window.open(r.message.print_url, '_blank');
-              frappe.show_alert({message:'Print dialog opened', indicator:'green'});
-              flashStatus(`Label ready for ${state.current_wo}`, 'success');
-            }
+        try {
+          const r = await rpc('isnack.api.mes_ops.print_label', { 
+            work_order: state.current_wo, 
+            carton_qty: v.qty, 
+            template: v.template 
           });
+          d.hide();
+          if (r.message && r.message.print_url) {
+            // Use QZ Tray if enabled, otherwise use browser dialog
+            await handleLabelPrint(
+              r.message.print_url,
+              r.message.enable_silent_printing,
+              r.message.printer_name,
+              state.current_wo
+            );
+            flashStatus(`Label ready for ${state.current_wo}`, 'success');
+          }
+        } catch (err) {
+          console.error('Print label error:', err);
+          frappe.show_alert({message: 'Failed to create label', indicator: 'red'});
+        }
       }
     });
     d.show();
@@ -869,8 +1013,13 @@ function init_operator_hub($root) {
             reason_code: 'reprint'
           });
           if (result.message && result.message.print_urls && result.message.print_urls.length > 0) {
-            window.open(result.message.print_urls[0], '_blank');
-            frappe.show_alert({message:`Print dialog opened for ${row.name}`, indicator:'green'});
+            // Use QZ Tray if enabled, otherwise use browser dialog
+            await handleLabelPrint(
+              result.message.print_urls[0],
+              result.message.enable_silent_printing,
+              result.message.printer_name,
+              row.name
+            );
           }
           return;
         }
@@ -900,11 +1049,21 @@ function init_operator_hub($root) {
               });
               splitDialog.hide();
               if (result.message && result.message.print_urls) {
-                // Open a print window for each split quantity
-                result.message.print_urls.forEach((url, idx) => {
-                  setTimeout(() => window.open(url, '_blank'), idx * PRINT_DIALOG_DELAY_MS);
+                // Print each split quantity - either via QZ Tray or browser dialog
+                const enableSilent = result.message.enable_silent_printing;
+                const printerName = result.message.printer_name;
+                
+                for (let idx = 0; idx < result.message.print_urls.length; idx++) {
+                  const url = result.message.print_urls[idx];
+                  // Add delay between prints to avoid overwhelming the printer/browser
+                  await new Promise(resolve => setTimeout(resolve, idx * PRINT_DIALOG_DELAY_MS));
+                  await handleLabelPrint(url, enableSilent, printerName, `${row.name} split ${idx + 1}`);
+                }
+                
+                frappe.show_alert({
+                  message: `${result.message.print_urls.length} label(s) ${enableSilent ? 'sent to printer' : 'dialog(s) opened'}`, 
+                  indicator: 'green'
                 });
-                frappe.show_alert({message:`${result.message.print_urls.length} print dialog(s) opened`, indicator:'green'});
               }
             }
           });

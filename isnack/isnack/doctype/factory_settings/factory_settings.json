@@ -21,6 +21,7 @@
   "default_label_template",
   "default_label_printer",
   "default_a4_printer",
+  "enable_silent_printing",
   "per_user_printer_defaults_section",
   "user_printer_defaults"
  ],
@@ -132,6 +133,13 @@
    "fieldtype": "Link",
    "label": "Default A4 Printer",
    "options": "Network Printer Settings"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, labels will print directly to the configured label printer using QZ Tray without showing the print dialog. Requires QZ Tray to be installed on the client PC.",
+   "fieldname": "enable_silent_printing",
+   "fieldtype": "Check",
+   "label": "Enable Silent Printing (QZ Tray)"
   }
  ],
  "grid_page_length": 50,

@@ -1427,13 +1427,19 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         f"/printview?doctype=Work%20Order&name={frappe.utils.quote(work_order)}&format={frappe.utils.quote(template)}&trigger_print=1"
     )
     
+    # Get silent printing settings
+    enable_silent_printing = bool(getattr(fs, "enable_silent_printing", False))
+    default_label_printer = getattr(fs, "default_label_printer", None)
+    
     return {
         "success": True,
         "label_record": label_record.name if label_record else None,
         "print_url": print_url,
         "doctype": "Work Order",
         "docname": work_order,
-        "print_format": template
+        "print_format": template,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": default_label_printer
     }
 
 
@@ -1535,13 +1541,18 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
             )
             print_urls.append(print_url)
 
+    # Get silent printing settings
+    enable_silent_printing = bool(getattr(fs, "enable_silent_printing", False))
+    
     return {
         "label_record": record.name,
         "jobs": [job.name for job in jobs if job],
         "print_urls": print_urls,
         "doctype": record.source_doctype,
         "docname": record.source_docname,
-        "print_format": record.label_template
+        "print_format": record.label_template,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": target_printer
     }
 
 # ============================================================
