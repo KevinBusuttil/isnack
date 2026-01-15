@@ -888,12 +888,23 @@ def print_labels(stock_entry: str):
     """
     fmt = "Pallet Label Material Transfer"
     
+    # Get Factory Settings for silent printing
+    try:
+        fs = frappe.get_single("Factory Settings")
+        enable_silent_printing = getattr(fs, "enable_silent_printing", False)
+        default_label_printer = getattr(fs, "default_label_printer", None)
+    except Exception:
+        enable_silent_printing = False
+        default_label_printer = None
+    
     # Return print information for client-side handling
     return {
         "doctype": "Stock Entry",
         "name": stock_entry,
         "print_format": fmt,
-        "print_url": f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1"
+        "print_url": f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1",
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": default_label_printer
     }
 
 
