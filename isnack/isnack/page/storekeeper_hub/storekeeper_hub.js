@@ -57,14 +57,196 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return { item_code: code, item_name: '', stock_uom: '', has_batch_no: 0 };
   };
 
+  // ============================================================
+  // Load QZ Tray Library (for silent printing support)
+  // ============================================================
+  (function loadQzTray() {
+    // Check if QZ Tray is already loaded (typically from local installation)
+    if (typeof qz !== 'undefined') {
+      return;
+    }
+    
+    // QZ Tray is typically loaded from the local installation at http://localhost:8182/qz-tray.js
+    // Try loading from local installation first (HTTP for compatibility), fall back to CDN
+    const qzScript = document.createElement('script');
+    qzScript.src = 'http://localhost:8182/qz-tray.js';
+    qzScript.async = true;
+    qzScript.onerror = () => {
+      console.info('QZ Tray not found at localhost, trying CDN fallback...');
+      // Fallback to CDN if local installation is not available
+      const cdnScript = document.createElement('script');
+      cdnScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2/qz-tray.js';
+      cdnScript.async = true;
+      cdnScript.onerror = () => {
+        console.warn('Failed to load QZ Tray library. Silent printing will not be available.');
+      };
+      document.head.appendChild(cdnScript);
+    };
+    document.head.appendChild(qzScript);
+  })();
+
+  // ============================================================
+  // QZ Tray Support for Silent Printing
+  // ============================================================
+
+  /**
+   * Check if QZ Tray is available
+   */
+  function isQzTrayAvailable() {
+    return typeof qz !== 'undefined' && qz.websocket;
+  }
+
+  /**
+   * Ensure QZ Tray connection is established
+   */
+  async function ensureQzConnection() {
+    if (!isQzTrayAvailable()) {
+      return false;
+    }
+    try {
+      if (!qz.websocket.isActive()) {
+        await qz.websocket.connect();
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to connect to QZ Tray:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Print a label using QZ Tray (silent printing)
+   * @param {string} printUrl - The URL to print
+   * @param {string} printerName - Name of the printer from Network Printer Settings
+   * @returns {Promise<boolean>} Resolves to true if successful, false otherwise
+   */
+  async function printWithQzTray(printUrl, printerName) {
+    if (!isQzTrayAvailable()) {
+      console.warn('QZ Tray is not available');
+      return false;
+    }
+
+    // Validate printer name
+    if (!printerName || typeof printerName !== 'string' || printerName.trim() === '') {
+      console.error('Invalid printer name provided to QZ Tray');
+      return false;
+    }
+
+    try {
+      // Ensure connection
+      const connected = await ensureQzConnection();
+      if (!connected) {
+        throw new Error('Could not connect to QZ Tray');
+      }
+
+      // Fetch the print content - properly remove trigger_print parameter
+      const url = new URL(printUrl, window.location.origin);
+      
+      // Security: Validate that the URL is from the same origin to prevent SSRF attacks
+      if (url.origin !== window.location.origin) {
+        throw new Error('Print URL must be from the same origin');
+      }
+      
+      url.searchParams.delete('trigger_print');
+      
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        throw new Error(`Failed to fetch print content: ${response.status}`);
+      }
+      const htmlContent = await response.text();
+
+      // Configure QZ printer
+      const config = qz.configs.create(printerName.trim());
+
+      // Print as HTML/pixel format
+      const data = [{
+        type: 'pixel',
+        format: 'html',
+        flavor: 'plain',
+        data: htmlContent
+      }];
+
+      await qz.print(config, data);
+      return true;
+    } catch (err) {
+      console.error('QZ Tray print error:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Show a warning dialog when QZ Tray is required but not available
+   */
+  function showQzTrayWarning() {
+    frappe.msgprint({
+      title: __('QZ Tray Required'),
+      indicator: 'orange',
+      message: `
+        <p>Silent printing is enabled but QZ Tray is not installed or not running.</p>
+        <p>Please install QZ Tray from <a href="https://qz.io/download/" target="_blank" rel="noopener noreferrer">https://qz.io/download/</a></p>
+        <p>Falling back to browser print dialog...</p>
+      `
+    });
+  }
+
+  /**
+   * Handle label printing - either silent via QZ Tray or via browser dialog
+   * @param {string} printUrl - The URL to print
+   * @param {boolean} enableSilentPrinting - Whether silent printing is enabled
+   * @param {string} printerName - Name of the printer to use
+   * @param {string} context - Context for logging (e.g., 'new label', 'reprint')
+   */
+  async function handleLabelPrint(printUrl, enableSilentPrinting, printerName, context = 'label') {
+    if (enableSilentPrinting && printerName) {
+      // Attempt silent printing via QZ Tray
+      if (!isQzTrayAvailable()) {
+        showQzTrayWarning();
+        // Fallback to browser dialog
+        window.open(printUrl, '_blank');
+        frappe.show_alert({message: `Print dialog opened for ${context}`, indicator: 'green'});
+        return;
+      }
+
+      try {
+        const success = await printWithQzTray(printUrl, printerName);
+        if (success) {
+          frappe.show_alert({message: `Label sent to printer for ${context}`, indicator: 'green'});
+        } else {
+          throw new Error('QZ Tray printing failed');
+        }
+      } catch (err) {
+        console.error('Silent printing failed, falling back to dialog:', err);
+        frappe.show_alert({message: 'Silent printing failed, opening print dialog', indicator: 'orange'});
+        window.open(printUrl, '_blank');
+      }
+    } else {
+      // Use standard browser print dialog
+      window.open(printUrl, '_blank');
+      frappe.show_alert({message: `Print dialog opened for ${context}`, indicator: 'green'});
+    }
+  }
+
+  // ============================================================
+  // End QZ Tray Support
+  // ============================================================
+
   // Helper function for client-side printing
-  function printStockEntryLabel(stockEntryName) {
-    const printFormat = 'Pallet Label Material Transfer';
-    const url = frappe.urllib.get_full_url(
-      `/printview?doctype=Stock%20Entry&name=${encodeURIComponent(stockEntryName)}&format=${encodeURIComponent(printFormat)}&trigger_print=1`
-    );
-    window.open(url, '_blank');
-    frappe.show_alert({ message: __('Opening print dialog...'), indicator: 'blue' });
+  async function printStockEntryLabel(stockEntryName) {
+    try {
+      const result = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_labels',
+        args: { stock_entry: stockEntryName }
+      });
+      
+      if (result && result.message) {
+        const { print_url, enable_silent_printing, printer_name } = result.message;
+        const fullUrl = frappe.urllib.get_full_url(print_url);
+        await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, stockEntryName);
+      }
+    } catch (err) {
+      console.error('Print label error:', err);
+      frappe.show_alert({ message: __('Failed to print label'), indicator: 'red' });
+    }
   }
 
   // ---------- Toolbar Controls ----------
