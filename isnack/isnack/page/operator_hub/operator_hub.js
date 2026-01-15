@@ -23,6 +23,25 @@ function init_operator_hub($root) {
   const PRINT_DIALOG_DELAY_MS = 500;
 
   // ============================================================
+  // Load QZ Tray Library (for silent printing support)
+  // ============================================================
+  (function loadQzTray() {
+    // Check if QZ Tray is already loaded
+    if (typeof qz !== 'undefined') {
+      return;
+    }
+    
+    // Load QZ Tray library from CDN
+    const qzScript = document.createElement('script');
+    qzScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2/qz-tray.js';
+    qzScript.async = true;
+    qzScript.onerror = () => {
+      console.warn('Failed to load QZ Tray library from CDN. Silent printing will not be available.');
+    };
+    document.head.appendChild(qzScript);
+  })();
+
+  // ============================================================
   // QZ Tray Silent Printing Support
   // ============================================================
   
@@ -66,6 +85,12 @@ function init_operator_hub($root) {
       return false;
     }
 
+    // Validate printer name
+    if (!printerName || typeof printerName !== 'string' || printerName.trim() === '') {
+      console.error('Invalid printer name provided to QZ Tray');
+      return false;
+    }
+
     try {
       // Ensure connection
       const connected = await ensureQzConnection();
@@ -73,15 +98,18 @@ function init_operator_hub($root) {
         throw new Error('Could not connect to QZ Tray');
       }
 
-      // Fetch the print content
-      const response = await fetch(printUrl.replace('trigger_print=1', ''));
+      // Fetch the print content - properly remove trigger_print parameter
+      const url = new URL(printUrl, window.location.origin);
+      url.searchParams.delete('trigger_print');
+      
+      const response = await fetch(url.toString());
       if (!response.ok) {
         throw new Error(`Failed to fetch print content: ${response.status}`);
       }
       const htmlContent = await response.text();
 
       // Configure QZ printer
-      const config = qz.configs.create(printerName);
+      const config = qz.configs.create(printerName.trim());
 
       // Print as HTML/pixel format
       const data = [{
@@ -1053,6 +1081,8 @@ function init_operator_hub($root) {
                 const enableSilent = result.message.enable_silent_printing;
                 const printerName = result.message.printer_name;
                 
+                // Sequential execution is intentional to avoid overwhelming the printer queue
+                // and to prevent browser popup blockers when using print dialogs
                 for (let idx = 0; idx < result.message.print_urls.length; idx++) {
                   const url = result.message.print_urls[idx];
                   // Add delay between prints to avoid overwhelming the printer/browser
