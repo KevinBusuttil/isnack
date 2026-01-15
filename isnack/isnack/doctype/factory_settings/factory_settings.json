@@ -19,6 +19,7 @@
   "line_warehouse_map",
   "label_printing_section",
   "default_label_template",
+  "default_label_print_format",
   "default_label_printer",
   "default_a4_printer",
   "enable_silent_printing",
@@ -104,6 +105,14 @@
    "fieldtype": "Link",
    "label": "Default Label Template",
    "options": "Label Template"
+  },
+  {
+   "fieldname": "default_label_print_format",
+   "fieldtype": "Link",
+   "label": "Default Label Print Format",
+   "options": "Print Format",
+   "default": "SATO Label Print",
+   "description": "Default print format used for pallet labels in Storekeeper Hub and Operator Hub"
   },
   {
    "fieldname": "default_label_printer",
