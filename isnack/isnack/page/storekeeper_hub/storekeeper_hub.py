@@ -3,9 +3,7 @@ from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
-from frappe.utils.print_format import print_by_server 
-from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
-from isnack.utils.printing import get_label_printer 
+from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
 # --- Helpers -----------------------------------------------------------------
@@ -883,18 +881,20 @@ def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
 
 @frappe.whitelist()
 def print_labels(stock_entry: str):
+    """Return print format information for client-side printing.
+    
+    This function is kept for backward compatibility but now returns
+    print information instead of calling print_by_server.
+    """
     fmt = "Pallet Label Material Transfer"
-    printer_setting = get_label_printer()  # returns the *name* of a Network Printer Settings doc
-
-    if not printer_setting:
-        frappe.throw(_("No label printer configured."))
-
-    print_by_server(
-        "Stock Entry",
-        stock_entry,
-        printer_setting=printer_setting,   # name of Network Printer Settings
-        print_format=fmt
-    )
+    
+    # Return print information for client-side handling
+    return {
+        "doctype": "Stock Entry",
+        "name": stock_entry,
+        "print_format": fmt,
+        "print_url": f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1"
+    }
 
 
 @frappe.whitelist()
