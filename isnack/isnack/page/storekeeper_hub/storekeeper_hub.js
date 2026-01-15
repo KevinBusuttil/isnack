@@ -156,7 +156,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const htmlContent = await response.text();
 
       // Configure QZ printer
-      const config = qz.configs.create(printerName.trim());
+      const config = qz.configs.create(printerName.trim(), {
+        units: 'mm',
+        size: { width: 62, height: 84 },
+        scaleContent: false,
+        rasterize: false
+      });
 
       // Print as HTML/pixel format
       const data = [{
