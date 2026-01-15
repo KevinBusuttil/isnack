@@ -312,7 +312,7 @@
 
 /* Scan input */
 .storekeeper-hub .scan .scan-input {
-  min-width: 320px;
+  min-width: 128px;
   border-radius: 8px;
   border: 1px solid #d1e9f5;
   padding: 8px 10px;
