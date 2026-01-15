@@ -886,14 +886,14 @@ def print_labels(stock_entry: str):
     This function is kept for backward compatibility but now returns
     print information instead of calling print_by_server.
     """
-    fmt = "Pallet Label Material Transfer"
-    
-    # Get Factory Settings for silent printing
+    # Get Factory Settings for printing configuration
     try:
         fs = frappe.get_single("Factory Settings")
+        fmt = getattr(fs, "default_label_print_format", None) or "SATO Label Print"
         enable_silent_printing = getattr(fs, "enable_silent_printing", False)
         default_label_printer = getattr(fs, "default_label_printer", None)
     except Exception:
+        fmt = "SATO Label Print"
         enable_silent_printing = False
         default_label_printer = None
     
