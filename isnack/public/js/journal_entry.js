@@ -11,11 +11,6 @@
 // The exchange rate should remain at its default value of 1 and be properly 
 // fetched when the user selects the account, based on that account's currency.
 
-frappe.ui.form.on('Journal Entry', {
-	// This override ensures proper initialization but doesn't interfere with
-	// the default behavior for other functions
-});
-
 frappe.ui.form.on('Journal Entry Account', {
 	accounts_add: function(frm, cdt, cdn) {
 		var row = frappe.get_doc(cdt, cdn);
