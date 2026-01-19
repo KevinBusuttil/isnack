@@ -14,10 +14,6 @@
 frappe.ui.form.on('Journal Entry Account', {
 	accounts_add: function(frm, cdt, cdn) {
 		var row = frappe.get_doc(cdt, cdn);
-		// Initialize exchange_rate to 1 (default for base currency)
-		// This will be automatically updated when the user selects an account
-		// based on that account's currency via the set_exchange_rate function
-		row.exchange_rate = 1;
 		
 		// Copy account, party, and party_type from existing rows if they exist
 		// BUT DO NOT copy exchange_rate - it should be determined by the actual
@@ -39,7 +35,9 @@ frappe.ui.form.on('Journal Entry Account', {
 			row.cost_center = frm.doc.cost_center;
 		}
 		
-		// Refresh the field to ensure UI updates
-		frappe.model.set_value(cdt, cdn, 'exchange_rate', row.exchange_rate);
+		// Initialize exchange_rate to 1 (default for base currency)
+		// This will be automatically updated when the user selects an account
+		// based on that account's currency via the set_exchange_rate function
+		frappe.model.set_value(cdt, cdn, 'exchange_rate', 1);
 	}
 });
