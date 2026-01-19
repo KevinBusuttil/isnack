@@ -33,7 +33,9 @@ class CustomJournalEntry(JournalEntry):
         
         # Apply the fix: use row-specific exchange rate for Journal Entries
         # instead of the document-level conversion_rate
-        if item and item.get("exchange_rate"):
-            gl_dict["transaction_exchange_rate"] = flt(item.get("exchange_rate", 1))
+        if item:
+            exchange_rate = item.get("exchange_rate")
+            if exchange_rate:
+                gl_dict["transaction_exchange_rate"] = flt(exchange_rate)
         
         return gl_dict
