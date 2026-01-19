@@ -14,6 +14,9 @@
 frappe.ui.form.on('Journal Entry Account', {
 	accounts_add: function(frm, cdt, cdn) {
 		var row = frappe.get_doc(cdt, cdn);
+		// Initialize exchange_rate to 1 (default for base currency)
+		// This will be automatically updated when the user selects an account
+		// based on that account's currency via the set_exchange_rate function
 		row.exchange_rate = 1;
 		
 		// Copy account, party, and party_type from existing rows if they exist
@@ -27,6 +30,7 @@ frappe.ui.form.on('Journal Entry Account', {
 				// REMOVED: row.exchange_rate = d.exchange_rate;
 				// This line was causing the bug - exchange rate should not be
 				// copied from other rows as they may have different currencies
+				return false; // Break after copying from first matching row
 			}
 		});
 		
