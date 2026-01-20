@@ -29,6 +29,53 @@ class CustomJournalEntry(JournalEntry):
         
         # Now call parent validate
         super().validate()
+    
+    def set_amounts_in_company_currency(self):
+        """
+        Override to prevent ERPNext from overwriting company currency amounts
+        when they are already set (i.e., when company amounts are the source of truth).
+        
+        Standard ERPNext behavior: debit = debit_in_account_currency × exchange_rate
+        Our behavior: If debit/credit is already set, keep it and recalculate 
+        account currency amounts instead.
+        """
+        if not (self.voucher_type == "Exchange Gain Or Loss" and self.multi_currency):
+            for d in self.get("accounts"):
+                d.debit_in_account_currency = flt(
+                    d.debit_in_account_currency, d.precision("debit_in_account_currency")
+                )
+                d.credit_in_account_currency = flt(
+                    d.credit_in_account_currency, d.precision("credit_in_account_currency")
+                )
+                
+                # If company currency amounts are already set and non-zero,
+                # treat them as source of truth and recalculate account currency amounts
+                if flt(d.debit) or flt(d.credit):
+                    exchange_rate = flt(d.exchange_rate) or 1.0
+                    
+                    if flt(d.debit):
+                        d.debit = flt(d.debit, d.precision("debit"))
+                        d.debit_in_account_currency = flt(
+                            d.debit / exchange_rate,
+                            d.precision("debit_in_account_currency")
+                        )
+                    
+                    if flt(d.credit):
+                        d.credit = flt(d.credit, d.precision("credit"))
+                        d.credit_in_account_currency = flt(
+                            d.credit / exchange_rate,
+                            d.precision("credit_in_account_currency")
+                        )
+                else:
+                    # Standard behavior: calculate company amounts from account currency amounts
+                    d.debit = flt(
+                        d.debit_in_account_currency * flt(d.exchange_rate),
+                        d.precision("debit")
+                    )
+                    d.credit = flt(
+                        d.credit_in_account_currency * flt(d.exchange_rate),
+                        d.precision("credit")
+                    )
 
     def fix_multi_currency_exchange_rates(self):
         """
