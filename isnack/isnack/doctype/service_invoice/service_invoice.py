@@ -250,7 +250,7 @@ class JournalEntryBuilder:
     
     def add_offset_line(self, offset_amount, is_credit, vat_inclusive=False, gross_amount=None):
         """
-        Add the offset account line.
+        Add the offset account line, anchoring on company currency to avoid rounding drift.
         
         Args:
             offset_amount: Amount for offset (in account currency if same, needs conversion if different)
@@ -258,57 +258,51 @@ class JournalEntryBuilder:
             vat_inclusive: Whether VAT is inclusive
             gross_amount: Gross amount from invoice (used for VAT exclusive case)
         """
-        print("Arguments passed to add_offset_line:", {
-            "offset_amount": offset_amount,
-            "is_credit": is_credit,
-            "vat_inclusive": vat_inclusive,
-            "gross_amount": gross_amount,
-        })
-        # Determine the base amount for offset conversion
-        if self.inv.account_currency != self.inv.offset_account_currency:
-            # Multi-currency: convert from account currency to offset currency
-            if vat_inclusive:
-                base_amount = offset_amount  # Use invoice_amount
-            else:
-                base_amount = gross_amount if gross_amount is not None else offset_amount
-            
-            offset_acc_amount, offset_company_amount = self.convert_between_currencies(
-                base_amount,
-                self.inv.account_currency,
-                self.inv.offset_account_currency,
-                self.account_exchange_rate,
-                self.offset_exchange_rate,
-            )
+        # Determine the base amount in party account currency
+        # For VAT exclusive, use gross_amount so offset carries VAT too
+        if vat_inclusive:
+            base_amount_in_party_currency = offset_amount  # invoice_amount
         else:
-            # Same currency: use the amount directly
-            if vat_inclusive:
-                offset_acc_amount = offset_amount
-            else:
-                offset_acc_amount = gross_amount if gross_amount is not None else offset_amount
-            
-            offset_company_amount = self.convert_to_company_currency(
-                offset_acc_amount,
-                self.inv.offset_account_currency,
-                self.offset_exchange_rate,
-            )
+            base_amount_in_party_currency = gross_amount if gross_amount is not None else offset_amount
+        
+        # ANCHOR ON COMPANY CURRENCY: Convert party amount to company currency once
+        offset_company_amount = self.convert_to_company_currency(
+            base_amount_in_party_currency,
+            self.inv.account_currency,
+            self.account_exchange_rate,
+        )
+        
+        # Derive offset account-currency amount bottom-up from company amount
+        # Divide by offset rate and round to offset currency precision
+        offset_acc_amount = offset_company_amount / flt(self.offset_exchange_rate)
+        
+        offset_precision = frappe.get_precision(
+            "Journal Entry Account",
+            "debit_in_account_currency",
+            currency=self.inv.offset_account_currency,
+        ) or 2
+        offset_acc_amount = round_based_on_smallest_currency_fraction(
+            offset_acc_amount, self.inv.offset_account_currency, offset_precision
+        )
         
         # Create the offset line (opposite of party line)
+        # Explicitly set company debit/credit to avoid re-derivation
+        row = {"account": self.inv.offset_account}
+        
+        if self.inv.cost_center:
+            row["cost_center"] = self.inv.cost_center
+        
         if is_credit:
-            self.offset_row = self.add_line(
-                account=self.inv.offset_account,
-                account_currency=self.inv.offset_account_currency,
-                debit_acc=offset_acc_amount,
-                cost_center=self.inv.cost_center,
-                exchange_rate=self.offset_exchange_rate,
-            )
+            # Party is credit, offset is debit
+            row["debit_in_account_currency"] = flt(offset_acc_amount)
+            row["debit"] = offset_company_amount  # Explicitly set to computed company amount
         else:
-            self.offset_row = self.add_line(
-                account=self.inv.offset_account,
-                account_currency=self.inv.offset_account_currency,
-                credit_acc=offset_acc_amount,
-                cost_center=self.inv.cost_center,
-                exchange_rate=self.offset_exchange_rate,
-            )
+            # Party is debit, offset is credit
+            row["credit_in_account_currency"] = flt(offset_acc_amount)
+            row["credit"] = offset_company_amount  # Explicitly set to computed company amount
+        
+        self.jv.append("accounts", row)
+        self.offset_row = row
     
     def add_vat_line(self, vat_amount, tax_account, is_credit):
         """Add the VAT line (typically in company currency)."""

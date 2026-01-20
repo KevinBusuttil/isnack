@@ -107,3 +107,155 @@ from frappe.tests.utils import FrappeTestCase
 
 class TestServiceInvoice(FrappeTestCase):
 	pass
+
+
+class TestMultiCurrencyOffsetLine(unittest.TestCase):
+	"""Regression tests for multi-currency offset line rounding drift."""
+	
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.get_exchange_rate')
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.frappe')
+	def test_multi_currency_offset_with_different_rates(self, mock_frappe, mock_get_exchange_rate):
+		"""
+		Test that multi-currency offset lines balance correctly in company currency.
+		
+		Scenario: 
+		- Company currency: EUR
+		- Party account currency: USD (rate: 1.1)
+		- Offset account currency: GBP (rate: 0.85)
+		- Invoice amount: 100 USD
+		- VAT exclusive with 19% tax
+		
+		Expected: Journal entry should balance with total debit == total credit in EUR
+		"""
+		from isnack.isnack.doctype.service_invoice.service_invoice import JournalEntryBuilder
+		
+		# Mock frappe dependencies
+		mock_frappe.new_doc.return_value = MagicMock()
+		mock_frappe.get_precision.return_value = 2
+		mock_frappe.utils.flt = lambda x: float(x) if x else 0.0
+		
+		# Mock exchange rates: returns rate from source to target
+		def mock_exchange_rate(from_currency, to_currency, date):
+			rates = {
+				('USD', 'EUR'): 1.1,   # 1 USD = 1.1 EUR
+				('GBP', 'EUR'): 0.85,  # 1 GBP = 0.85 EUR
+				('EUR', 'EUR'): 1.0,
+			}
+			return rates.get((from_currency, to_currency), 1.0)
+		
+		mock_get_exchange_rate.side_effect = mock_exchange_rate
+		
+		# Create mock invoice data
+		inv = MagicMock()
+		inv.account = "Debtors USD"
+		inv.account_currency = "USD"
+		inv.offset_account = "Revenue GBP"
+		inv.offset_account_currency = "GBP"
+		inv.cost_center = "Main"
+		inv.date = "2023-01-01"
+		
+		# Build journal entry
+		builder = JournalEntryBuilder(inv, "Test Company", "EUR")
+		
+		# Add party line: 100 USD credit
+		builder.add_party_line(invoice_amount=100.0, is_credit=True)
+		
+		# Add offset line: should convert 100 USD to GBP via EUR
+		# 100 USD * 1.1 = 110 EUR (party line in company currency)
+		# For offset in GBP: 110 EUR / 0.85 = ~129.41 GBP
+		builder.add_offset_line(
+			offset_amount=100.0, 
+			is_credit=True, 
+			vat_inclusive=False,
+			gross_amount=100.0
+		)
+		
+		# Verify the journal entry balances
+		jv = builder.build()
+		
+		# Calculate totals in company currency
+		total_debit = sum(float(row.get("debit", 0)) for row in jv.accounts)
+		total_credit = sum(float(row.get("credit", 0)) for row in jv.accounts)
+		
+		# They should be equal (or within rounding tolerance)
+		diff = abs(total_debit - total_credit)
+		self.assertLess(diff, 0.01, 
+			f"Total debit ({total_debit}) should equal total credit ({total_credit}) "
+			f"in company currency EUR, diff: {diff}")
+	
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.get_exchange_rate')
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.frappe')
+	def test_vat_exclusive_multi_currency_offset(self, mock_frappe, mock_get_exchange_rate):
+		"""
+		Test VAT-exclusive multi-currency scenario where offset carries VAT.
+		
+		Scenario:
+		- Company currency: EUR
+		- Party account currency: USD (rate: 1.2)
+		- Offset account currency: GBP (rate: 0.9)
+		- Gross amount: 100 USD (before VAT)
+		- VAT: 19%
+		- Invoice amount: 119 USD (100 + 19)
+		
+		Expected: Offset should be based on gross (100 USD), not invoice amount
+		"""
+		from isnack.isnack.doctype.service_invoice.service_invoice import JournalEntryBuilder
+		
+		# Mock frappe dependencies
+		mock_frappe.new_doc.return_value = MagicMock()
+		mock_frappe.get_precision.return_value = 2
+		mock_frappe.utils.flt = lambda x: float(x) if x else 0.0
+		
+		# Mock exchange rates
+		def mock_exchange_rate(from_currency, to_currency, date):
+			rates = {
+				('USD', 'EUR'): 1.2,
+				('GBP', 'EUR'): 0.9,
+				('EUR', 'EUR'): 1.0,
+			}
+			return rates.get((from_currency, to_currency), 1.0)
+		
+		mock_get_exchange_rate.side_effect = mock_exchange_rate
+		
+		# Create mock invoice data
+		inv = MagicMock()
+		inv.account = "Debtors USD"
+		inv.account_currency = "USD"
+		inv.offset_account = "Revenue GBP"
+		inv.offset_account_currency = "GBP"
+		inv.cost_center = "Main"
+		inv.date = "2023-01-01"
+		
+		# Build journal entry
+		builder = JournalEntryBuilder(inv, "Test Company", "EUR")
+		
+		# Add party line: 119 USD credit (100 gross + 19 VAT)
+		builder.add_party_line(invoice_amount=119.0, is_credit=True)
+		
+		# Add offset line: should use gross_amount (100 USD) for VAT exclusive
+		# 100 USD * 1.2 = 120 EUR
+		# 120 EUR / 0.9 = 133.33 GBP
+		builder.add_offset_line(
+			offset_amount=119.0,
+			is_credit=True,
+			vat_inclusive=False,
+			gross_amount=100.0  # Use gross, not invoice amount
+		)
+		
+		# Add VAT line: 19 USD = 22.8 EUR
+		builder.add_vat_line(vat_amount=19.0, tax_account="VAT", is_credit=True)
+		
+		# Balance the entry
+		builder.balance_journal_entry()
+		
+		# Verify the journal entry balances
+		jv = builder.build()
+		
+		# Calculate totals in company currency
+		total_debit = sum(float(row.get("debit", 0)) for row in jv.accounts)
+		total_credit = sum(float(row.get("credit", 0)) for row in jv.accounts)
+		
+		# They should be equal
+		self.assertAlmostEqual(total_debit, total_credit, places=2,
+			msg=f"Total debit ({total_debit}) should equal total credit ({total_credit})")
+
