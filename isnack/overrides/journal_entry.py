@@ -36,9 +36,20 @@ class CustomJournalEntry(JournalEntry):
         when they are already set (i.e., when company amounts are the source of truth).
         
         Standard ERPNext behavior: debit = debit_in_account_currency × exchange_rate
-        Our behavior: If debit/credit is already set, keep it and recalculate 
-        account currency amounts instead.
+        Custom behavior (for multi-currency JEs from Service Invoices): If debit/credit 
+        is already set, keep it and recalculate account currency amounts instead.
         """
+        # Check if this JE originated from a Service Invoice
+        # JournalEntryBuilder.set_header() in service_invoice.py sets cheque_no to the Service Invoice name
+        # This allows us to identify JEs created from Service Invoices
+        is_from_service_invoice = (
+            self.cheque_no 
+            and frappe.db.exists("Service Invoice", self.cheque_no)
+        )
+        
+        # Only apply custom logic for multi-currency JEs from Service Invoices
+        use_custom_logic = self.multi_currency and is_from_service_invoice
+        
         if not (self.voucher_type == "Exchange Gain Or Loss" and self.multi_currency):
             for d in self.get("accounts"):
                 d.debit_in_account_currency = flt(
@@ -48,9 +59,10 @@ class CustomJournalEntry(JournalEntry):
                     d.credit_in_account_currency, d.precision("credit_in_account_currency")
                 )
                 
-                # If company currency amounts are already set and non-zero,
-                # treat them as source of truth and recalculate account currency amounts
-                if flt(d.debit) or flt(d.credit):
+                # Apply custom logic only for multi-currency JEs from Service Invoices
+                if use_custom_logic and (flt(d.debit) or flt(d.credit)):
+                    # Custom behavior: Company currency amounts are source of truth
+                    # Recalculate account currency amounts
                     exchange_rate = flt(d.exchange_rate) or 1.0
                     
                     if flt(d.debit):
@@ -67,7 +79,7 @@ class CustomJournalEntry(JournalEntry):
                             d.precision("credit_in_account_currency")
                         )
                 else:
-                    # Standard behavior: calculate company amounts from account currency amounts
+                    # Standard ERPNext behavior: calculate company amounts from account currency amounts
                     d.debit = flt(
                         d.debit_in_account_currency * flt(d.exchange_rate),
                         d.precision("debit")
