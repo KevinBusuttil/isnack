@@ -6,6 +6,7 @@ from frappe.model.document import Document
 from frappe.utils import flt, round_based_on_smallest_currency_fraction
 from erpnext import get_default_company, get_company_currency
 from erpnext.setup.utils import get_exchange_rate
+from erpnext.accounts.doctype.journal_entry.journal_entry import get_exchange_rate as get_journal_exchange_rate
 
 
 class AmountCalculator:
@@ -261,6 +262,7 @@ class JournalEntryBuilder:
     def add_offset_line(self, offset_amount, is_credit, vat_inclusive=False, gross_amount=None):
         """
         Add the offset account line, anchoring on company currency to avoid rounding drift.
+        Uses ERPNext's get_exchange_rate to ensure consistency with Journal Entry validation.
         
         Args:
             offset_amount: Amount for offset (in account currency if same, needs conversion if different)
@@ -281,10 +283,31 @@ class JournalEntryBuilder:
             self.inv.account_currency,
             self.account_exchange_rate,
         )
-        # Derive offset account-currency amount bottom-up from company amount
-        # Note: offset_exchange_rate is FROM offset_currency TO company_currency
+        
+        # Get ERPNext's exchange rate for the offset account
+        # This ensures we use the exact same rate that ERPNext will use during validation
+        erpnext_exchange_rate = get_journal_exchange_rate(
+            self.inv.date,  # posting_date
+            self.inv.offset_account,  # account
+            self.inv.offset_account_currency,  # account_currency
+            self.company,  # company
+            None,  # reference_type
+            None,  # reference_name
+            0,  # debit
+            0,  # credit
+            None,  # exchange_rate (don't pass existing rate)
+        )
+        
+        # Use ERPNext's rate, fallback to our calculated rate if not available
+        if erpnext_exchange_rate and flt(erpnext_exchange_rate) != 0.0:
+            effective_rate = flt(erpnext_exchange_rate)
+        else:
+            effective_rate = self.offset_exchange_rate
+        
+        # Derive offset account-currency amount from company amount using ERPNext's rate
+        # Note: exchange rate is FROM offset_currency TO company_currency
         # To convert FROM company_currency TO offset_currency, we divide by the rate
-        offset_acc_amount = offset_company_amount / flt(self.offset_exchange_rate)
+        offset_acc_amount = offset_company_amount / flt(effective_rate)
 
         offset_precision = frappe.get_precision(
             "Journal Entry Account",
@@ -295,17 +318,8 @@ class JournalEntryBuilder:
             offset_acc_amount, self.inv.offset_account_currency, offset_precision
         )
         
-        # Recompute exchange rate from rounded amounts to ensure consistency
-        # This prevents ERPNext from re-deriving different company amounts
-        # The effective rate is: offset_company_amount / offset_acc_amount
-        if offset_acc_amount:
-            recomputed_rate = offset_company_amount / offset_acc_amount
-            # Round to 9 decimal places to maintain precision while avoiding drift
-            recomputed_rate = flt(recomputed_rate, 9)
-            # Update the instance variable so balancing logic uses the same rate
-            self.offset_exchange_rate = recomputed_rate
-        else:
-            recomputed_rate = self.offset_exchange_rate
+        # Update the instance variable to use ERPNext's rate for consistency
+        self.offset_exchange_rate = effective_rate
         
         # Create the offset line (opposite of party line)
         # Explicitly set company debit/credit to avoid re-derivation
@@ -314,8 +328,8 @@ class JournalEntryBuilder:
         if self.inv.cost_center:
             row["cost_center"] = self.inv.cost_center
         
-        # Set the recomputed exchange rate to prevent ERPNext from re-deriving amounts
-        row["exchange_rate"] = flt(recomputed_rate)
+        # Set the exchange rate to ensure ERPNext uses it
+        row["exchange_rate"] = flt(effective_rate)
         
         if is_credit:
             # Party is credit, offset is debit
@@ -369,21 +383,8 @@ class JournalEntryBuilder:
         """
         total_debit = sum(flt(row.get("debit")) for row in self.jv.accounts)
         total_credit = sum(flt(row.get("credit")) for row in self.jv.accounts)
-        total_debit_in_company_currency = sum(flt(row.get("debit_in_account_currency")) for row in self.jv.accounts)
-        total_credit_in_company_currency = sum(flt(row.get("credit_in_account_currency")) for row in self.jv.accounts)
-        for row in self.jv.accounts:
-            print("Row:", row.account, 
-                  "Debit:", row.get("debit"), 
-                  "Credit:", row.get("credit"), 
-                  "Debit in account currency:", row.get("debit_in_account_currency"), 
-                  "Credit in account currency:", row.get("credit_in_account_currency"),
-                  "Exchange Rate:", row.get("exchange_rate"))
         
         diff = total_debit - total_credit
-        print("Initial balancing diff:", diff)
-        print("Total debit:", total_debit, "Total credit:", total_credit)       
-        print("Total debit in account currency:", total_debit_in_company_currency, 
-              "Total credit in account currency:", total_credit_in_company_currency)     
         
         # Round the difference to avoid tiny floating point errors
         diff = round_based_on_smallest_currency_fraction(diff, self.company_currency, self.company_precision)
@@ -393,8 +394,6 @@ class JournalEntryBuilder:
         # We use a more conservative threshold of half the smallest unit to account for rounding
         smallest_fraction = 1.0 / (10 ** self.company_precision)
         rounding_tolerance = smallest_fraction / 2
-
-        print("Balancing diff:", diff, "with tolerance:", rounding_tolerance)
         
         # If the absolute difference is below the rounding tolerance, zero it out
         # This prevents tiny floating-point errors from causing validation failures
