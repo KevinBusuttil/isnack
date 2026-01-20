@@ -584,12 +584,13 @@ def make_reverse_service_invoice_entry(source_name, target_doc=None):
 	return doclist
 
 def get_tax_rate(vat_code):
-
     tax_account = ''
     tax_rate = 0
 
     if vat_code:
-        tax_account, tax_rate = frappe.db.get_value("Item Tax Template Detail", {"parent": vat_code}, ['tax_type', 'tax_rate'])
+        result = frappe.db.get_value("Item Tax Template Detail", {"parent": vat_code}, ['tax_type', 'tax_rate'])
+        if result:
+            tax_account, tax_rate = result
     
     tax_detail = {
         "tax_account": tax_account,
