@@ -337,6 +337,10 @@ class JournalEntryBuilder:
         
         Adjusts the most appropriate line (prefer VAT > offset > party)
         to ensure total debit equals total credit in company currency.
+        
+        Zero out ultra-small differences below the smallest currency fraction
+        and recompute account currency fields from rounded company amounts to
+        avoid double-rounding drift.
         """
         total_debit = sum(flt(row.get("debit")) for row in self.jv.accounts)
         total_credit = sum(flt(row.get("credit")) for row in self.jv.accounts)
@@ -346,6 +350,16 @@ class JournalEntryBuilder:
         diff = round_based_on_smallest_currency_fraction(
             diff, self.company_currency, self.company_precision
         )
+        
+        # Zero out ultra-small diffs below the smallest currency fraction
+        # The smallest fraction is typically 0.01 for most currencies (1/100)
+        # We use a more conservative threshold of half the smallest unit to account for rounding
+        smallest_fraction = 1.0 / (10 ** self.company_precision)
+        
+        # If the absolute difference is below half the smallest fraction, zero it out
+        # This prevents tiny floating-point errors from causing validation failures
+        if abs(diff) < (smallest_fraction / 2):
+            diff = 0.0
         
         if not diff:
             return  # Already balanced
@@ -394,7 +408,8 @@ class JournalEntryBuilder:
                 adjust_row["credit"], self.company_currency, self.company_precision
             )
         
-        # Sync account currency fields if needed
+        # Recompute account currency fields from rounded company amounts
+        # to avoid double-rounding drift when the adjusted line currency differs from company currency
         if adjust_currency == self.company_currency:
             # If account currency is same as company currency, sync the fields
             if adjust_row.get("debit") is not None:
@@ -402,26 +417,25 @@ class JournalEntryBuilder:
             if adjust_row.get("credit") is not None:
                 adjust_row["credit_in_account_currency"] = adjust_row["credit"]
         else:
-            # Recalculate account currency amounts from company currency
+            # Recalculate account currency amounts from rounded company currency amounts
+            # This ensures consistency and avoids double-rounding drift
+            account_precision = frappe.get_precision(
+                "Journal Entry Account",
+                "debit_in_account_currency",
+                currency=adjust_currency,
+            ) or 2
+            
             if adjust_row.get("debit"):
                 adjust_row["debit_in_account_currency"] = round_based_on_smallest_currency_fraction(
                     adjust_row["debit"] / adjust_rate,
                     adjust_currency,
-                    frappe.get_precision(
-                        "Journal Entry Account",
-                        "debit_in_account_currency",
-                        currency=adjust_currency,
-                    ) or 2
+                    account_precision
                 )
             if adjust_row.get("credit"):
                 adjust_row["credit_in_account_currency"] = round_based_on_smallest_currency_fraction(
                     adjust_row["credit"] / adjust_rate,
                     adjust_currency,
-                    frappe.get_precision(
-                        "Journal Entry Account",
-                        "credit_in_account_currency",
-                        currency=adjust_currency,
-                    ) or 2
+                    account_precision
                 )
     
     def build(self):
