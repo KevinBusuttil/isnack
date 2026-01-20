@@ -87,11 +87,16 @@ class ServiceInvoice(Document):
                 jv.due_date = inv.due_date
 
             # --- Amount composition ---------------------------------------------
-            # Get precision for account currency
+            # Get precision for account currency and company currency
             account_precision = frappe.get_precision(
                 "Journal Entry Account",
                 "debit_in_account_currency",
                 currency=inv.account_currency,
+            ) or 2
+            company_precision = frappe.get_precision(
+                "Journal Entry Account",
+                "debit",
+                currency=company_currency,
             ) or 2
 
             if vat_inclusive:
@@ -151,11 +156,6 @@ class ServiceInvoice(Document):
                 party_company_amount = party_amount * acc_rate
                 
                 # Round party_company_amount in company currency
-                company_precision = frappe.get_precision(
-                    "Journal Entry Account",
-                    "debit",
-                    currency=company_currency,
-                ) or 2
                 party_company_amount = round_based_on_smallest_currency_fraction(
                     party_company_amount, company_currency, company_precision
                 )
@@ -200,11 +200,6 @@ class ServiceInvoice(Document):
                 vat_in_company_currency = vat_amount * acc_rate
                 
                 # Round vat_in_company_currency in company currency
-                company_precision = frappe.get_precision(
-                    "Journal Entry Account",
-                    "debit",
-                    currency=company_currency,
-                ) or 2
                 vat_in_company_currency = round_based_on_smallest_currency_fraction(
                     vat_in_company_currency, company_currency, company_precision
                 )
