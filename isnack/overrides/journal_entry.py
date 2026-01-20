@@ -21,10 +21,25 @@ class CustomJournalEntry(JournalEntry):
     Fix: Use the row-specific exchange rate for each Journal Entry line item.
     """
 
+    def _is_from_service_invoice(self):
+        """
+        Check if this Journal Entry originated from a Service Invoice.
+        
+        The Service Invoice module creates Journal Entries using JournalEntryBuilder, which 
+        sets the `cheque_no` field to the Service Invoice's name for tracking purposes.
+        This is the standard way Service Invoice JEs are identified in the system.
+        See: JournalEntryBuilder.set_header() in isnack/isnack/doctype/service_invoice/service_invoice.py
+        
+        Returns:
+            bool: True if the JE originated from a Service Invoice, False otherwise.
+        """
+        return self.cheque_no and frappe.db.exists("Service Invoice", self.cheque_no)
+    
     def validate(self):
-        # First, fix exchange rates and recalculate account currency amounts
-        # BEFORE the parent validate runs set_amounts_in_company_currency
-        if self.multi_currency:
+        # Only fix exchange rates for multi-currency JEs from Service Invoices
+        # Manual JEs should use standard ERPNext behavior where account currency amounts
+        # are the source of truth
+        if self.multi_currency and self._is_from_service_invoice():
             self.fix_multi_currency_exchange_rates()
         
         # Now call parent validate
@@ -39,16 +54,8 @@ class CustomJournalEntry(JournalEntry):
         Custom behavior (for multi-currency JEs from Service Invoices): If debit/credit 
         is already set, keep it and recalculate account currency amounts instead.
         """
-        # Check if this JE originated from a Service Invoice
-        # JournalEntryBuilder.set_header() in service_invoice.py sets cheque_no to the Service Invoice name
-        # This allows us to identify JEs created from Service Invoices
-        is_from_service_invoice = (
-            self.cheque_no 
-            and frappe.db.exists("Service Invoice", self.cheque_no)
-        )
-        
         # Only apply custom logic for multi-currency JEs from Service Invoices
-        use_custom_logic = self.multi_currency and is_from_service_invoice
+        use_custom_logic = self.multi_currency and self._is_from_service_invoice()
         
         if not (self.voucher_type == "Exchange Gain Or Loss" and self.multi_currency):
             for d in self.get("accounts"):
