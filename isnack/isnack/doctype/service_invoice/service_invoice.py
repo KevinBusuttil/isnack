@@ -355,10 +355,11 @@ class JournalEntryBuilder:
         # The smallest fraction is typically 0.01 for most currencies (1/100)
         # We use a more conservative threshold of half the smallest unit to account for rounding
         smallest_fraction = 1.0 / (10 ** self.company_precision)
+        rounding_tolerance = smallest_fraction / 2
         
-        # If the absolute difference is below half the smallest fraction, zero it out
+        # If the absolute difference is below the rounding tolerance, zero it out
         # This prevents tiny floating-point errors from causing validation failures
-        if abs(diff) < (smallest_fraction / 2):
+        if abs(diff) < rounding_tolerance:
             diff = 0.0
         
         if not diff:
@@ -419,6 +420,7 @@ class JournalEntryBuilder:
         else:
             # Recalculate account currency amounts from rounded company currency amounts
             # This ensures consistency and avoids double-rounding drift
+            # Both debit_in_account_currency and credit_in_account_currency use the same precision
             account_precision = frappe.get_precision(
                 "Journal Entry Account",
                 "debit_in_account_currency",
