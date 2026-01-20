@@ -207,6 +207,15 @@ class JournalEntryBuilder:
             row["party_type"] = party_type
             row["party"] = party
         
+        # Fetch exchange rate if not provided
+        if exchange_rate is None:
+            exchange_rate = flt(get_exchange_rate(
+                account_currency, self.company_currency, self.inv.date
+            )) or 1.0
+        
+        # Always set exchange_rate on the row to prevent ERPNext from re-deriving amounts
+        row["exchange_rate"] = flt(exchange_rate)
+        
         # Set account currency amounts
         if debit_acc is not None:
             row["debit_in_account_currency"] = flt(debit_acc)
@@ -292,6 +301,9 @@ class JournalEntryBuilder:
         
         if self.inv.cost_center:
             row["cost_center"] = self.inv.cost_center
+        
+        # Always set exchange_rate to prevent ERPNext from re-deriving amounts
+        row["exchange_rate"] = flt(self.offset_exchange_rate)
         
         if is_credit:
             # Party is credit, offset is debit
