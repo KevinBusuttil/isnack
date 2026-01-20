@@ -114,6 +114,95 @@ class TestMultiCurrencyOffsetLine(unittest.TestCase):
 	
 	@patch('isnack.isnack.doctype.service_invoice.service_invoice.get_exchange_rate')
 	@patch('isnack.isnack.doctype.service_invoice.service_invoice.frappe')
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.round_based_on_smallest_currency_fraction')
+	def test_exact_exchange_rate_from_rounded_amounts(self, mock_round, mock_frappe, mock_get_exchange_rate):
+		"""
+		Test that exchange rate is recomputed from rounded amounts to prevent drift.
+		
+		This is the exact scenario from the problem statement:
+		- Company: TND, Party: USD, Offset: EUR
+		- After rounding: offset_company_amount = 18247.77, offset_acc_amount = 5599.15
+		- Expected exchange rate: 18247.77 / 5599.15 = ~3.259027 (not 3.259027724)
+		"""
+		from isnack.isnack.doctype.service_invoice.service_invoice import JournalEntryBuilder
+		
+		# Mock frappe dependencies
+		mock_jv = MagicMock()
+		mock_jv.accounts = []
+		mock_frappe.new_doc.return_value = mock_jv
+		mock_frappe.get_precision.return_value = 2
+		
+		# Mock rounding to return specific values
+		def mock_rounding(value, currency, precision):
+			# Simulate the rounding behavior that leads to the problem
+			if currency == "TND":
+				return round(value, 2)
+			elif currency == "EUR":
+				return round(value, 2)
+			elif currency == "USD":
+				return round(value, 2)
+			return round(value, 2)
+		
+		mock_round.side_effect = mock_rounding
+		
+		# Mock exchange rates
+		def mock_exchange_rate(from_currency, to_currency, date):
+			rates = {
+				('USD', 'TND'): 3.259027724,  # Original fetched rate
+				('EUR', 'TND'): 3.259027724,  # Same for this test
+				('TND', 'TND'): 1.0,
+			}
+			return rates.get((from_currency, to_currency), 1.0)
+		
+		mock_get_exchange_rate.side_effect = mock_exchange_rate
+		
+		# Create mock invoice data
+		inv = MagicMock()
+		inv.account = "Debtors USD"
+		inv.account_currency = "USD"
+		inv.offset_account = "Revenue EUR"
+		inv.offset_account_currency = "EUR"
+		inv.cost_center = "Main"
+		inv.date = "2023-01-01"
+		
+		# Build journal entry
+		builder = JournalEntryBuilder(inv, "Test Company", "TND")
+		
+		# Add offset line with amounts that will round to specific values
+		# We need to engineer the amounts so that after rounding we get:
+		# offset_company_amount = 18247.77 TND
+		# offset_acc_amount = 5599.15 EUR
+		# This happens when party amount converts to 18247.77 TND
+		party_amount_in_usd = 18247.77 / 3.259027724  # ~5599.15 USD
+		
+		builder.add_offset_line(
+			offset_amount=party_amount_in_usd,
+			is_credit=True,
+			vat_inclusive=False,
+			gross_amount=party_amount_in_usd
+		)
+		
+		# Get the offset row
+		offset_row = builder.offset_row
+		
+		# Verify the exchange rate is recomputed from rounded amounts
+		# Expected: 18247.77 / 5599.15 = 3.259027 (rounded to 9 decimals)
+		# NOT the original 3.259027724
+		expected_rate = round(18247.77 / 5599.15, 9)
+		actual_rate = offset_row.get("exchange_rate")
+		
+		self.assertIsNotNone(actual_rate, "Exchange rate should be set on offset row")
+		# Allow for small floating point differences
+		self.assertAlmostEqual(actual_rate, expected_rate, places=7,
+			msg=f"Exchange rate should be recomputed from rounded amounts: "
+			    f"expected {expected_rate}, got {actual_rate}")
+		
+		# Also verify that self.offset_exchange_rate was updated
+		self.assertAlmostEqual(builder.offset_exchange_rate, expected_rate, places=7,
+			msg="Builder's offset_exchange_rate should be updated to recomputed value")
+	
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.get_exchange_rate')
+	@patch('isnack.isnack.doctype.service_invoice.service_invoice.frappe')
 	def test_multi_currency_offset_with_different_rates(self, mock_frappe, mock_get_exchange_rate):
 		"""
 		Test that multi-currency offset lines balance correctly in company currency.
