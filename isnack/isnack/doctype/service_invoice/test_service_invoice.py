@@ -100,8 +100,8 @@ class TestJournalEntryBalancing(unittest.TestCase):
 		
 		self.assertEqual(rounded_account_amount, 100.0, "Should be 100.0 USD")
 
-
-# For Frappe test compatibility
+# For ERPNext/Frappe test framework compatibility
+# This base class is required when running tests through Frappe's test runner
 from frappe.tests.utils import FrappeTestCase
 
 
