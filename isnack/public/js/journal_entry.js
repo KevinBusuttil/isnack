@@ -23,6 +23,7 @@ frappe.ui.form.on('Journal Entry Account', {
 				row.account = d.account;
 				row.party = d.party;
 				row.party_type = d.party_type;
+				console.log("Copied account details from existing row:", d);
 				// REMOVED: row.exchange_rate = d.exchange_rate;
 				// This line was causing the bug - exchange rate should not be
 				// copied from other rows as they may have different currencies

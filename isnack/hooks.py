@@ -126,8 +126,8 @@ jinja = {
 # Override standard doctype classes
 
 override_doctype_class = {
-    "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
-    "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry"
+   "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
+    "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry",
 }
 
 # Document Events
