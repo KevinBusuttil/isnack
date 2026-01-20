@@ -150,19 +150,32 @@ class ServiceInvoice(Document):
                 )
 
             # 2) Offset line (inv.offset_account) for the net (excl. VAT if exclusive, else net of VAT)
-            # Calculate offset amount to ensure balance in company currency
-            # Use the same company currency amount as the party line to ensure perfect balance
+            # For VAT inclusive: offset uses invoice_amount (same as party line)
+            # For VAT exclusive: offset uses gross (party line uses invoice_amount = gross + VAT)
             party_amount = (invoice_amount if vat_inclusive else gross)
             
+            # Calculate offset amount in company currency
+            # We need to ensure proper conversion and rounding
             if inv.offset_account_currency and inv.account_currency and inv.offset_account_currency != inv.account_currency:
-                # Calculate the offset amount in offset account currency
-                # We already have party_amount_company_currency from the party line
-                # Convert to offset currency
+                # Multi-currency scenario
+                # Convert party_amount (in account currency) to company currency first
+                offset_amount_company_currency = party_amount * acc_rate
+                
+                # Round in company currency
+                offset_amount_company_currency = round_based_on_smallest_currency_fraction(
+                    offset_amount_company_currency, company_currency, company_precision
+                )
+                
+                # Convert to offset account currency
                 off_rate = flt(offset_account_exchange_rate) or 1
-                offset_amount = party_amount_company_currency / off_rate
+                offset_amount = offset_amount_company_currency / off_rate
             else:
                 # Same currency or one matches company currency
                 offset_amount = party_amount
+                offset_amount_company_currency = party_amount * acc_rate
+                offset_amount_company_currency = round_based_on_smallest_currency_fraction(
+                    offset_amount_company_currency, company_currency, company_precision
+                )
 
             # currency rounding for the offset account currency
             precision = frappe.get_precision(
@@ -182,7 +195,7 @@ class ServiceInvoice(Document):
                     account=inv.offset_account,
                     cost_center=inv.cost_center,
                     debit_acc=offset_amount,
-                    debit=party_amount_company_currency,
+                    debit=offset_amount_company_currency,
                 )
             else:
                 # Debit to party means offset is a credit
@@ -191,7 +204,7 @@ class ServiceInvoice(Document):
                     account=inv.offset_account,
                     cost_center=inv.cost_center,
                     credit_acc=offset_amount,
-                    credit=party_amount_company_currency,
+                    credit=offset_amount_company_currency,
                 )
 
             # 3) VAT line (if any)
