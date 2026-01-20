@@ -247,6 +247,7 @@ class JournalEntryBuilder:
                 cost_center=self.inv.cost_center,
                 exchange_rate=self.account_exchange_rate,
             )
+            
     
     def add_offset_line(self, offset_amount, is_credit, vat_inclusive=False, gross_amount=None):
         """
@@ -271,12 +272,11 @@ class JournalEntryBuilder:
             self.inv.account_currency,
             self.account_exchange_rate,
         )
-        
         # Derive offset account-currency amount bottom-up from company amount
         # Note: offset_exchange_rate is FROM offset_currency TO company_currency
         # To convert FROM company_currency TO offset_currency, we divide by the rate
         offset_acc_amount = offset_company_amount / flt(self.offset_exchange_rate)
-        
+
         offset_precision = frappe.get_precision(
             "Journal Entry Account",
             "debit_in_account_currency",
@@ -345,14 +345,24 @@ class JournalEntryBuilder:
         """
         total_debit = sum(flt(row.get("debit")) for row in self.jv.accounts)
         total_credit = sum(flt(row.get("credit")) for row in self.jv.accounts)
+        total_debit_in_company_currency = sum(flt(row.get("debit_in_account_currency")) for row in self.jv.accounts)
+        total_credit_in_company_currency = sum(flt(row.get("credit_in_account_currency")) for row in self.jv.accounts)
+        for row in self.jv.accounts:
+            print("Row:", row.account, 
+                  "Debit:", row.get("debit"), 
+                  "Credit:", row.get("credit"), 
+                  "Debit in account currency:", row.get("debit_in_account_currency"), 
+                  "Credit in account currency:", row.get("credit_in_account_currency"),
+                  "Exchange Rate:", row.get("exchange_rate"))
+        
         diff = total_debit - total_credit
         print("Initial balancing diff:", diff)
-        print("Total debit:", total_debit, "Total credit:", total_credit)        
+        print("Total debit:", total_debit, "Total credit:", total_credit)       
+        print("Total debit in account currency:", total_debit_in_company_currency, 
+              "Total credit in account currency:", total_credit_in_company_currency)     
         
         # Round the difference to avoid tiny floating point errors
-        diff = round_based_on_smallest_currency_fraction(
-            diff, self.company_currency, self.company_precision
-        )
+        diff = round_based_on_smallest_currency_fraction(diff, self.company_currency, self.company_precision)
         
         # Zero out ultra-small diffs below the smallest currency fraction
         # The smallest fraction is typically 0.01 for most currencies (1/100)
