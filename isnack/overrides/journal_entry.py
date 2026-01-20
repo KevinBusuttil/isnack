@@ -30,10 +30,13 @@ class CustomJournalEntry(JournalEntry):
         """
         # Call the parent method to get the standard GL dict
         gl_dict = super().get_gl_dict(args, account_currency, item)
-        
+        print("CustomJournalEntry.get_gl_dict called")
+        print("GL Dict before fix:", gl_dict)
         # Apply the fix: use row-specific exchange rate for Journal Entries
         # instead of the document-level conversion_rate
         if item:
+            print("Applying custom exchange rate from Journal Entry item")
+            print("Item:", item)
             exchange_rate = item.get("exchange_rate")
             if exchange_rate:
                 gl_dict["transaction_exchange_rate"] = flt(exchange_rate)
