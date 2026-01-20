@@ -113,9 +113,7 @@ class CustomJournalEntry(JournalEntry):
                 continue
                 
             # Get account details
-            account = frappe.get_cached_value(
-                "Account", d.account, ["account_currency", "account_type"], as_dict=1
-            )
+            account = frappe.get_cached_value("Account", d.account, ["account_currency", "account_type"], as_dict=1)
             if not account:
                 continue
             
@@ -157,15 +155,10 @@ class CustomJournalEntry(JournalEntry):
                     # Company currency amounts are the source of truth
                     # Recalculate account currency amounts using correct exchange rate
                     if flt(d.debit):
-                        d.debit_in_account_currency = flt(
-                            flt(d.debit) / correct_exchange_rate, 
-                            d.precision("debit_in_account_currency")
-                        )
+                        d.debit_in_account_currency = flt(flt(d.debit) / correct_exchange_rate, d.precision("debit_in_account_currency"))
+
                     if flt(d.credit):
-                        d.credit_in_account_currency = flt(
-                            flt(d.credit) / correct_exchange_rate,
-                            d.precision("credit_in_account_currency")
-                        )
+                        d.credit_in_account_currency = flt(flt(d.credit) / correct_exchange_rate, d.precision("credit_in_account_currency"))
                     
                     d.exchange_rate = correct_exchange_rate
                 
