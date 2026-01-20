@@ -299,7 +299,7 @@ class JournalEntryBuilder:
         )
         
         # Use ERPNext's rate, fallback to our calculated rate if not available
-        if erpnext_exchange_rate and erpnext_exchange_rate > 0:
+        if erpnext_exchange_rate and flt(erpnext_exchange_rate) != 0.0:
             effective_rate = flt(erpnext_exchange_rate)
         else:
             effective_rate = self.offset_exchange_rate
