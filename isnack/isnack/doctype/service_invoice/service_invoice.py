@@ -168,14 +168,18 @@ class ServiceInvoice(Document):
                 )
 
             # 3) VAT line (if any)
+            # VAT is typically in company currency. Convert from account currency.
             if tax_rate and flt(vat_amount):
+                acc_rate = flt(account_exchange_rate) or 1
+                vat_in_company_currency = vat_amount * acc_rate
+                
                 if sign_credit:
                     # Party credited -> VAT is a debit
                     add_row(
                         jv,
                         account=tax_account,
                         cost_center=inv.cost_center,
-                        debit_acc=vat_amount,
+                        debit=vat_in_company_currency,
                     )
                 else:
                     # Party debited -> VAT is a credit
@@ -183,7 +187,7 @@ class ServiceInvoice(Document):
                         jv,
                         account=tax_account,
                         cost_center=inv.cost_center,
-                        credit_acc=vat_amount,
+                        credit=vat_in_company_currency,
                     )
 
             # --- Debug logging (toggle with `frappe.flags.debug = True`) --------
