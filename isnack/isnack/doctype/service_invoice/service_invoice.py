@@ -3,7 +3,431 @@
 
 import frappe
 from frappe.model.document import Document
+from frappe.utils import flt, round_based_on_smallest_currency_fraction
 from erpnext import get_default_company, get_company_currency
+from erpnext.setup.utils import get_exchange_rate
+
+
+class AmountCalculator:
+    """Handles VAT-inclusive vs VAT-exclusive amount calculations with proper rounding."""
+    
+    def __init__(self, gross_amount, tax_rate, account_currency, vat_inclusive=False):
+        """
+        Initialize amount calculator.
+        
+        Args:
+            gross_amount: The total amount from the invoice line
+            tax_rate: Tax rate as a percentage (e.g., 19.0 for 19%)
+            account_currency: Currency for rounding calculations
+            vat_inclusive: Whether VAT is included in gross_amount
+        """
+        self.gross_amount = flt(gross_amount)
+        self.tax_rate = flt(tax_rate)
+        self.account_currency = account_currency
+        self.vat_inclusive = vat_inclusive
+        self.account_precision = frappe.get_precision(
+            "Journal Entry Account",
+            "debit_in_account_currency",
+            currency=account_currency,
+        ) or 2
+    
+    def calculate(self):
+        """
+        Calculate invoice amount (party line) and VAT amount.
+        
+        Returns:
+            dict: {
+                'invoice_amount': Amount for party line (account currency),
+                'vat_amount': VAT amount (account currency)
+            }
+        """
+        if self.vat_inclusive:
+            # VAT is included in gross: extract the base amount
+            divisor = (self.tax_rate + 100.0) / 100.0 if self.tax_rate else 1.0
+            invoice_amount = self.gross_amount / divisor
+            vat_amount = self.gross_amount - invoice_amount
+        else:
+            # VAT is exclusive: calculate VAT on top
+            vat_amount = self.gross_amount * (self.tax_rate / 100.0) if self.tax_rate else 0.0
+            invoice_amount = self.gross_amount + vat_amount
+        
+        # Round both amounts in account currency
+        invoice_amount = round_based_on_smallest_currency_fraction(
+            invoice_amount, self.account_currency, self.account_precision
+        )
+        vat_amount = round_based_on_smallest_currency_fraction(
+            vat_amount, self.account_currency, self.account_precision
+        )
+        
+        return {
+            'invoice_amount': invoice_amount,
+            'vat_amount': vat_amount
+        }
+
+
+class JournalEntryBuilder:
+    """Handles multi-currency journal entry creation with proper rounding and balancing."""
+    
+    def __init__(self, inv, company, company_currency):
+        """
+        Initialize the journal entry builder.
+        
+        Args:
+            inv: Service invoice item row
+            company: Company name
+            company_currency: Company's base currency
+        """
+        self.inv = inv
+        self.company = company
+        self.company_currency = company_currency
+        self.company_precision = frappe.get_precision(
+            "Journal Entry Account",
+            "debit",
+            currency=company_currency,
+        ) or 2
+        
+        # Get exchange rates
+        self.account_exchange_rate = flt(get_exchange_rate(
+            inv.account_currency, company_currency, inv.date
+        )) or 1.0
+        self.offset_exchange_rate = flt(get_exchange_rate(
+            inv.offset_account_currency, company_currency, inv.date
+        )) or 1.0
+        
+        # Initialize journal entry
+        self.jv = frappe.new_doc("Journal Entry")
+        self.jv.voucher_type = "Journal Entry"
+        self.jv.company = company
+        
+        # Track rows for balancing
+        self.party_row = None
+        self.offset_row = None
+        self.vat_row = None
+    
+    def set_header(self, naming_series, posting_date, user_remark, cheque_no, cheque_date,
+                   multi_currency=False, bill_no=None, bill_date=None, due_date=None):
+        """Set journal entry header fields."""
+        self.jv.naming_series = naming_series
+        self.jv.posting_date = posting_date
+        self.jv.multi_currency = multi_currency
+        self.jv.user_remark = user_remark
+        self.jv.cheque_no = cheque_no
+        self.jv.cheque_date = cheque_date
+        
+        if bill_no:
+            self.jv.bill_no = bill_no
+        if bill_date:
+            self.jv.bill_date = bill_date
+        if due_date:
+            self.jv.due_date = due_date
+    
+    def convert_to_company_currency(self, amount, from_currency, exchange_rate=None):
+        """
+        Convert amount to company currency with proper rounding.
+        
+        Args:
+            amount: Amount in source currency
+            from_currency: Source currency code
+            exchange_rate: Optional exchange rate (auto-fetched if not provided)
+        
+        Returns:
+            float: Amount in company currency, properly rounded
+        """
+        if exchange_rate is None:
+            exchange_rate = flt(get_exchange_rate(
+                from_currency, self.company_currency, self.inv.date
+            )) or 1.0
+        
+        company_amount = flt(amount) * flt(exchange_rate)
+        return round_based_on_smallest_currency_fraction(
+            company_amount, self.company_currency, self.company_precision
+        )
+    
+    def convert_between_currencies(self, amount, from_currency, to_currency,
+                                   from_rate=None, to_rate=None):
+        """
+        Convert amount between two currencies via company currency.
+        
+        Args:
+            amount: Amount in source currency
+            from_currency: Source currency code
+            to_currency: Target currency code
+            from_rate: Exchange rate from source to company currency
+            to_rate: Exchange rate from target to company currency
+        
+        Returns:
+            tuple: (amount_in_target_currency, amount_in_company_currency)
+        """
+        # Convert to company currency first
+        company_amount = self.convert_to_company_currency(amount, from_currency, from_rate)
+        
+        # Convert from company currency to target currency
+        if to_rate is None:
+            to_rate = flt(get_exchange_rate(
+                to_currency, self.company_currency, self.inv.date
+            )) or 1.0
+        
+        target_amount = company_amount / flt(to_rate)
+        
+        # Round in target currency
+        target_precision = frappe.get_precision(
+            "Journal Entry Account",
+            "debit_in_account_currency",
+            currency=to_currency,
+        ) or 2
+        target_amount = round_based_on_smallest_currency_fraction(
+            target_amount, to_currency, target_precision
+        )
+        
+        return target_amount, company_amount
+    
+    def add_line(self, account, account_currency, debit_acc=None, credit_acc=None,
+                party_type=None, party=None, cost_center=None, exchange_rate=None):
+        """
+        Add a journal entry line with proper multi-currency handling.
+        
+        Args:
+            account: Account name
+            account_currency: Currency of the account
+            debit_acc: Debit amount in account currency
+            credit_acc: Credit amount in account currency
+            party_type: Optional party type
+            party: Optional party name
+            cost_center: Optional cost center
+            exchange_rate: Optional exchange rate (auto-fetched if not provided)
+        
+        Returns:
+            dict: The created row
+        """
+        row = {"account": account}
+        
+        if cost_center:
+            row["cost_center"] = cost_center
+        if party_type and party:
+            row["party_type"] = party_type
+            row["party"] = party
+        
+        # Set account currency amounts
+        if debit_acc is not None:
+            row["debit_in_account_currency"] = flt(debit_acc)
+            # Convert to company currency
+            row["debit"] = self.convert_to_company_currency(
+                debit_acc, account_currency, exchange_rate
+            )
+        
+        if credit_acc is not None:
+            row["credit_in_account_currency"] = flt(credit_acc)
+            # Convert to company currency
+            row["credit"] = self.convert_to_company_currency(
+                credit_acc, account_currency, exchange_rate
+            )
+        
+        self.jv.append("accounts", row)
+        return row
+    
+    def add_party_line(self, invoice_amount, is_credit):
+        """Add the party (supplier/customer) line."""
+        if is_credit:
+            self.party_row = self.add_line(
+                account=self.inv.account,
+                account_currency=self.inv.account_currency,
+                credit_acc=invoice_amount,
+                party_type=getattr(self.inv, "party_type", None),
+                party=getattr(self.inv, "party", None),
+                cost_center=self.inv.cost_center,
+                exchange_rate=self.account_exchange_rate,
+            )
+        else:
+            self.party_row = self.add_line(
+                account=self.inv.account,
+                account_currency=self.inv.account_currency,
+                debit_acc=invoice_amount,
+                party_type=getattr(self.inv, "party_type", None),
+                party=getattr(self.inv, "party", None),
+                cost_center=self.inv.cost_center,
+                exchange_rate=self.account_exchange_rate,
+            )
+    
+    def add_offset_line(self, offset_amount, is_credit, vat_inclusive=False, gross_amount=None):
+        """
+        Add the offset account line.
+        
+        Args:
+            offset_amount: Amount for offset (in account currency if same, needs conversion if different)
+            is_credit: Whether party line is credit (offset will be opposite)
+            vat_inclusive: Whether VAT is inclusive
+            gross_amount: Gross amount from invoice (used for VAT exclusive case)
+        """
+        # Determine the base amount for offset conversion
+        if self.inv.account_currency != self.inv.offset_account_currency:
+            # Multi-currency: convert from account currency to offset currency
+            if vat_inclusive:
+                base_amount = offset_amount  # Use invoice_amount
+            else:
+                base_amount = gross_amount if gross_amount is not None else offset_amount
+            
+            offset_acc_amount, offset_company_amount = self.convert_between_currencies(
+                base_amount,
+                self.inv.account_currency,
+                self.inv.offset_account_currency,
+                self.account_exchange_rate,
+                self.offset_exchange_rate,
+            )
+        else:
+            # Same currency: use the amount directly
+            if vat_inclusive:
+                offset_acc_amount = offset_amount
+            else:
+                offset_acc_amount = gross_amount if gross_amount is not None else offset_amount
+            
+            offset_company_amount = self.convert_to_company_currency(
+                offset_acc_amount,
+                self.inv.offset_account_currency,
+                self.offset_exchange_rate,
+            )
+        
+        # Create the offset line (opposite of party line)
+        if is_credit:
+            self.offset_row = self.add_line(
+                account=self.inv.offset_account,
+                account_currency=self.inv.offset_account_currency,
+                debit_acc=offset_acc_amount,
+                cost_center=self.inv.cost_center,
+                exchange_rate=self.offset_exchange_rate,
+            )
+        else:
+            self.offset_row = self.add_line(
+                account=self.inv.offset_account,
+                account_currency=self.inv.offset_account_currency,
+                credit_acc=offset_acc_amount,
+                cost_center=self.inv.cost_center,
+                exchange_rate=self.offset_exchange_rate,
+            )
+    
+    def add_vat_line(self, vat_amount, tax_account, is_credit):
+        """Add the VAT line (typically in company currency)."""
+        # Convert VAT to company currency
+        vat_company_amount = self.convert_to_company_currency(
+            vat_amount,
+            self.inv.account_currency,
+            self.account_exchange_rate,
+        )
+        
+        # VAT line is opposite of party line
+        if is_credit:
+            self.vat_row = self.add_line(
+                account=tax_account,
+                account_currency=self.company_currency,
+                debit_acc=vat_company_amount,
+                cost_center=self.inv.cost_center,
+                exchange_rate=1.0,  # Already in company currency
+            )
+        else:
+            self.vat_row = self.add_line(
+                account=tax_account,
+                account_currency=self.company_currency,
+                credit_acc=vat_company_amount,
+                cost_center=self.inv.cost_center,
+                exchange_rate=1.0,  # Already in company currency
+            )
+    
+    def balance_journal_entry(self):
+        """
+        Balance the journal entry by adjusting for rounding differences.
+        
+        Adjusts the most appropriate line (prefer VAT > offset > party)
+        to ensure total debit equals total credit in company currency.
+        """
+        total_debit = sum(flt(row.get("debit")) for row in self.jv.accounts)
+        total_credit = sum(flt(row.get("credit")) for row in self.jv.accounts)
+        diff = total_debit - total_credit
+        
+        # Round the difference to avoid tiny floating point errors
+        diff = round_based_on_smallest_currency_fraction(
+            diff, self.company_currency, self.company_precision
+        )
+        
+        if not diff:
+            return  # Already balanced
+        
+        # Choose which row to adjust (prefer VAT > offset > party)
+        adjust_row = self.vat_row or self.offset_row or self.party_row
+        if not adjust_row:
+            return  # No rows to adjust
+        
+        # Determine the currency of the adjustment row
+        adjust_currency = None
+        adjust_rate = 1.0
+        
+        if adjust_row is self.party_row:
+            adjust_currency = self.inv.account_currency
+            adjust_rate = self.account_exchange_rate
+        elif adjust_row is self.offset_row:
+            adjust_currency = self.inv.offset_account_currency
+            adjust_rate = self.offset_exchange_rate
+        elif adjust_row is self.vat_row:
+            adjust_currency = self.company_currency
+            adjust_rate = 1.0
+        
+        # Apply adjustment in company currency
+        if diff > 0:
+            # Too much debit, need more credit (or less debit)
+            if adjust_row.get("credit"):
+                adjust_row["credit"] = flt(adjust_row.get("credit")) + diff
+            else:
+                adjust_row["debit"] = flt(adjust_row.get("debit")) - diff
+        else:
+            # Too much credit, need more debit (or less credit)
+            abs_diff = abs(diff)
+            if adjust_row.get("debit"):
+                adjust_row["debit"] = flt(adjust_row.get("debit")) + abs_diff
+            else:
+                adjust_row["credit"] = flt(adjust_row.get("credit")) - abs_diff
+        
+        # Round company currency amounts
+        if adjust_row.get("debit"):
+            adjust_row["debit"] = round_based_on_smallest_currency_fraction(
+                adjust_row["debit"], self.company_currency, self.company_precision
+            )
+        if adjust_row.get("credit"):
+            adjust_row["credit"] = round_based_on_smallest_currency_fraction(
+                adjust_row["credit"], self.company_currency, self.company_precision
+            )
+        
+        # Sync account currency fields if needed
+        if adjust_currency == self.company_currency:
+            # If account currency is same as company currency, sync the fields
+            if adjust_row.get("debit") is not None:
+                adjust_row["debit_in_account_currency"] = adjust_row["debit"]
+            if adjust_row.get("credit") is not None:
+                adjust_row["credit_in_account_currency"] = adjust_row["credit"]
+        else:
+            # Recalculate account currency amounts from company currency
+            if adjust_row.get("debit"):
+                adjust_row["debit_in_account_currency"] = round_based_on_smallest_currency_fraction(
+                    adjust_row["debit"] / adjust_rate,
+                    adjust_currency,
+                    frappe.get_precision(
+                        "Journal Entry Account",
+                        "debit_in_account_currency",
+                        currency=adjust_currency,
+                    ) or 2
+                )
+            if adjust_row.get("credit"):
+                adjust_row["credit_in_account_currency"] = round_based_on_smallest_currency_fraction(
+                    adjust_row["credit"] / adjust_rate,
+                    adjust_currency,
+                    frappe.get_precision(
+                        "Journal Entry Account",
+                        "credit_in_account_currency",
+                        currency=adjust_currency,
+                    ) or 2
+                )
+    
+    def build(self):
+        """Return the built journal entry document."""
+        return self.jv
+
 
 class ServiceInvoice(Document):
     def before_save(self):
@@ -14,391 +438,93 @@ class ServiceInvoice(Document):
                 frappe.throw(f"Bill No {invoice.bill_no} already exists on Sales Invoice {service_invoice_link}")
     
     def on_submit(self):
-        """Create one Journal Entry per invoice, splitting VAT correctly for
-        VAT-inclusive or VAT-exclusive amounts, and linking back to the source row.
         """
-        import json
-        from frappe.utils import flt, round_based_on_smallest_currency_fraction
-
-        from erpnext.setup.utils import get_exchange_rate
-
-        def add_row(jv, *, account, cost_center=None, party_type=None, party=None,
-                    debit_acc=None, credit_acc=None, debit=None, credit=None):
-            """Append a clean JE line. Prefer *_in_account_currency fields."""
-            row = {"account": account}
-            if cost_center:
-                row["cost_center"] = cost_center
-            if party_type and party:
-                row["party_type"] = party_type
-                row["party"] = party
-            # In multi-currency scenarios, ERPNext prefers *_in_account_currency.
-            if debit_acc is not None:
-                row["debit_in_account_currency"] = flt(debit_acc)
-            if credit_acc is not None:
-                row["credit_in_account_currency"] = flt(credit_acc)
-            # In single-currency cases, these are fine too (optional).
-            if debit is not None:
-                row["debit"] = flt(debit)
-            if credit is not None:
-                row["credit"] = flt(credit)
-            jv.append("accounts", row)
-            return row
-
+        Create one Journal Entry per invoice, splitting VAT correctly for
+        VAT-inclusive or VAT-exclusive amounts, and linking back to the source row.
+        
+        This refactored version uses helper classes for better separation of concerns:
+        - AmountCalculator: Handles VAT calculations with proper rounding
+        - JournalEntryBuilder: Handles multi-currency conversions and line creation
+        """
         company = self.get("company") or get_default_company()
         company_currency = get_company_currency(company)
-
         vat_inclusive = flt(self.vat_inclusive) == 1
 
         for inv in self.invoices:
-            account_exchange_rate = get_exchange_rate(inv.account_currency, company_currency, inv.date)
-            offset_account_exchange_rate = get_exchange_rate(inv.offset_account_currency, company_currency, inv.date)
-
-            # print(f'A: {account_exchange_rate} O: {offset_account_exchange_rate}')
-
-            # --- Inputs & basics -------------------------------------------------
-            tax_detail = get_tax_rate(inv.vat_code)  # expects {"tax_rate": x, "tax_account": y}
+            # Get tax details
+            tax_detail = get_tax_rate(inv.vat_code)
             tax_rate = flt(tax_detail.get("tax_rate"))
             tax_account = tax_detail.get("tax_account")
 
-            net = flt(inv.credit) - flt(inv.debit)  # +ve => credit; -ve => debit
+            # Calculate net amount
+            net = flt(inv.credit) - flt(inv.debit)
             if not net:
-                # Nothing to post for this row.
+                # Nothing to post for this row
                 continue
 
             gross = abs(net)
-            sign_credit = net > 0  # True if party line is a credit
+            is_credit = net > 0  # True if party line is a credit
 
-            # --- Build the Journal Entry header ---------------------------------
-            jv = frappe.new_doc("Journal Entry")
-            jv.voucher_type = "Journal Entry"
-            jv.naming_series = self.get("naming_series")
-            jv.posting_date = inv.date
-            jv.company = company
-            jv.multi_currency = bool(inv.account_currency and inv.offset_account_currency and (inv.account_currency != company_currency or (inv.offset_account_currency != company_currency)))
-            jv.user_remark = inv.description
-            jv.cheque_no = self.name
-            jv.cheque_date = inv.date
-
-            # Optional metadata (set only if present)
-            if getattr(inv, "bill_no", None):
-                jv.bill_no = inv.bill_no
-            if getattr(inv, "bill_date", None):
-                jv.bill_date = inv.bill_date
-            if getattr(inv, "due_date", None):
-                jv.due_date = inv.due_date
-
-            # --- Amount composition ---------------------------------------------
-            # Get precision for account currency and company currency
-            account_precision = frappe.get_precision(
-                "Journal Entry Account",
-                "debit_in_account_currency",
-                currency=inv.account_currency,
-            ) or 2
-            company_precision = frappe.get_precision(
-                "Journal Entry Account",
-                "debit",
-                currency=company_currency,
-            ) or 2
-
-            if vat_inclusive:
-                divisor = (tax_rate + 100.0) / 100.0 if tax_rate else 1.0
-                invoice_amount = gross / divisor
-                vat_amount = gross - invoice_amount
-            else:
-                vat_amount = gross * (tax_rate / 100.0) if tax_rate else 0.0
-                invoice_amount = gross + vat_amount  # total on the party line
-
-            # Round invoice_amount and vat_amount in account currency
-            invoice_amount = round_based_on_smallest_currency_fraction(
-                invoice_amount, inv.account_currency, account_precision
+            # Calculate amounts using AmountCalculator
+            calculator = AmountCalculator(
+                gross_amount=gross,
+                tax_rate=tax_rate,
+                account_currency=inv.account_currency,
+                vat_inclusive=vat_inclusive
             )
-            vat_amount = round_based_on_smallest_currency_fraction(
-                vat_amount, inv.account_currency, account_precision
-            )
+            amounts = calculator.calculate()
+            invoice_amount = amounts['invoice_amount']
+            vat_amount = amounts['vat_amount']
 
-            # --- Lines -----------------------------------------------------------
-            # 1) Party line (supplier / customer) on inv.account
-            # Calculate company currency amount for the party line
-            acc_rate = flt(account_exchange_rate) or 1
-            party_amount_company_currency = invoice_amount * acc_rate
+            # Build journal entry using JournalEntryBuilder
+            builder = JournalEntryBuilder(inv, company, company_currency)
             
-            # Round party amount in company currency
-            party_amount_company_currency = round_based_on_smallest_currency_fraction(
-                party_amount_company_currency, company_currency, company_precision
+            # Set header
+            multi_currency = bool(
+                inv.account_currency and 
+                inv.offset_account_currency and 
+                (inv.account_currency != company_currency or 
+                 inv.offset_account_currency != company_currency)
             )
-            
-            if sign_credit:
-                # Credit party
-                party_row = add_row(
-                    jv,
-                    account=inv.account,
-                    party_type=getattr(inv, "party_type", None),
-                    party=getattr(inv, "party", None),
-                    cost_center=inv.cost_center,
-                    credit_acc=invoice_amount,
-                    credit=party_amount_company_currency,
-                )
-            else:
-                # Debit party
-                party_row = add_row(
-                    jv,
-                    account=inv.account,
-                    party_type=getattr(inv, "party_type", None),
-                    party=getattr(inv, "party", None),
-                    cost_center=inv.cost_center,
-                    debit_acc=invoice_amount,
-                    debit=party_amount_company_currency,
-                )
-
-            # 2) Offset line (inv.offset_account) for the net (excl. VAT if exclusive, else net of VAT)
-            # For VAT inclusive: offset uses invoice_amount (same as party line)
-            # For VAT exclusive: offset uses gross (party line uses invoice_amount = gross + VAT)
-            party_amount = (invoice_amount if vat_inclusive else gross)
-            
-            # Calculate offset amount in company currency
-            # We need to ensure proper conversion and rounding
-            if inv.offset_account_currency and inv.account_currency and inv.offset_account_currency != inv.account_currency:
-                # Multi-currency scenario
-                # Convert party_amount (in account currency) to company currency first
-                offset_amount_company_currency = party_amount * acc_rate
-                
-                # Round in company currency
-                offset_amount_company_currency = round_based_on_smallest_currency_fraction(
-                    offset_amount_company_currency, company_currency, company_precision
-                )
-                
-                # Convert to offset account currency
-                off_rate = flt(offset_account_exchange_rate) or 1
-                offset_amount = offset_amount_company_currency / off_rate
-            else:
-                # Same currency or one matches company currency
-                offset_amount = party_amount
-                offset_amount_company_currency = party_amount * acc_rate
-                offset_amount_company_currency = round_based_on_smallest_currency_fraction(
-                    offset_amount_company_currency, company_currency, company_precision
-                )
-
-            # currency rounding for the offset account currency
-            precision = frappe.get_precision(
-                "Journal Entry Account",
-                "debit_in_account_currency",
-                currency=inv.offset_account_currency,
-            ) or 2
-
-            offset_amount = round_based_on_smallest_currency_fraction(
-                offset_amount, inv.offset_account_currency, precision
+            builder.set_header(
+                naming_series=self.get("naming_series"),
+                posting_date=inv.date,
+                user_remark=inv.description,
+                cheque_no=self.name,
+                cheque_date=inv.date,
+                multi_currency=multi_currency,
+                bill_no=getattr(inv, "bill_no", None),
+                bill_date=getattr(inv, "bill_date", None),
+                due_date=getattr(inv, "due_date", None),
             )
 
-            if sign_credit:
-                # Credit to party means offset is a debit
-                offset_row = add_row(
-                    jv,
-                    account=inv.offset_account,
-                    cost_center=inv.cost_center,
-                    debit_acc=offset_amount,
-                    debit=offset_amount_company_currency,
-                )
-            else:
-                # Debit to party means offset is a credit
-                offset_row = add_row(
-                    jv,
-                    account=inv.offset_account,
-                    cost_center=inv.cost_center,
-                    credit_acc=offset_amount,
-                    credit=offset_amount_company_currency,
-                )
+            # Add party line
+            builder.add_party_line(invoice_amount, is_credit)
 
-            # 3) VAT line (if any)
-            # VAT is typically in company currency. Convert from account currency.
-            vat_row = None
+            # Add offset line
+            builder.add_offset_line(
+                offset_amount=invoice_amount,
+                is_credit=is_credit,
+                vat_inclusive=vat_inclusive,
+                gross_amount=gross
+            )
+
+            # Add VAT line if applicable
             if tax_rate and flt(vat_amount):
-                acc_rate = flt(account_exchange_rate) or 1
-                vat_in_company_currency = vat_amount * acc_rate
-                
-                # Round vat_in_company_currency in company currency
-                vat_in_company_currency = round_based_on_smallest_currency_fraction(
-                    vat_in_company_currency, company_currency, company_precision
-                )
-                
-                if sign_credit:
-                    # Party credited -> VAT is a debit
-                    vat_row = add_row(
-                        jv,
-                        account=tax_account,
-                        cost_center=inv.cost_center,
-                        debit=vat_in_company_currency,
-                    )
-                else:
-                    # Party debited -> VAT is a credit
-                    vat_row = add_row(
-                        jv,
-                        account=tax_account,
-                        cost_center=inv.cost_center,
-                        credit=vat_in_company_currency,
-                    )
+                builder.add_vat_line(vat_amount, tax_account, is_credit)
 
-            # --- Balance rounding differences ---------------------------------
-            total_debit = sum(flt(row.get("debit")) for row in jv.accounts)
-            total_credit = sum(flt(row.get("credit")) for row in jv.accounts)
-            diff = total_debit - total_credit
-            diff = round_based_on_smallest_currency_fraction(
-                diff, company_currency, company_precision
-            )
-            if diff:
-                adjust_row = vat_row or offset_row or party_row
-                def sync_account_currency(row, account_currency):
-                    if account_currency == company_currency:
-                        if row.get("debit") is not None:
-                            row["debit_in_account_currency"] = row.get("debit")
-                        if row.get("credit") is not None:
-                            row["credit_in_account_currency"] = row.get("credit")
+            # Balance the journal entry
+            builder.balance_journal_entry()
 
-                if diff > 0:
-                    if adjust_row.get("credit"):
-                        adjust_row["credit"] = round_based_on_smallest_currency_fraction(
-                            flt(adjust_row.get("credit")) + diff,
-                            company_currency,
-                            company_precision,
-                        )
-                    else:
-                        adjust_row["debit"] = round_based_on_smallest_currency_fraction(
-                            flt(adjust_row.get("debit")) - diff,
-                            company_currency,
-                            company_precision,
-                        )
-                else:
-                    diff = abs(diff)
-                    if adjust_row.get("debit"):
-                        adjust_row["debit"] = round_based_on_smallest_currency_fraction(
-                            flt(adjust_row.get("debit")) + diff,
-                            company_currency,
-                            company_precision,
-                        )
-                    else:
-                        adjust_row["credit"] = round_based_on_smallest_currency_fraction(
-                            flt(adjust_row.get("credit")) - diff,
-                            company_currency,
-                            company_precision,
-                        )
+            # Get the built journal entry
+            jv = builder.build()
 
-                if adjust_row is party_row:
-                    sync_account_currency(adjust_row, inv.account_currency)
-                elif adjust_row is offset_row:
-                    sync_account_currency(adjust_row, inv.offset_account_currency)
-
-            # --- Debug logging (toggle with `frappe.flags.debug = True`) --------
-            # print("BEFORE SAVE (valid dict):")
-            # print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-
-            # Persist & submit
+            # Save and submit
             jv.save()
-            # print("AFTER SAVE (valid dict):")
-            # print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-
             jv.submit()
 
             # Link back to the source row
             frappe.db.set_value("Service Invoice Items", inv.get("name"), "journal_entry", jv.name)
-
-    # def on_submit(self):
-                
-    #     for invoice in self.invoices:
-    
-    #         tax_detail = get_tax_rate( invoice.vat_code )
-
-    #         jv = frappe.new_doc('Journal Entry')
-    #         jv.voucher_type = 'Journal Entry'
-    #         jv.naming_series = self.get("naming_series")
-    #         jv.posting_date = invoice.date
-    #         company = self.get("company") or get_default_company()
-    #         jv.multi_currency = invoice.multi_currency
-    #         jv.company = company
-    #         jv.user_remark = invoice.description
-    #         jv.cheque_no = self.name
-    #         jv.cheque_date = invoice.date
-    #         jv.bill_no = invoice.bill_no
-    #         jv.bill_date = invoice.bill_date
-    #         jv.due_date = invoice.due_date
-
-    #         # Separate VAT Amount from Invoice Amount
-    #         if self.vat_inclusive == 1:
-    #             # VAT Inclusive
-    #             invoice_amount = invoice.credit / ((tax_detail["tax_rate"] + 100) / 100)
-    #             vat_amount = invoice.credit - invoice_amount
-                
-    #             jv.append('accounts', {
-    #                 'account': invoice.account,
-    #                 'party_type' : invoice.party_type,
-    #                 'party' : invoice.party,
-    #                 'credit' : float(invoice.credit),
-    #                 'debit' : float(0),
-    #                 'debit_in_account_currency' : float(0),
-    #                 'credit_in_account_currency' : float(invoice.credit),
-    #                 'cost_center' : invoice.cost_center,
-    #             })
-                
-    #             jv.append('accounts', {
-    #                 'account': invoice.offset_account,
-    #                 'credit' : float(0),
-    #                 'debit' : float(invoice_amount),
-    #                 'debit_in_account_currency' : float(invoice_amount),
-    #                 'credit_in_account_currency' : float(0),
-    #                 'cost_center' : invoice.cost_center,
-    #             })
-                
-    #             if vat_amount > 0:
-    #                 jv.append('accounts', {
-    #                     'account': tax_detail["tax_account"],
-    #                     'credit' : float(0),
-    #                     'debit' : float(vat_amount),
-    #                     'debit_in_account_currency' : float(vat_amount),
-    #                     'credit_in_account_currency' : float(0),
-    #                     'cost_center' : invoice.cost_center,
-    #             })
-    #         else:
-    #             is_credit = True if (invoice.credit - invoice.debit) >= 0 else False
-    #             # VAT Exclusive
-    #             vat_amount = (invoice.credit - invoice.debit) * ((tax_detail["tax_rate"]) / 100)
-    #             invoice_amount = (invoice.credit - invoice.debit) + vat_amount
-
-    #             jv.append('accounts', {
-    #                 'account': invoice.account,
-    #                 'party_type' : invoice.party_type,
-    #                 'party' : invoice.party,
-    #                 #'credit' : float(invoice.credit - invoice.debit + abs(vat_amount)) if is_credit==True else 0,
-    #                 #'debit' : float(invoice.debit - invoice.credit + abs(vat_amount)) if is_credit==False else 0,
-    #                 'debit_in_account_currency' : float(invoice.debit - invoice.credit + abs(vat_amount)) if is_credit==False else 0,
-    #                 'credit_in_account_currency' : float(invoice.credit - invoice.debit + abs(vat_amount)) if is_credit==True else 0,
-    #                 'cost_center' : invoice.cost_center,
-    #             })
-                
-    #             jv.append('accounts', {
-    #                 'account': invoice.offset_account,
-    #                 #'credit' : float(invoice.debit - invoice.credit) if is_credit==False else 0,
-    #                 #'debit' : float(invoice.credit - invoice.debit) if is_credit==True else 0,
-    #                 'debit_in_account_currency' : float(invoice.credit - invoice.debit) if is_credit==True else 0,
-    #                 'credit_in_account_currency' : float(invoice.debit - invoice.credit) if is_credit==False else 0,
-    #                 'cost_center' : invoice.cost_center,
-    #             })
-                
-    #             if abs(vat_amount) > 0:
-    #                 jv.append('accounts', {
-    #                     'account': tax_detail["tax_account"],
-    #                     #'credit' : float(abs(vat_amount)) if is_credit==False else 0,
-    #                     #'debit' : float(abs(vat_amount)) if is_credit==True else 0,
-    #                     'debit_in_account_currency' : float(vat_amount) if is_credit==True else 0,
-    #                     'credit_in_account_currency' : float(-vat_amount) if is_credit==False else 0,
-    #                     'cost_center' : invoice.cost_center,
-    #                 })
-    #         import json
-    #         print('BEFORE SAVE: json dumps:')                    
-    #         print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-    #         jv.save()
-    #         print('AFTER SAVE: json dumps:')                    
-    #         print(json.dumps(jv.get_valid_dict(), indent=2, default=str))
-    #         jv.submit()
-
-    #         frappe.db.set_value('Service Invoice Items', invoice.get('name'), 'journal_entry', jv.name)      
 
     def on_cancel(self):
         for invoice in self.invoices:
@@ -458,12 +584,13 @@ def make_reverse_service_invoice_entry(source_name, target_doc=None):
 	return doclist
 
 def get_tax_rate(vat_code):
-
     tax_account = ''
     tax_rate = 0
 
     if vat_code:
-        tax_account, tax_rate = frappe.db.get_value("Item Tax Template Detail", {"parent": vat_code}, ['tax_type', 'tax_rate'])
+        result = frappe.db.get_value("Item Tax Template Detail", {"parent": vat_code}, ['tax_type', 'tax_rate'])
+        if result:
+            tax_account, tax_rate = result
     
     tax_detail = {
         "tax_account": tax_account,
