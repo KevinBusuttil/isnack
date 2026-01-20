@@ -40,6 +40,8 @@ class CustomJournalEntry(JournalEntry):
         is already set, keep it and recalculate account currency amounts instead.
         """
         # Check if this JE originated from a Service Invoice
+        # JournalEntryBuilder.set_header() in service_invoice.py sets cheque_no to the Service Invoice name
+        # This allows us to identify JEs created from Service Invoices
         is_from_service_invoice = (
             self.cheque_no 
             and frappe.db.exists("Service Invoice", self.cheque_no)

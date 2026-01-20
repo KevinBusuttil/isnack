@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from frappe.utils import flt
+from isnack.overrides.journal_entry import CustomJournalEntry
 
 
 class TestSetAmountsInCompanyCurrency(unittest.TestCase):
@@ -23,8 +24,6 @@ class TestSetAmountsInCompanyCurrency(unittest.TestCase):
     
     def create_mock_je(self, multi_currency=False, cheque_no=None, voucher_type="Journal Entry"):
         """Create a mock Journal Entry document."""
-        from isnack.overrides.journal_entry import CustomJournalEntry
-        
         je = CustomJournalEntry()
         je.multi_currency = multi_currency
         je.cheque_no = cheque_no
