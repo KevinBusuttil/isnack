@@ -258,6 +258,12 @@ class JournalEntryBuilder:
             vat_inclusive: Whether VAT is inclusive
             gross_amount: Gross amount from invoice (used for VAT exclusive case)
         """
+        print("Arguments passed to add_offset_line:", {
+            "offset_amount": offset_amount,
+            "is_credit": is_credit,
+            "vat_inclusive": vat_inclusive,
+            "gross_amount": gross_amount,
+        })
         # Determine the base amount for offset conversion
         if self.inv.account_currency != self.inv.offset_account_currency:
             # Multi-currency: convert from account currency to offset currency
@@ -345,6 +351,8 @@ class JournalEntryBuilder:
         total_debit = sum(flt(row.get("debit")) for row in self.jv.accounts)
         total_credit = sum(flt(row.get("credit")) for row in self.jv.accounts)
         diff = total_debit - total_credit
+        print("Initial balancing diff:", diff)
+        print("Total debit:", total_debit, "Total credit:", total_credit)        
         
         # Round the difference to avoid tiny floating point errors
         diff = round_based_on_smallest_currency_fraction(
@@ -356,6 +364,8 @@ class JournalEntryBuilder:
         # We use a more conservative threshold of half the smallest unit to account for rounding
         smallest_fraction = 1.0 / (10 ** self.company_precision)
         rounding_tolerance = smallest_fraction / 2
+
+        print("Balancing diff:", diff, "with tolerance:", rounding_tolerance)
         
         # If the absolute difference is below the rounding tolerance, zero it out
         # This prevents tiny floating-point errors from causing validation failures
