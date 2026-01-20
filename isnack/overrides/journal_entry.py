@@ -25,8 +25,10 @@ class CustomJournalEntry(JournalEntry):
         """
         Check if this Journal Entry originated from a Service Invoice.
         
-        JournalEntryBuilder.set_header() in service_invoice.py sets cheque_no to the Service Invoice name.
-        This allows us to identify JEs created from Service Invoices.
+        The Service Invoice module creates Journal Entries using JournalEntryBuilder, which 
+        sets the `cheque_no` field to the Service Invoice's name for tracking purposes.
+        This is the standard way Service Invoice JEs are identified in the system.
+        See: JournalEntryBuilder.set_header() in isnack/isnack/doctype/service_invoice/service_invoice.py
         
         Returns:
             bool: True if the JE originated from a Service Invoice, False otherwise.
