@@ -77,7 +77,11 @@ class CustomJournalEntry(JournalEntry):
                     None,  # Don't pass existing exchange rate - we want fresh rate
                 )
                 
-                if not correct_exchange_rate:
+                if not correct_exchange_rate or correct_exchange_rate <= 0:
+                    frappe.log_error(
+                        f"Exchange rate lookup failed for account {d.account} ({d.account_currency}). Using fallback rate of 1.",
+                        "Journal Entry Exchange Rate Warning"
+                    )
                     correct_exchange_rate = 1
                 
                 # If we have company currency amounts set, use them to recalculate
@@ -85,12 +89,12 @@ class CustomJournalEntry(JournalEntry):
                 if flt(d.debit) or flt(d.credit):
                     # Company currency amounts are the source of truth
                     # Recalculate account currency amounts using correct exchange rate
-                    if flt(d.debit) and correct_exchange_rate:
+                    if flt(d.debit):
                         d.debit_in_account_currency = flt(
                             flt(d.debit) / correct_exchange_rate, 
                             d.precision("debit_in_account_currency")
                         )
-                    if flt(d.credit) and correct_exchange_rate:
+                    if flt(d.credit):
                         d.credit_in_account_currency = flt(
                             flt(d.credit) / correct_exchange_rate,
                             d.precision("credit_in_account_currency")
@@ -113,13 +117,9 @@ class CustomJournalEntry(JournalEntry):
         """
         # Call the parent method to get the standard GL dict
         gl_dict = super().get_gl_dict(args, account_currency, item)
-        print("CustomJournalEntry.get_gl_dict called")
-        print("GL Dict before fix:", gl_dict)
         # Apply the fix: use row-specific exchange rate for Journal Entries
         # instead of the document-level conversion_rate
         if item:
-            print("Applying custom exchange rate from Journal Entry item")
-            print("Item:", item)
             exchange_rate = item.get("exchange_rate")
             if exchange_rate:
                 gl_dict["transaction_exchange_rate"] = flt(exchange_rate)
