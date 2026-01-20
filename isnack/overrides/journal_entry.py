@@ -39,10 +39,9 @@ class CustomJournalEntry(JournalEntry):
         # Only fix exchange rates for multi-currency JEs from Service Invoices
         # Manual JEs should use standard ERPNext behavior where account currency amounts
         # are the source of truth
-        #if self.multi_currency and self._is_from_service_invoice():
-        if self.multi_currency:
+        if self.multi_currency and self._is_from_service_invoice():
             self.fix_multi_currency_exchange_rates()
-        
+
         # Now call parent validate
         super().validate()
     
@@ -167,21 +166,3 @@ class CustomJournalEntry(JournalEntry):
                     # The parent's set_amounts_in_company_currency will calculate company amounts
                     d.exchange_rate = correct_exchange_rate
 
-    def get_gl_dict(self, args, account_currency=None, item=None):
-        """
-        Override get_gl_dict to fix transaction exchange rate on GL entries 
-        for multi-currency Journal Entries.
-        
-        This implements the fix from ERPNext PR #43331:
-        https://github.com/frappe/erpnext/pull/43331
-        """
-        # Call the parent method to get the standard GL dict
-        gl_dict = super().get_gl_dict(args, account_currency, item)
-        # Apply the fix: use row-specific exchange rate for Journal Entries
-        # instead of the document-level conversion_rate
-        if item:
-            exchange_rate = item.get("exchange_rate")
-            if exchange_rate:
-                gl_dict["transaction_exchange_rate"] = flt(exchange_rate)
-        
-        return gl_dict
