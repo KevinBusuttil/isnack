@@ -300,7 +300,7 @@ class JournalEntryBuilder:
         # The effective rate is: offset_company_amount / offset_acc_amount
         if offset_acc_amount:
             recomputed_rate = offset_company_amount / offset_acc_amount
-            # Round to at least 6 decimal places to maintain precision while avoiding drift
+            # Round to 9 decimal places to maintain precision while avoiding drift
             recomputed_rate = flt(recomputed_rate, 9)
             # Update the instance variable so balancing logic uses the same rate
             self.offset_exchange_rate = recomputed_rate

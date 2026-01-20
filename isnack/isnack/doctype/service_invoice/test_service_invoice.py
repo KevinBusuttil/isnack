@@ -122,7 +122,7 @@ class TestMultiCurrencyOffsetLine(unittest.TestCase):
 		This is the exact scenario from the problem statement:
 		- Company: TND, Party: USD, Offset: EUR
 		- After rounding: offset_company_amount = 18247.77, offset_acc_amount = 5599.15
-		- Expected exchange rate: 18247.77 / 5599.15 = ~3.259027 (not 3.259027724)
+		- Expected exchange rate: 18247.77 / 5599.15 = ~3.259025031 (not 3.259027724)
 		"""
 		from isnack.isnack.doctype.service_invoice.service_invoice import JournalEntryBuilder
 		
@@ -186,7 +186,7 @@ class TestMultiCurrencyOffsetLine(unittest.TestCase):
 		offset_row = builder.offset_row
 		
 		# Verify the exchange rate is recomputed from rounded amounts
-		# Expected: 18247.77 / 5599.15 = 3.259027 (rounded to 9 decimals)
+		# Expected: 18247.77 / 5599.15 = 3.259025031 (rounded to 9 decimals)
 		# NOT the original 3.259027724
 		expected_rate = round(18247.77 / 5599.15, 9)
 		actual_rate = offset_row.get("exchange_rate")
