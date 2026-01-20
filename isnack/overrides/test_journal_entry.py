@@ -236,5 +236,115 @@ class TestSetAmountsInCompanyCurrency(unittest.TestCase):
         self.assertEqual(flt(row2.credit_in_account_currency), 100.0)  # 150.0 / 1.5
 
 
+class TestValidateMethod(unittest.TestCase):
+    """Tests for validate method to ensure fix_multi_currency_exchange_rates is called correctly."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.patcher_frappe_db = patch('isnack.overrides.journal_entry.frappe.db')
+        self.mock_frappe_db = self.patcher_frappe_db.start()
+        
+        self.patcher_super_validate = patch('erpnext.accounts.doctype.journal_entry.journal_entry.JournalEntry.validate')
+        self.mock_super_validate = self.patcher_super_validate.start()
+    
+    def tearDown(self):
+        """Clean up patches."""
+        self.patcher_frappe_db.stop()
+        self.patcher_super_validate.stop()
+    
+    def create_mock_je(self, multi_currency=False, cheque_no=None):
+        """Create a mock Journal Entry document."""
+        je = CustomJournalEntry()
+        je.multi_currency = multi_currency
+        je.cheque_no = cheque_no
+        je.voucher_type = "Journal Entry"
+        je.accounts = []
+        return je
+    
+    def test_manual_multi_currency_je_does_not_call_fix_exchange_rates(self):
+        """
+        Test: Manual multi-currency JE should NOT call fix_multi_currency_exchange_rates.
+        Expected: Standard ERPNext behavior applies.
+        """
+        # Create multi-currency JE without cheque_no (manual JE)
+        je = self.create_mock_je(multi_currency=True, cheque_no=None)
+        
+        # Mock fix_multi_currency_exchange_rates to track if it's called
+        with patch.object(je, 'fix_multi_currency_exchange_rates') as mock_fix:
+            je.validate()
+            
+            # Verify fix_multi_currency_exchange_rates was NOT called
+            mock_fix.assert_not_called()
+            
+            # Verify parent validate was called
+            self.mock_super_validate.assert_called_once()
+    
+    def test_service_invoice_multi_currency_je_calls_fix_exchange_rates(self):
+        """
+        Test: Multi-currency JE from Service Invoice SHOULD call fix_multi_currency_exchange_rates.
+        Expected: Custom logic applies.
+        """
+        # Mock frappe.db.exists to return True for Service Invoice
+        self.mock_frappe_db.exists.return_value = True
+        
+        # Create multi-currency JE with cheque_no pointing to Service Invoice
+        je = self.create_mock_je(multi_currency=True, cheque_no="SINV-001")
+        
+        # Mock fix_multi_currency_exchange_rates to track if it's called
+        with patch.object(je, 'fix_multi_currency_exchange_rates') as mock_fix:
+            je.validate()
+            
+            # Verify fix_multi_currency_exchange_rates WAS called
+            mock_fix.assert_called_once()
+            
+            # Verify parent validate was called
+            self.mock_super_validate.assert_called_once()
+            
+            # Verify frappe.db.exists was called correctly
+            self.mock_frappe_db.exists.assert_called_once_with("Service Invoice", "SINV-001")
+    
+    def test_single_currency_je_does_not_call_fix_exchange_rates(self):
+        """
+        Test: Single-currency JE should NOT call fix_multi_currency_exchange_rates.
+        Expected: Standard ERPNext behavior applies.
+        """
+        # Create single-currency JE
+        je = self.create_mock_je(multi_currency=False, cheque_no=None)
+        
+        # Mock fix_multi_currency_exchange_rates to track if it's called
+        with patch.object(je, 'fix_multi_currency_exchange_rates') as mock_fix:
+            je.validate()
+            
+            # Verify fix_multi_currency_exchange_rates was NOT called
+            mock_fix.assert_not_called()
+            
+            # Verify parent validate was called
+            self.mock_super_validate.assert_called_once()
+    
+    def test_multi_currency_je_with_cheque_no_not_service_invoice(self):
+        """
+        Test: Multi-currency JE with cheque_no but not a Service Invoice.
+        Expected: fix_multi_currency_exchange_rates NOT called.
+        """
+        # Mock frappe.db.exists to return False (not a Service Invoice)
+        self.mock_frappe_db.exists.return_value = False
+        
+        # Create multi-currency JE with cheque_no that doesn't exist as Service Invoice
+        je = self.create_mock_je(multi_currency=True, cheque_no="SOME-OTHER-DOC")
+        
+        # Mock fix_multi_currency_exchange_rates to track if it's called
+        with patch.object(je, 'fix_multi_currency_exchange_rates') as mock_fix:
+            je.validate()
+            
+            # Verify fix_multi_currency_exchange_rates was NOT called
+            mock_fix.assert_not_called()
+            
+            # Verify parent validate was called
+            self.mock_super_validate.assert_called_once()
+            
+            # Verify frappe.db.exists was called correctly
+            self.mock_frappe_db.exists.assert_called_once_with("Service Invoice", "SOME-OTHER-DOC")
+
+
 if __name__ == '__main__':
     unittest.main()

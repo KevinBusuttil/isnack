@@ -22,9 +22,16 @@ class CustomJournalEntry(JournalEntry):
     """
 
     def validate(self):
-        # First, fix exchange rates and recalculate account currency amounts
-        # BEFORE the parent validate runs set_amounts_in_company_currency
-        if self.multi_currency:
+        # Check if this JE originated from a Service Invoice
+        is_from_service_invoice = (
+            self.cheque_no 
+            and frappe.db.exists("Service Invoice", self.cheque_no)
+        )
+        
+        # Only fix exchange rates for multi-currency JEs from Service Invoices
+        # Manual JEs should use standard ERPNext behavior where account currency amounts
+        # are the source of truth
+        if self.multi_currency and is_from_service_invoice:
             self.fix_multi_currency_exchange_rates()
         
         # Now call parent validate
