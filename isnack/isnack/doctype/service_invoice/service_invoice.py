@@ -42,6 +42,7 @@ class ServiceInvoice(Document):
             if credit is not None:
                 row["credit"] = flt(credit)
             jv.append("accounts", row)
+            return row
 
         company = self.get("company") or get_default_company()
         company_currency = get_company_currency(company)
@@ -128,7 +129,7 @@ class ServiceInvoice(Document):
             
             if sign_credit:
                 # Credit party
-                add_row(
+                party_row = add_row(
                     jv,
                     account=inv.account,
                     party_type=getattr(inv, "party_type", None),
@@ -139,7 +140,7 @@ class ServiceInvoice(Document):
                 )
             else:
                 # Debit party
-                add_row(
+                party_row = add_row(
                     jv,
                     account=inv.account,
                     party_type=getattr(inv, "party_type", None),
@@ -190,7 +191,7 @@ class ServiceInvoice(Document):
 
             if sign_credit:
                 # Credit to party means offset is a debit
-                add_row(
+                offset_row = add_row(
                     jv,
                     account=inv.offset_account,
                     cost_center=inv.cost_center,
@@ -199,7 +200,7 @@ class ServiceInvoice(Document):
                 )
             else:
                 # Debit to party means offset is a credit
-                add_row(
+                offset_row = add_row(
                     jv,
                     account=inv.offset_account,
                     cost_center=inv.cost_center,
@@ -209,6 +210,7 @@ class ServiceInvoice(Document):
 
             # 3) VAT line (if any)
             # VAT is typically in company currency. Convert from account currency.
+            vat_row = None
             if tax_rate and flt(vat_amount):
                 acc_rate = flt(account_exchange_rate) or 1
                 vat_in_company_currency = vat_amount * acc_rate
@@ -220,7 +222,7 @@ class ServiceInvoice(Document):
                 
                 if sign_credit:
                     # Party credited -> VAT is a debit
-                    add_row(
+                    vat_row = add_row(
                         jv,
                         account=tax_account,
                         cost_center=inv.cost_center,
@@ -228,12 +230,61 @@ class ServiceInvoice(Document):
                     )
                 else:
                     # Party debited -> VAT is a credit
-                    add_row(
+                    vat_row = add_row(
                         jv,
                         account=tax_account,
                         cost_center=inv.cost_center,
                         credit=vat_in_company_currency,
                     )
+
+            # --- Balance rounding differences ---------------------------------
+            total_debit = sum(flt(row.get("debit")) for row in jv.accounts)
+            total_credit = sum(flt(row.get("credit")) for row in jv.accounts)
+            diff = total_debit - total_credit
+            diff = round_based_on_smallest_currency_fraction(
+                diff, company_currency, company_precision
+            )
+            if diff:
+                adjust_row = vat_row or offset_row or party_row
+                def sync_account_currency(row, account_currency):
+                    if account_currency == company_currency:
+                        if row.get("debit") is not None:
+                            row["debit_in_account_currency"] = row.get("debit")
+                        if row.get("credit") is not None:
+                            row["credit_in_account_currency"] = row.get("credit")
+
+                if diff > 0:
+                    if adjust_row.get("credit"):
+                        adjust_row["credit"] = round_based_on_smallest_currency_fraction(
+                            flt(adjust_row.get("credit")) + diff,
+                            company_currency,
+                            company_precision,
+                        )
+                    else:
+                        adjust_row["debit"] = round_based_on_smallest_currency_fraction(
+                            flt(adjust_row.get("debit")) - diff,
+                            company_currency,
+                            company_precision,
+                        )
+                else:
+                    diff = abs(diff)
+                    if adjust_row.get("debit"):
+                        adjust_row["debit"] = round_based_on_smallest_currency_fraction(
+                            flt(adjust_row.get("debit")) + diff,
+                            company_currency,
+                            company_precision,
+                        )
+                    else:
+                        adjust_row["credit"] = round_based_on_smallest_currency_fraction(
+                            flt(adjust_row.get("credit")) - diff,
+                            company_currency,
+                            company_precision,
+                        )
+
+                if adjust_row is party_row:
+                    sync_account_currency(adjust_row, inv.account_currency)
+                elif adjust_row is offset_row:
+                    sync_account_currency(adjust_row, inv.offset_account_currency)
 
             # --- Debug logging (toggle with `frappe.flags.debug = True`) --------
             # print("BEFORE SAVE (valid dict):")
