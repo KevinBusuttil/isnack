@@ -273,7 +273,8 @@ class JournalEntryBuilder:
         )
         
         # Derive offset account-currency amount bottom-up from company amount
-        # Divide by offset rate and round to offset currency precision
+        # Note: offset_exchange_rate is FROM offset_currency TO company_currency
+        # To convert FROM company_currency TO offset_currency, we divide by the rate
         offset_acc_amount = offset_company_amount / flt(self.offset_exchange_rate)
         
         offset_precision = frappe.get_precision(
