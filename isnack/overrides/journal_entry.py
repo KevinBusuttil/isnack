@@ -39,7 +39,8 @@ class CustomJournalEntry(JournalEntry):
         # Only fix exchange rates for multi-currency JEs from Service Invoices
         # Manual JEs should use standard ERPNext behavior where account currency amounts
         # are the source of truth
-        if self.multi_currency and self._is_from_service_invoice():
+        #if self.multi_currency and self._is_from_service_invoice():
+        if self.multi_currency:
             self.fix_multi_currency_exchange_rates()
         
         # Now call parent validate
