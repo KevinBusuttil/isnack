@@ -295,6 +295,18 @@ class JournalEntryBuilder:
             offset_acc_amount, self.inv.offset_account_currency, offset_precision
         )
         
+        # Recompute exchange rate from rounded amounts to ensure consistency
+        # This prevents ERPNext from re-deriving different company amounts
+        # The effective rate is: offset_company_amount / offset_acc_amount
+        if offset_acc_amount:
+            recomputed_rate = offset_company_amount / offset_acc_amount
+            # Round to 9 decimal places to maintain precision while avoiding drift
+            recomputed_rate = flt(recomputed_rate, 9)
+            # Update the instance variable so balancing logic uses the same rate
+            self.offset_exchange_rate = recomputed_rate
+        else:
+            recomputed_rate = self.offset_exchange_rate
+        
         # Create the offset line (opposite of party line)
         # Explicitly set company debit/credit to avoid re-derivation
         row = {"account": self.inv.offset_account}
@@ -302,8 +314,8 @@ class JournalEntryBuilder:
         if self.inv.cost_center:
             row["cost_center"] = self.inv.cost_center
         
-        # Always set exchange_rate to prevent ERPNext from re-deriving amounts
-        row["exchange_rate"] = flt(self.offset_exchange_rate)
+        # Set the recomputed exchange rate to prevent ERPNext from re-deriving amounts
+        row["exchange_rate"] = flt(recomputed_rate)
         
         if is_credit:
             # Party is credit, offset is debit
