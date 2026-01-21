@@ -335,7 +335,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     if "item_code" not in out:
         parts = s.split("|")
         if len(parts) >= 1: out["item_code"] = parts[0]
-        if len(parts) >= 2: out["batch_no"]  = _process_batch_spaces(parts[1])
+        if len(parts) >= 2: out["batch_no"] = _process_batch_spaces(parts[1])
         if len(parts) >= 3:
             try: out["qty"] = float(parts[2])
             except Exception: pass
