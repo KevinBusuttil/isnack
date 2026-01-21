@@ -314,6 +314,76 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const se_receipt_btn  = $filters.find('.se-receipt');
   const po_receipt_btn  = $filters.find('.po-receipt'); 
 
+  // Store batch space handling setting
+  let batch_space_handling = "Convert to Underscore";
+
+  // Helper function to process batch spaces
+  const process_batch_spaces = (batch_no) => {
+    if (!batch_no || batch_no.indexOf(' ') === -1) {
+      return batch_no;
+    }
+
+    if (batch_space_handling === "Reject") {
+      frappe.msgprint({
+        title: __('Invalid Batch Number'),
+        message: __('Batch numbers cannot contain spaces. Please remove spaces from: {0}', [batch_no]),
+        indicator: 'red'
+      });
+      return null;
+    } else if (batch_space_handling === "Convert to Underscore") {
+      const processed = batch_no.replace(/ /g, '_');
+      frappe.show_alert({
+        message: __('Batch spaces converted to underscores: {0} → {1}', [batch_no, processed]),
+        indicator: 'blue'
+      }, 3);
+      return processed;
+    } else if (batch_space_handling === "Convert to Dash") {
+      const processed = batch_no.replace(/ /g, '-');
+      frappe.show_alert({
+        message: __('Batch spaces converted to dashes: {0} → {1}', [batch_no, processed]),
+        indicator: 'blue'
+      }, 3);
+      return processed;
+    } else { // "Allow"
+      return batch_no;
+    }
+  };
+
+  // Fetch Factory Settings for batch handling and role permissions
+  frappe.call({
+    method: 'frappe.client.get',
+    args: {
+      doctype: 'Factory Settings'
+    },
+    callback: function(r) {
+      if (r.message) {
+        // Store batch space handling setting
+        batch_space_handling = r.message.batch_space_handling || "Convert to Underscore";
+        
+        // Check role-based permissions for stock entry buttons
+        if (r.message.stock_entry_button_roles) {
+          const allowed_roles = r.message.stock_entry_button_roles.map(row => row.role);
+          let has_permission = false;
+          
+          // Check if user has any of the allowed roles
+          for (const role of allowed_roles) {
+            if (frappe.user.has_role(role)) {
+              has_permission = true;
+              break;
+            }
+          }
+          
+          // Hide buttons if user doesn't have permission
+          if (!has_permission) {
+            se_transfer_btn.hide();
+            se_issue_btn.hide();
+            se_receipt_btn.hide();
+          }
+        }
+      }
+    }
+  });
+
   const read_factory_line = () => {
   const raw = (factory_line.$input && factory_line.$input.val()) || factory_line.get_value() || '';
   const value = (raw || '').trim();

@@ -48,6 +48,28 @@ def _max_active_ops() -> int:
     val = getattr(fs, "max_active_operators", None)
     return int(val or 2)
 
+def _get_batch_space_handling() -> str:
+    """Get batch space handling setting from Factory Settings."""
+    fs = _fs()
+    val = getattr(fs, "batch_space_handling", None)
+    return val or "Convert to Underscore"
+
+def _process_batch_spaces(batch_no: str) -> str:
+    """Process spaces in batch number according to Factory Settings."""
+    if not batch_no or ' ' not in batch_no:
+        return batch_no
+    
+    handling = _get_batch_space_handling()
+    
+    if handling == "Reject":
+        frappe.throw(_("Batch numbers cannot contain spaces. Please remove spaces from batch: {0}").format(batch_no))
+    elif handling == "Convert to Underscore":
+        return batch_no.replace(' ', '_')
+    elif handling == "Convert to Dash":
+        return batch_no.replace(' ', '-')
+    else:  # "Allow"
+        return batch_no
+
 def _allowed_groups_global() -> set[str]:
     """
     From Factory Settings -> Allowed Item Groups (Table MultiSelect).
@@ -319,7 +341,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     gtin = grab("(01)", 14)
     if gtin: out["gtin"] = gtin
     batch = grab("(10)")
-    if batch: out["batch_no"] = batch
+    if batch: out["batch_no"] = _process_batch_spaces(batch)
     exp = grab("(17)", 6)
     if exp: out["expiry"] = exp
     qty = grab("(30)") or grab("(37)")
@@ -334,7 +356,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     if "item_code" not in out:
         parts = s.split("|")
         if len(parts) >= 1: out["item_code"] = parts[0]
-        if len(parts) >= 2: out["batch_no"]  = parts[1]
+        if len(parts) >= 2: out["batch_no"]  = _process_batch_spaces(parts[1])
         if len(parts) >= 3:
             try: out["qty"] = float(parts[2])
             except Exception: pass
