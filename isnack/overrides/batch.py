@@ -3,6 +3,8 @@
 
 import frappe
 from frappe import _
+from isnack.isnack.page.storekeeper_hub.storekeeper_hub import _process_batch_spaces
+
 
 def validate_batch_spaces(doc, method=None):
     """
@@ -13,8 +15,6 @@ def validate_batch_spaces(doc, method=None):
         doc: The Batch document being validated
         method: Hook method name (optional)
     """
-    from isnack.isnack.page.storekeeper_hub.storekeeper_hub import _process_batch_spaces
-    
     if doc.batch_id:
         # Process the batch_id according to settings
         processed_batch_id = _process_batch_spaces(doc.batch_id)
