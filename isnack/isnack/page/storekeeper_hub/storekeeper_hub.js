@@ -314,6 +314,40 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const se_receipt_btn  = $filters.find('.se-receipt');
   const po_receipt_btn  = $filters.find('.po-receipt'); 
 
+  // Fetch Factory Settings for role permissions
+  frappe.call({
+    method: 'frappe.client.get',
+    args: {
+      doctype: 'Factory Settings'
+    },
+    callback: function(r) {
+      if (r.message) {
+        // Check role-based permissions for stock entry buttons
+        const roles = r.message.stock_entry_button_roles;
+        if (roles && Array.isArray(roles) && roles.length > 0) {
+          const allowed_roles = roles.map(row => row.role);
+          let has_permission = false;
+          
+          // Check if user has any of the allowed roles
+          for (const role of allowed_roles) {
+            if (frappe.user.has_role(role)) {
+              has_permission = true;
+              break;
+            }
+          }
+          
+          // Hide buttons if user doesn't have permission
+          if (!has_permission) {
+            se_transfer_btn.hide();
+            se_issue_btn.hide();
+            se_receipt_btn.hide();
+          }
+        }
+        // If no roles configured (empty array), allow access to all users (don't hide buttons)
+      }
+    }
+  });
+
   const read_factory_line = () => {
   const raw = (factory_line.$input && factory_line.$input.val()) || factory_line.get_value() || '';
   const value = (raw || '').trim();

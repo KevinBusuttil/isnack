@@ -1381,8 +1381,37 @@ def post_po_receipt(purchase_order, items=None):
     return {"purchase_receipt": pr.name}
 
 
+def _get_batch_space_handling():
+    """Get batch space handling setting from Factory Settings."""
+    try:
+        setting = frappe.db.get_single_value("Factory Settings", "batch_space_handling")
+        return setting or "Convert to Underscore"
+    except Exception:
+        return "Convert to Underscore"
+
+
+def _process_batch_spaces(batch_no: str) -> str:
+    """Process spaces in batch number according to Factory Settings."""
+    if batch_no is None or not batch_no or ' ' not in batch_no:
+        return batch_no
+    
+    handling = _get_batch_space_handling()
+    
+    if handling == "Reject":
+        frappe.throw(_("Batch numbers cannot contain spaces. Please remove spaces from batch: {0}").format(batch_no))
+    elif handling == "Convert to Underscore":
+        return batch_no.replace(' ', '_')
+    elif handling == "Convert to Dash":
+        return batch_no.replace(' ', '-')
+    else:  # "Allow"
+        return batch_no
+
+
 def _ensure_batch(item_code: str, batch_no: str, expiry_date=None):
     """Create or update a Batch for the given item/batch_no."""
+    # Process spaces in batch number according to settings
+    batch_no = _process_batch_spaces(batch_no)
+    
     existing_batch = frappe.db.exists("Batch", {"batch_id": batch_no, "item": item_code})
     if existing_batch:
         if expiry_date:

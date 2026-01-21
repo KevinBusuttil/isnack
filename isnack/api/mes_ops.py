@@ -10,6 +10,7 @@ from frappe import _
 from frappe.utils import flt
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
+    _process_batch_spaces,
 )
 
 # ============================================================
@@ -319,7 +320,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     gtin = grab("(01)", 14)
     if gtin: out["gtin"] = gtin
     batch = grab("(10)")
-    if batch: out["batch_no"] = batch
+    if batch: out["batch_no"] = _process_batch_spaces(batch)
     exp = grab("(17)", 6)
     if exp: out["expiry"] = exp
     qty = grab("(30)") or grab("(37)")
@@ -334,7 +335,7 @@ def _parse_gs1_or_basic(code: str) -> dict:
     if "item_code" not in out:
         parts = s.split("|")
         if len(parts) >= 1: out["item_code"] = parts[0]
-        if len(parts) >= 2: out["batch_no"]  = parts[1]
+        if len(parts) >= 2: out["batch_no"] = _process_batch_spaces(parts[1])
         if len(parts) >= 3:
             try: out["qty"] = float(parts[2])
             except Exception: pass

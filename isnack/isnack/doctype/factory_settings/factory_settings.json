@@ -6,10 +6,14 @@
  "engine": "InnoDB",
  "field_order": [
   "general_section",
+  "batch_space_handling",
+  "scanning_section",
   "consume_on_scan",
   "scan_dup_ttl_sec",
   "max_active_operators",
   "material_overconsumption_threshold",
+  "storekeeper_hub_section",
+  "stock_entry_button_roles",
   "item_group_policies_section",
   "packaging_item_groups",
   "backflush_item_groups",
@@ -27,6 +31,24 @@
   "user_printer_defaults"
  ],
  "fields": [
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break",
+   "label": "General"
+  },
+  {
+   "default": "Convert to Underscore",
+   "description": "How to handle spaces in batch numbers. 'Reject' will show an error, other options will automatically convert spaces.",
+   "fieldname": "batch_space_handling",
+   "fieldtype": "Select",
+   "label": "Batch Space Handling",
+   "options": "Reject\nConvert to Underscore\nConvert to Dash\nAllow"
+  },
+  {
+   "fieldname": "scanning_section",
+   "fieldtype": "Section Break",
+   "label": "Scanning and Consumption"
+  },
   {
    "default": "1",
    "description": "This setting is now hardcoded to enabled. Materials scanned via Load button are always consumed directly.",
@@ -57,9 +79,16 @@
    "label": "Material Over-consumption Threshold"
   },
   {
-   "fieldname": "general_section",
+   "fieldname": "storekeeper_hub_section",
    "fieldtype": "Section Break",
-   "label": "Scanning and Consumption"
+   "label": "Storekeeper Hub"
+  },
+  {
+   "description": "Roles that can see Mat. Transfer, Mat. Issue, and Mat. Receipt buttons in Storekeeper Hub",
+   "fieldname": "stock_entry_button_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Roles for Stock Entry Buttons",
+   "options": "Storekeeper Hub Role"
   },
   {
    "fieldname": "backflush_item_groups",
