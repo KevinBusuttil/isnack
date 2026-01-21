@@ -138,6 +138,9 @@ doc_events = {
     "Work Order": {
         "before_insert": "isnack.api.mes_ops.apply_line_warehouses_to_work_order",
         "validate": "isnack.api.mes_ops.apply_line_warehouses_to_work_order",
+    },
+    "Batch": {
+        "validate": "isnack.overrides.batch.validate_batch_spaces",
     }
 }
 
