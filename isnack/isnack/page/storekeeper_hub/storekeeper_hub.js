@@ -335,7 +335,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               break;
             }
           }
-          
+
           // Hide buttons if user doesn't have permission
           if (!has_permission) {
             se_transfer_btn.hide();
