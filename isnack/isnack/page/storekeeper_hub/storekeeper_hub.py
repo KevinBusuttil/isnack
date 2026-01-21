@@ -1390,7 +1390,7 @@ def _get_batch_space_handling():
         return "Convert to Underscore"
 
 
-def _process_batch_spaces(batch_no: str):
+def _process_batch_spaces(batch_no: str) -> str:
     """Process spaces in batch number according to Factory Settings."""
     if batch_no is None or not batch_no or ' ' not in batch_no:
         return batch_no

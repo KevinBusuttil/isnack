@@ -323,8 +323,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     callback: function(r) {
       if (r.message) {
         // Check role-based permissions for stock entry buttons
-        if (r.message.stock_entry_button_roles && r.message.stock_entry_button_roles.length > 0) {
-          const allowed_roles = r.message.stock_entry_button_roles.map(row => row.role);
+        const roles = r.message.stock_entry_button_roles;
+        if (roles && Array.isArray(roles) && roles.length > 0) {
+          const allowed_roles = roles.map(row => row.role);
           let has_permission = false;
           
           // Check if user has any of the allowed roles
