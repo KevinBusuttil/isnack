@@ -10,6 +10,7 @@ from frappe import _
 from frappe.utils import flt
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
+    _process_batch_spaces,
 )
 
 # ============================================================
@@ -47,28 +48,6 @@ def _max_active_ops() -> int:
     fs = _fs()
     val = getattr(fs, "max_active_operators", None)
     return int(val or 2)
-
-def _get_batch_space_handling() -> str:
-    """Get batch space handling setting from Factory Settings."""
-    fs = _fs()
-    val = getattr(fs, "batch_space_handling", None)
-    return val or "Convert to Underscore"
-
-def _process_batch_spaces(batch_no: str) -> str:
-    """Process spaces in batch number according to Factory Settings."""
-    if not batch_no or ' ' not in batch_no:
-        return batch_no
-    
-    handling = _get_batch_space_handling()
-    
-    if handling == "Reject":
-        frappe.throw(_("Batch numbers cannot contain spaces. Please remove spaces from batch: {0}").format(batch_no))
-    elif handling == "Convert to Underscore":
-        return batch_no.replace(' ', '_')
-    elif handling == "Convert to Dash":
-        return batch_no.replace(' ', '-')
-    else:  # "Allow"
-        return batch_no
 
 def _allowed_groups_global() -> set[str]:
     """
