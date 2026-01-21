@@ -905,12 +905,12 @@ def print_labels(stock_entry: str):
     if se_doc.items:
         for item in se_doc.items:
             # Include the row name in the print URL so the print format can render the specific item
-            print_url = f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&row_name={frappe.utils.quote(item.name)}&trigger_print=1"
+            print_url = f"/printview?doctype={frappe.utils.quote('Stock Entry')}&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&row_name={frappe.utils.quote(item.name)}&trigger_print=1"
             print_urls.append(print_url)
     
     # Fallback: if no items, generate a single print URL for the whole document
     if not print_urls:
-        print_urls.append(f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1")
+        print_urls.append(f"/printview?doctype={frappe.utils.quote('Stock Entry')}&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1")
     
     # Return print information for client-side handling
     return {
