@@ -1490,6 +1490,26 @@ def list_label_records(work_order: str):
     )
 
 
+def _generate_print_url(source_doctype: str, source_docname: str, print_format: str, row_name: str = None) -> str:
+    """
+    Helper function to generate print URL for a document.
+    
+    Args:
+        source_doctype: DocType of the source document
+        source_docname: Name of the source document
+        print_format: Print format name
+        row_name: Optional row name for child table items (e.g., Stock Entry Detail)
+    
+    Returns:
+        Full print URL
+    """
+    url = f"/printview?doctype={frappe.utils.quote(source_doctype)}&name={frappe.utils.quote(source_docname)}&format={frappe.utils.quote(print_format)}"
+    if row_name:
+        url += f"&row_name={frappe.utils.quote(row_name)}"
+    url += "&trigger_print=1"
+    return frappe.urllib.get_full_url(url)
+
+
 @frappe.whitelist()
 def print_label_record(label_record: str, printer: Optional[str] = None, quantities=None, reason_code: Optional[str] = None):
     """
@@ -1531,16 +1551,50 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     jobs = []
     print_urls = []
     
-    for qty in cleaned_quantities:
-        if target_printer:
-            jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
-        
-        # Generate print URL for client-side printing
-        if record.source_doctype and record.source_docname:
-            print_url = frappe.urllib.get_full_url(
-                f"/printview?doctype={frappe.utils.quote(record.source_doctype)}&name={frappe.utils.quote(record.source_docname)}&format={frappe.utils.quote(record.label_template)}&trigger_print=1"
-            )
-            print_urls.append(print_url)
+    # Special handling for Stock Entry with multiple items when reprinting (not splitting)
+    if (record.source_doctype == "Stock Entry" and 
+        not quantities and 
+        record.source_docname):
+        # When reprinting a Stock Entry Label Record, print all items in the Stock Entry
+        se_doc = frappe.get_doc("Stock Entry", record.source_docname)
+        if se_doc.items and len(se_doc.items) > 1:
+            # Multiple items: generate one print URL per item
+            for item in se_doc.items:
+                if target_printer:
+                    jobs.append(_create_label_print_job(record, target_printer, item.qty, reason_code=reason_code))
+                
+                # Generate print URL with row_name parameter
+                print_urls.append(_generate_print_url(
+                    record.source_doctype,
+                    record.source_docname,
+                    record.label_template,
+                    row_name=item.name
+                ))
+        else:
+            # Single item or no items: use standard single print URL
+            for qty in cleaned_quantities:
+                if target_printer:
+                    jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
+                
+                if record.source_doctype and record.source_docname:
+                    print_urls.append(_generate_print_url(
+                        record.source_doctype,
+                        record.source_docname,
+                        record.label_template
+                    ))
+    else:
+        # Standard handling for split printing or non-Stock Entry documents
+        for qty in cleaned_quantities:
+            if target_printer:
+                jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
+            
+            # Generate print URL for client-side printing
+            if record.source_doctype and record.source_docname:
+                print_urls.append(_generate_print_url(
+                    record.source_doctype,
+                    record.source_docname,
+                    record.label_template
+                ))
 
     # Get silent printing settings
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)

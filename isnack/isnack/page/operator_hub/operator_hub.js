@@ -1061,13 +1061,30 @@ function init_operator_hub($root) {
             reason_code: 'reprint'
           });
           if (result.message && result.message.print_urls && result.message.print_urls.length > 0) {
-            // Use QZ Tray if enabled, otherwise use browser dialog
-            await handleLabelPrint(
-              result.message.print_urls[0],
-              result.message.enable_silent_printing,
-              result.message.printer_name,
-              row.name
-            );
+            const enableSilent = result.message.enable_silent_printing;
+            const printerName = result.message.printer_name;
+            
+            // Print all items with delay between prints
+            // Sequential execution is intentional to avoid overwhelming the printer queue
+            // and to prevent browser popup blockers when using print dialogs
+            for (let idx = 0; idx < result.message.print_urls.length; idx++) {
+              const url = result.message.print_urls[idx];
+              
+              // Add delay between prints (except for first print)
+              if (idx > 0) {
+                await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+              }
+              
+              await handleLabelPrint(url, enableSilent, printerName, `${row.name} item ${idx + 1}`);
+            }
+            
+            // Show success message
+            const action = enableSilent ? 'sent to printer' : 'dialog(s) opened';
+            const count = result.message.print_urls.length;
+            frappe.show_alert({
+              message: `${count} label(s) ${action}`, 
+              indicator: 'green'
+            });
           }
           return;
         }
