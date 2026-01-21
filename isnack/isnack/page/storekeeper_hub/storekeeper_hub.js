@@ -10,6 +10,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   // Constants
   const QTY_PRECISION = 3;
   const QTY_TOLERANCE = 0.001; // Math.pow(10, -QTY_PRECISION)
+  const PRINT_DIALOG_DELAY_MS = 500; // Delay between multiple print dialogs
 
   // Load theme CSS (Deep Cerulean)
   $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">').appendTo(document.head);
@@ -244,9 +245,35 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       });
       
       if (result && result.message) {
-        const { print_url, enable_silent_printing, printer_name } = result.message;
-        const fullUrl = frappe.urllib.get_full_url(print_url);
-        await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, stockEntryName);
+        const { print_urls, enable_silent_printing, printer_name } = result.message;
+        
+        if (!print_urls || print_urls.length === 0) {
+          frappe.show_alert({ message: __('No print URLs returned'), indicator: 'red' });
+          return;
+        }
+        
+        // Print all items with delay between prints
+        // Sequential execution is intentional to avoid overwhelming the printer queue
+        // and to prevent browser popup blockers when using print dialogs
+        for (let idx = 0; idx < print_urls.length; idx++) {
+          const print_url = print_urls[idx];
+          const fullUrl = frappe.urllib.get_full_url(print_url);
+          
+          // Add delay between prints (except for first print)
+          if (idx > 0) {
+            await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+          }
+          
+          await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, `${stockEntryName} item ${idx + 1}`);
+        }
+        
+        // Show success message
+        const action = enable_silent_printing ? 'sent to printer' : 'dialog(s) opened';
+        const count = print_urls.length;
+        frappe.show_alert({
+          message: `${count} label(s) ${action}`, 
+          indicator: 'green'
+        });
       }
     } catch (err) {
       console.error('Print label error:', err);

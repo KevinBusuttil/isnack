@@ -883,8 +883,8 @@ def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
 def print_labels(stock_entry: str):
     """Return print format information for client-side printing.
     
-    This function is kept for backward compatibility but now returns
-    print information instead of calling print_by_server.
+    This function now returns multiple print_urls, one for each Stock Entry Detail item.
+    This allows printing a separate label for each item in the Stock Entry.
     """
     # Get Factory Settings for printing configuration
     try:
@@ -897,12 +897,27 @@ def print_labels(stock_entry: str):
         enable_silent_printing = False
         default_label_printer = None
     
+    # Get Stock Entry document to access items
+    se_doc = frappe.get_doc("Stock Entry", stock_entry)
+    
+    # Generate print URLs for each Stock Entry Detail item
+    print_urls = []
+    if se_doc.items:
+        for item in se_doc.items:
+            # Include the row name in the print URL so the print format can render the specific item
+            print_url = f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&row_name={frappe.utils.quote(item.name)}&trigger_print=1"
+            print_urls.append(print_url)
+    
+    # Fallback: if no items, generate a single print URL for the whole document
+    if not print_urls:
+        print_urls.append(f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1")
+    
     # Return print information for client-side handling
     return {
         "doctype": "Stock Entry",
         "name": stock_entry,
         "print_format": fmt,
-        "print_url": f"/printview?doctype=Stock%20Entry&name={frappe.utils.quote(stock_entry)}&format={frappe.utils.quote(fmt)}&trigger_print=1",
+        "print_urls": print_urls,
         "enable_silent_printing": enable_silent_printing,
         "printer_name": default_label_printer
     }
