@@ -85,14 +85,17 @@ def _backflush_groups_global() -> set[str]:
             out.add(str(ig).strip().lower())
     return out
 
-def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _warehouses_for_line(
+    line: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
     Factory Settings -> Line Warehouse Map child table.
-    Child rows expected: line (Workstation), staging_warehouse, wip_warehouse, target_warehouse
-    Returns (staging, wip, target).
+    Child rows expected: line (Workstation), staging_warehouse, wip_warehouse,
+    target_warehouse, return_warehouse.
+    Returns (staging, wip, target, return_wh).
     """
     if not line:
-        return None, None, None
+        return None, None, None, None
     fs = _fs()
     rows = getattr(fs, "line_warehouse_map", []) or []
     for r in rows:
@@ -106,8 +109,9 @@ def _warehouses_for_line(line: Optional[str]) -> tuple[Optional[str], Optional[s
                 getattr(r, "staging_warehouse", None) or None,
                 getattr(r, "wip_warehouse", None) or None,
                 getattr(r, "target_warehouse", None) or None,
+                getattr(r, "return_warehouse", None) or None,
             )
-    return None, None, None
+    return None, None, None, None
 
 def _default_line_scrap(work_order: str) -> Optional[str]:
     """Get scrap/reject warehouse for the work order's line."""
@@ -258,18 +262,18 @@ def _line_for_work_order(work_order: str) -> Optional[str]:
 
 def _default_line_staging(work_order: str, *, is_packaging: bool = False) -> Optional[str]:
     line = _line_for_work_order(work_order)
-    staging, _wip, _target = _warehouses_for_line(line)
+    staging, _wip, _target, _return_wh = _warehouses_for_line(line)
     return staging or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_wip(work_order: str) -> Optional[str]:
     line = _line_for_work_order(work_order)
-    _staging, wip, _target = _warehouses_for_line(line)
+    _staging, wip, _target, _return_wh = _warehouses_for_line(line)
     return wip or frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
 def _default_line_target(work_order: str) -> Optional[str]:
     """Default FG/SFG output warehouse for a WO based on its line."""
     line = _line_for_work_order(work_order)
-    _staging, _wip, target = _warehouses_for_line(line)
+    _staging, _wip, target, _return_wh = _warehouses_for_line(line)
     return target or None
 
 def _default_sfg_source(work_order: str) -> Optional[str]:
@@ -1791,7 +1795,7 @@ def get_wip_inventory(line: Optional[str] = None):
         frappe.throw(_("Missing line parameter"))
     
     # Get WIP warehouse for the line
-    _staging_wh, wip_wh, _target_wh = _warehouses_for_line(line)
+    _staging_wh, wip_wh, _target_wh, _return_wh = _warehouses_for_line(line)
     
     if not wip_wh:
         frappe.throw(_("WIP warehouse not configured for line {0}").format(line))
@@ -1871,10 +1875,11 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
         frappe.throw(_("No items to return"))
     
     # Get warehouses for the line
-    staging_wh, wip_wh, _target_wh = _warehouses_for_line(line)
+    staging_wh, wip_wh, _target_wh, return_wh = _warehouses_for_line(line)
     
-    if not wip_wh or not staging_wh:
-        frappe.throw(_("WIP or Staging warehouse not configured for line {0}").format(line))
+    target_wh = return_wh or staging_wh
+    if not wip_wh or not target_wh:
+        frappe.throw(_("WIP or Return/Staging warehouse not configured for line {0}").format(line))
     
     # Create Stock Entry for Material Transfer
     se = frappe.new_doc("Stock Entry")
@@ -1892,7 +1897,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
             "qty": qty,
             "uom": frappe.db.get_value("Item", item_code, "stock_uom") or "Nos",
             "s_warehouse": wip_wh,
-            "t_warehouse": staging_wh,
+            "t_warehouse": target_wh,
         }
         
         if it.get("batch_no"):
@@ -1918,7 +1923,7 @@ def apply_line_warehouses_to_work_order(doc, method=None):
       1) Determine the line for this WO:
            - Prefer doc.custom_line (your line field).
            - Else, fall back to the first operation's workstation.
-      2) Look up (staging, wip, target) from _warehouses_for_line(line).
+      2) Look up (staging, wip, target, return) from _warehouses_for_line(line).
       3) If we have values:
            - On NEW docs (doc.__islocal), override whatever is there (including
              Manufacturing Settings defaults).
@@ -1944,7 +1949,7 @@ def apply_line_warehouses_to_work_order(doc, method=None):
         return  # nothing to map
 
     # 2) Get warehouses from Factory Settings → Line Warehouse Map
-    _staging, wip, target = _warehouses_for_line(line)
+    _staging, wip, target, _return_wh = _warehouses_for_line(line)
     if not (wip or target):
         return
 
