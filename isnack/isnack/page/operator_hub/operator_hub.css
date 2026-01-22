@@ -479,6 +479,14 @@
 }
 
 /* =====================================
+   End Shift Return Dialog Styles
+   ===================================== */
+.op-teal .end-shift-return-dialog .modal-dialog{
+  max-width: 900px;
+  width: calc(100% - 2rem);
+}
+
+/* =====================================
    Kiosk mode: hide ERPNext chrome on Operator Hub only
    ===================================== */
 body[data-route="operator-hub"].op-kiosk .navbar,
