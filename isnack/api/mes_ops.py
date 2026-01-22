@@ -479,20 +479,30 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
 # ============================================================
 
 @frappe.whitelist()
-def get_line_queue(line: Optional[str] = None):
-    """Return Work Orders for a line (Factory Line), replacing Job Card queue."""    
-    if not line:
-        line = _get_user_line(frappe.session.user)
+def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
+    """Return Work Orders for one or more lines (Factory Lines)."""
+    # Parse lines parameter (JSON array from frontend)
+    import json
+    selected_lines = []
+    if lines:
+        selected_lines = json.loads(lines) if isinstance(lines, str) else lines
+    elif line:
+        selected_lines = [line]
+    
+    if not selected_lines:
+        user_line = _get_user_line(frappe.session.user)
+        if user_line:
+            selected_lines = [user_line]
 
     filters: dict = {
         "docstatus": 1,
         "status": ["in", ["Not Started", "In Process", "Stopped"]],
     }
     
-    if line:
+    if selected_lines:
         meta = frappe.get_meta("Work Order")
         if meta.has_field("custom_factory_line"):
-            filters["custom_factory_line"] = line
+            filters["custom_factory_line"] = ["in", selected_lines]
 
     wos = frappe.get_all(
         "Work Order",
