@@ -215,10 +215,31 @@ function init_operator_hub($root) {
   const $matScans  = $('#mat-scans', $root);
   const $matWOLbl  = $('#mat-wo-label', $root);
 
+  // Migrate from old single-line storage to multi-line storage
+  const migrateLineStorage = () => {
+    const oldLine = localStorage.getItem('kiosk_line');
+    const newLines = localStorage.getItem('kiosk_lines');
+    if (oldLine && !newLines) {
+      localStorage.setItem('kiosk_lines', JSON.stringify([oldLine]));
+      localStorage.removeItem('kiosk_line');
+      return [oldLine];
+    }
+    if (newLines) {
+      try {
+        return JSON.parse(newLines);
+      } catch (e) {
+        console.error('Failed to parse kiosk_lines from localStorage:', e);
+        localStorage.removeItem('kiosk_lines');
+        return [];
+      }
+    }
+    return [];
+  };
+
   const state  = {
     current_wo: null,
     orders: [],
-    current_line: localStorage.getItem('kiosk_line') || null,
+    current_lines: migrateLineStorage(),
     current_emp: null,
     current_emp_name: null,
     current_is_fg: false,
@@ -272,7 +293,7 @@ function init_operator_hub($root) {
     }
 
     if (hasHeader) {
-      $('#kiosk-line-label').text(state.current_line || '—');
+      $('#kiosk-line-label').text(state.current_lines.length ? state.current_lines.join(', ') : '—');
       $('#kiosk-emp-label').text(state.current_emp_name || '—');
       bindCommon();
     } else {
@@ -361,7 +382,7 @@ function init_operator_hub($root) {
     $('#btn-return',  $root).prop('disabled', !enableActions);
     
     // End Shift Return only requires operator and line (no work order needed)
-    $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_line));
+    $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
     $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_is_fg));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
@@ -399,15 +420,23 @@ function init_operator_hub($root) {
   $('#kiosk-choose-line', $root).on('click', async () => {
     setScanMode(false);
     const r = await rpc('isnack.api.mes_ops.list_workstations');
-    const opts = (r.message || []).join('\n');
+    const opts = (r.message || []);
     const d = new frappe.ui.Dialog({
-      title: 'Select Factory Line',
-      fields: [{ label:'Factory Line', fieldname:'line', fieldtype:'Select', options: opts, reqd:1 }],
+      title: 'Select Factory Lines',
+      fields: [{ 
+        label:'Factory Lines', 
+        fieldname:'lines', 
+        fieldtype:'MultiSelectPills', 
+        options: opts,
+        reqd:1,
+        default: state.current_lines
+      }],
       primary_action_label: 'Apply',
       primary_action: v => {
-        state.current_line = v.line;
-        localStorage.setItem('kiosk_line', v.line);
-        $('#kiosk-line-label').text(v.line);
+        const selectedLines = v.lines || [];
+        state.current_lines = selectedLines;
+        localStorage.setItem('kiosk_lines', JSON.stringify(selectedLines));
+        $('#kiosk-line-label').text(selectedLines.length ? selectedLines.join(', ') : '—');
 
         // Reset current WO context when line changes
         state.current_wo = null;
@@ -513,7 +542,7 @@ function init_operator_hub($root) {
   // =============== Queue & grid ===============
   function load_queue() {
     setStatus('Loading queue…');
-    const args = state.current_line ? { line: state.current_line } : {};
+    const args = state.current_lines.length ? { lines: JSON.stringify(state.current_lines) } : {};
     return rpc('isnack.api.mes_ops.get_line_queue', args).then(r => {
       const prev = state.current_wo;
       state.orders = r.message || r || []; render_grid();
@@ -832,7 +861,7 @@ function init_operator_hub($root) {
 
   // End Shift Return - return WIP without work order
   $('#btn-end-shift-return', $root).on('click', async () => {
-    if (!state.current_line) {
+    if (!state.current_lines.length) {
       frappe.msgprint('Please set a Factory Line first');
       return;
     }
@@ -842,14 +871,42 @@ function init_operator_hub($root) {
     }
     
     setScanMode(false);
+    
+    // If multiple lines are selected, ask user to choose which line to return WIP from
+    let selectedLine;
+    if (state.current_lines.length > 1) {
+      const lineDialog = new frappe.ui.Dialog({
+        title: 'Select Line for WIP Return',
+        fields: [{
+          label: 'Factory Line',
+          fieldname: 'line',
+          fieldtype: 'Select',
+          options: state.current_lines.join('\n'),
+          reqd: 1
+        }],
+        primary_action_label: 'Continue',
+        primary_action: (values) => {
+          selectedLine = values.line;
+          lineDialog.hide();
+          performWIPReturn(selectedLine);
+        }
+      });
+      lineDialog.show();
+    } else {
+      selectedLine = state.current_lines[0];
+      performWIPReturn(selectedLine);
+    }
+  });
+  
+  async function performWIPReturn(line) {
     setStatus('Loading WIP inventory…');
     
     try {
-      const resp = await rpc('isnack.api.mes_ops.get_wip_inventory', { line: state.current_line });
+      const resp = await rpc('isnack.api.mes_ops.get_wip_inventory', { line: line });
       const wipItems = (resp && resp.message && resp.message.items) || [];
       
       if (!wipItems.length) {
-        frappe.msgprint(`No items in WIP for line ${state.current_line}`);
+        frappe.msgprint(`No items in WIP for line ${line}`);
         flashStatus('No WIP inventory', 'neutral');
         return;
       }
@@ -874,7 +931,7 @@ function init_operator_hub($root) {
       `;
       
       const d = new frappe.ui.Dialog({
-        title: `End Shift Return — ${state.current_line}`,
+        title: `End Shift Return — ${line}`,
         fields: [
           { fieldname: 'wip_table', fieldtype: 'HTML', options: tableHTML }
         ],
@@ -905,7 +962,7 @@ function init_operator_hub($root) {
           setStatus('Posting WIP return…');
           try {
             await rpc('isnack.api.mes_ops.return_wip_to_staging', {
-              line: state.current_line,
+              line: line,
               items: JSON.stringify(itemsToReturn)
             });
             d.hide();
@@ -940,7 +997,7 @@ function init_operator_hub($root) {
     } catch (err) {
       console.error('Error loading WIP inventory', err);
     }
-  });
+  }
 
   async function showPrintLabelDialog() {
     // Pull default template from Factory Settings
