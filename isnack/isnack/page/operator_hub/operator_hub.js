@@ -973,6 +973,7 @@ function init_operator_hub($root) {
           }
         }
       });
+      d.$wrapper.addClass('end-shift-return-dialog');
       
       d.show();
       
