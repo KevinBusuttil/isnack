@@ -9,7 +9,8 @@
   "factory_line",
   "staging_warehouse",
   "wip_warehouse",
-  "target_warehouse"
+  "target_warehouse",
+  "return_warehouse"
  ],
  "fields": [
   {
@@ -33,6 +34,13 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "return_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Return Warehouse",
    "options": "Warehouse"
   },
   {
