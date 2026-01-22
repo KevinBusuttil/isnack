@@ -482,10 +482,12 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
 def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
     """Return Work Orders for one or more lines (Factory Lines)."""
     # Parse lines parameter (JSON array from frontend)
-    import json
     selected_lines = []
     if lines:
-        selected_lines = json.loads(lines) if isinstance(lines, str) else lines
+        try:
+            selected_lines = json.loads(lines) if isinstance(lines, str) else lines
+        except (json.JSONDecodeError, ValueError) as e:
+            frappe.throw(_("Invalid lines parameter: {0}").format(str(e)))
     elif line:
         selected_lines = [line]
     

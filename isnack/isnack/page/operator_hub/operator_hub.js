@@ -224,7 +224,16 @@ function init_operator_hub($root) {
       localStorage.removeItem('kiosk_line');
       return [oldLine];
     }
-    return newLines ? JSON.parse(newLines) : [];
+    if (newLines) {
+      try {
+        return JSON.parse(newLines);
+      } catch (e) {
+        console.error('Failed to parse kiosk_lines from localStorage:', e);
+        localStorage.removeItem('kiosk_lines');
+        return [];
+      }
+    }
+    return [];
   };
 
   const state  = {
