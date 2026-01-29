@@ -386,7 +386,13 @@ function init_operator_hub($root) {
 
     $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_is_fg));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
-    $('#btn-close',   $root).prop('disabled', !enableActions);
+    
+    // End WO button: enabled when operator set + WO selected + WO allocated + not already ended
+    const isProductionEnded = state.current_production_ended || false;
+    $('#btn-end-wo', $root).prop('disabled', !(enableActions && !isProductionEnded));
+    
+    // Close Production button: enabled when operator set + line(s) set (no specific WO required)
+    $('#btn-close-production', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
     if (!hasEmp) {
       ensureOperatorNotice();
@@ -555,6 +561,7 @@ function init_operator_hub($root) {
         state.current_is_fg = false;
         state.current_wo_status = null;
         state.current_stage_status = null;
+        state.current_production_ended = false;
         banner.html('');
         render_mat_empty('Select a Work Order to load materials.');
         refreshButtonStates();
@@ -609,6 +616,7 @@ function init_operator_hub($root) {
     state.current_is_fg = row ? (row.type === 'FG') : false;
     state.current_wo_status = row ? row.status : null;
     state.current_stage_status = row ? row.stage_status : null;
+    state.current_production_ended = row ? (row.custom_production_ended || false) : false;
 
     rpc('isnack.api.mes_ops.get_wo_banner', { work_order: wo_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
@@ -1220,19 +1228,10 @@ function init_operator_hub($root) {
     await showLabelHistoryDialog();
   });
 
-  // >>> NEW: Close / End Work Order with semi-finished usage <<<
-  $('#btn-close',$root).on('click', async () => {
+  // >>> NEW: End WO - Mark work order as ended and consume semi-finished materials <<<
+  $('#btn-end-wo',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);
-
-    // Get remaining qty as default for "Good"
-    let remainingDefault = 0;
-    try {
-      const r = await rpc('isnack.api.mes_ops.get_wo_progress', { work_order: state.current_wo });
-      remainingDefault = (r.message && r.message.remaining) || 0;
-    } catch (e) {
-      console.warn('get_wo_progress failed', e);
-    }
 
     // Get semi-finished components (slurry / rice mix etc.) for this WO
     let sfgRows = [];
@@ -1243,11 +1242,7 @@ function init_operator_hub($root) {
       console.warn('get_sfg_components_for_wo failed', e);
     }
 
-    const fields = [
-      { label:'Good Qty', fieldname:'good', fieldtype:'Float', reqd:1, default: remainingDefault },
-      { label:'Rejects',  fieldname:'rejects', fieldtype:'Float', default: 0 },
-      { label:'Remarks',  fieldname:'remarks', fieldtype:'Small Text' },
-    ];
+    const fields = [];
 
     if (sfgRows.length) {
       fields.push({ fieldtype: 'Section Break', label: 'Semi-finished usage (slurry / rice mix)' });
@@ -1262,14 +1257,20 @@ function init_operator_hub($root) {
           description: row.uom ? `UOM: ${row.uom}` : '',
         });
       });
+    } else {
+      fields.push({ 
+        fieldtype: 'HTML', 
+        fieldname: 'no_sfg_help',
+        options: '<div class="text-muted">No semi-finished materials to record. Click End WO to mark this work order as ended.</div>'
+      });
     }
 
     const d = new frappe.ui.Dialog({
-      title:'Close / End Work Order',
+      title:'End Work Order',
       fields,
-      primary_action_label:'Complete',
+      primary_action_label:'End WO',
       primary_action: (v) => {
-        setStatus('Completing work order…');
+        setStatus('Ending work order…');
 
         const sfgUsage = [];
         sfgRows.forEach((row, idx) => {
@@ -1281,15 +1282,12 @@ function init_operator_hub($root) {
           }
         });
 
-        rpc('isnack.api.mes_ops.complete_work_order', {
+        rpc('isnack.api.mes_ops.end_work_order', {
           work_order: state.current_wo,
-          good: v.good,
-          rejects: v.rejects,
-          remarks: v.remarks,
           sfg_usage: JSON.stringify(sfgUsage),
         }).then(() => {
           d.hide();
-          flashStatus(`Completed — ${state.current_wo}`, 'success');
+          flashStatus(`Ended — ${state.current_wo}`, 'success');
           load_queue();
         });
       }
@@ -1299,6 +1297,121 @@ function init_operator_hub($root) {
     if (f && f.$wrapper) {
       f.$wrapper.html('<div class="text-muted small mb-2">Enter the actual quantities of semi-finished materials used. They will be consumed from the Semi-finished warehouse.</div>');
     }
+
+    d.show();
+  });
+
+  // >>> NEW: Close Production - Complete all ended work orders <<<
+  $('#btn-close-production',$root).on('click', async () => {
+    if (!state.current_emp || !state.current_lines.length) { 
+      flashStatus('Set operator and line first', 'warning'); 
+      return; 
+    }
+    setScanMode(false);
+
+    setStatus('Loading ended work orders…');
+
+    // Get ended work orders
+    let endedWOs = [];
+    try {
+      const r = await rpc('isnack.api.mes_ops.get_ended_work_orders', { 
+        lines: JSON.stringify(state.current_lines) 
+      });
+      endedWOs = (r.message && r.message.work_orders) || [];
+    } catch (e) {
+      console.error('get_ended_work_orders failed', e);
+      flashStatus('Failed to load ended work orders', 'error');
+      return;
+    }
+
+    if (!endedWOs.length) {
+      flashStatus('No ended work orders found for this line', 'warning');
+      return;
+    }
+
+    // Get packaging items
+    let packagingItems = [];
+    try {
+      const r2 = await rpc('isnack.api.mes_ops.get_packaging_items', {});
+      packagingItems = (r2.message && r2.message.items) || [];
+    } catch (e) {
+      console.warn('get_packaging_items failed', e);
+    }
+
+    const fields = [];
+
+    // Show list of ended WOs
+    fields.push({ fieldtype: 'Section Break', label: 'Ended Work Orders' });
+    fields.push({ 
+      fieldtype: 'HTML', 
+      fieldname: 'ended_wo_list',
+      options: '<div class="mb-3">' + endedWOs.map(wo => 
+        `<div class="border rounded p-2 mb-2"><strong>${wo.name}</strong>: ${wo.item_name} (Qty: ${wo.qty})</div>`
+      ).join('') + '</div>'
+    });
+
+    // Good and Reject quantities
+    fields.push({ fieldtype: 'Section Break', label: 'Total Production' });
+    fields.push({ label:'Total Good Qty', fieldname:'good_qty', fieldtype:'Float', reqd:1, default: 0 });
+    fields.push({ label:'Total Reject Qty', fieldname:'reject_qty', fieldtype:'Float', default: 0 });
+
+    // Packaging materials
+    if (packagingItems.length) {
+      fields.push({ fieldtype: 'Section Break', label: 'Packaging Materials Used' });
+      fields.push({ 
+        fieldtype: 'HTML', 
+        fieldname: 'packaging_help',
+        options: '<div class="text-muted small mb-2">Enter total quantities of packaging materials used across all ended work orders.</div>'
+      });
+
+      packagingItems.forEach((item, idx) => {
+        fields.push({
+          label: `${item.item_code} — ${item.item_name || ''}`,
+          fieldname: `pkg_${idx}`,
+          fieldtype: 'Float',
+          default: 0,
+          description: item.stock_uom ? `UOM: ${item.stock_uom}` : '',
+        });
+      });
+    }
+
+    const d = new frappe.ui.Dialog({
+      title:'Close Production',
+      fields,
+      size: 'large',
+      primary_action_label:'Close Production',
+      primary_action: (v) => {
+        if (!v.good_qty || v.good_qty <= 0) {
+          frappe.msgprint('Total Good Qty must be greater than zero');
+          return;
+        }
+
+        setStatus('Closing production…');
+
+        const packagingUsage = [];
+        packagingItems.forEach((item, idx) => {
+          const key = `pkg_${idx}`;
+          const rawVal = v[key];
+          const qty = parseFloat(rawVal || 0);
+          if (qty > 0) {
+            packagingUsage.push({ item_code: item.item_code, qty: qty });
+          }
+        });
+
+        rpc('isnack.api.mes_ops.close_production', {
+          good_qty: v.good_qty,
+          reject_qty: v.reject_qty || 0,
+          packaging_usage: JSON.stringify(packagingUsage),
+          lines: JSON.stringify(state.current_lines),
+        }).then(() => {
+          d.hide();
+          flashStatus(`Production closed for ${endedWOs.length} work order(s)`, 'success');
+          load_queue();
+        }).catch(err => {
+          console.error('close_production failed', err);
+        });
+      }
+    });
 
     d.show();
   });

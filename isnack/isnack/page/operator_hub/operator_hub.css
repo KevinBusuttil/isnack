@@ -394,10 +394,16 @@
   color:#5b21b6;
 }
 
-/* Group 4: Close / End */
+/* Group 4: End WO / Close Production */
 .op-teal .op-bottom .op-btn-close{
   background:#64748b;
   border-color:#475569;
+  color:#ffffff;
+}
+
+.op-teal .op-bottom .op-btn-close-production{
+  background:#28a745;
+  border-color:#1e7e34;
   color:#ffffff;
 }
 
