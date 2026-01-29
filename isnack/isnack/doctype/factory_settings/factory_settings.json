@@ -12,6 +12,9 @@
   "scan_dup_ttl_sec",
   "max_active_operators",
   "material_overconsumption_threshold",
+  "close_production_section",
+  "close_production_validation_mode",
+  "close_production_min_wo_count",
   "storekeeper_hub_section",
   "stock_entry_button_roles",
   "item_group_policies_section",
@@ -77,6 +80,28 @@
    "fieldname": "material_overconsumption_threshold",
    "fieldtype": "Percent",
    "label": "Material Over-consumption Threshold"
+  },
+  {
+   "fieldname": "close_production_section",
+   "fieldtype": "Section Break",
+   "label": "Close Production"
+  },
+  {
+   "default": "No Validation",
+   "description": "Controls validation before closing production. 'No Validation' allows closing at any time, 'All WOs on Line Must Be Ended' requires all work orders to be ended first, 'Minimum Number of WOs' requires a minimum count.",
+   "fieldname": "close_production_validation_mode",
+   "fieldtype": "Select",
+   "label": "Close Production Validation Mode",
+   "options": "No Validation\nAll WOs on Line Must Be Ended\nMinimum Number of WOs"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.close_production_validation_mode == 'Minimum Number of WOs'",
+   "description": "Minimum number of work orders that must be ended before closing production",
+   "fieldname": "close_production_min_wo_count",
+   "fieldtype": "Int",
+   "label": "Minimum WO Count",
+   "non_negative": 1
   },
   {
    "fieldname": "storekeeper_hub_section",
