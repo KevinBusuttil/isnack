@@ -1427,12 +1427,14 @@ def get_ended_work_orders(lines: str = None):
         "status": ["!=", "Completed"],
     }
     
+    line_list = []
+
     # Filter by lines if provided
     if lines:
         try:
             line_list = json.loads(lines) if isinstance(lines, str) else lines
             if line_list:
-                filters["factory_line"] = ["in", line_list]
+                filters["custom_factory_line"] = ["in", line_list]
         except Exception:
             pass
     
@@ -1442,6 +1444,12 @@ def get_ended_work_orders(lines: str = None):
         fields=["name", "production_item", "qty"],
         order_by="creation asc"
     )
+
+    if lines and line_list:
+        work_orders = [
+            wo for wo in work_orders
+            if (_line_for_work_order(wo["name"]) in line_list)
+        ]
     
     # Enrich with item names
     for wo in work_orders:
@@ -1497,13 +1505,19 @@ def _validate_close_production(lines, ended_wos):
             "status": ["!=", "Completed"],
         }
         if lines:
-            filters["factory_line"] = ["in", lines]
+            filters["custom_factory_line"] = ["in", lines]
         
         all_wos = frappe.get_all(
             "Work Order",
             filters=filters,
             fields=["name", "custom_production_ended"]
         )
+
+        if lines:
+            all_wos = [
+                wo for wo in all_wos
+                if _line_for_work_order(wo["name"]) in lines
+            ]
         
         not_ended = [wo.name for wo in all_wos if not wo.get("custom_production_ended")]
         if not_ended:
@@ -1607,14 +1621,20 @@ def close_production(good_qty: float, reject_qty: float = 0,
         "status": ["!=", "Completed"],
     }
     if line_list:
-        filters["factory_line"] = ["in", line_list]
+        filters["custom_factory_line"] = ["in", line_list]
     
     ended_wos = frappe.get_all(
         "Work Order",
         filters=filters,
-        fields=["name", "qty", "production_item", "company", "bom_no", "fg_warehouse", "wip_warehouse", "factory_line"],
+        fields=["name", "qty", "production_item", "company", "bom_no", "fg_warehouse", "wip_warehouse", "custom_factory_line"],
         order_by="creation asc"
     )
+
+    if line_list:
+        ended_wos = [
+            wo for wo in ended_wos
+            if _line_for_work_order(wo["name"]) in line_list
+        ]
     
     if not ended_wos:
         frappe.throw(_("No ended work orders found for the specified lines"))
