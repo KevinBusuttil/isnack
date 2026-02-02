@@ -1024,11 +1024,11 @@ function init_operator_hub($root) {
     }
 
     const d = new frappe.ui.Dialog({
-      title:'Print Carton Label (FG only)',
+      title: 'Print Carton Label (FG only)',
       fields: [
-        { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 }
+        { label: 'Carton Qty', fieldname: 'qty', fieldtype: 'Float', reqd: 1, default: 12 }
       ],
-      primary_action_label:'Print',
+      primary_action_label: 'Print',
       primary_action: async (v) => {
         setStatus('Creating label and opening print dialog…');
         try {
