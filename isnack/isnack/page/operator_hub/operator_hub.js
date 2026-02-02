@@ -1010,14 +1010,23 @@ function init_operator_hub($root) {
   }
 
   async function showPrintLabelDialog() {
-    // Pull default template from Factory Settings
-    const tplDefault = await frappe.db.get_single_value('Factory Settings', 'default_label_template');
+    // Fetch default print format from Factory Settings
+    const defaultPrintFormat = await frappe.db.get_single_value('Factory Settings', 'default_label_print_format');
+    
+    // Validate that a default print format is configured
+    if (!defaultPrintFormat) {
+      frappe.msgprint({
+        title: __('Configuration Error'),
+        message: __('No default label print format is configured in Factory Settings. Please set "Default Label Print Format" before printing labels.'),
+        indicator: 'red'
+      });
+      return;
+    }
 
     const d = new frappe.ui.Dialog({
       title:'Print Carton Label (FG only)',
       fields: [
-        { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 },
-        { label:'Template',   fieldname:'template', fieldtype:'Link', options:'Label Template', reqd:1, default: tplDefault || '' }
+        { label:'Carton Qty', fieldname:'qty', fieldtype:'Float', reqd:1, default:12 }
       ],
       primary_action_label:'Print',
       primary_action: async (v) => {
@@ -1026,7 +1035,7 @@ function init_operator_hub($root) {
           const r = await rpc('isnack.api.mes_ops.print_label', { 
             work_order: state.current_wo, 
             carton_qty: v.qty, 
-            template: v.template 
+            template: defaultPrintFormat 
           });
           d.hide();
           if (r.message && r.message.print_url) {

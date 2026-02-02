@@ -1816,10 +1816,11 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         frappe.throw(_("Label printing allowed only for finished goods"))
 
     fs = _fs()
-    template = template or getattr(fs, "default_label_template", None)
+    # Try default_label_print_format first, then fall back to default_label_template for backward compatibility
+    template = template or getattr(fs, "default_label_print_format", None) or getattr(fs, "default_label_template", None)
 
     if not template:
-        frappe.throw(_("No label template provided and no default set in Factory Settings"))
+        frappe.throw(_("No label template or print format provided and no default configured in Factory Settings (default_label_print_format or default_label_template)"))
 
     # Check if template is a Print Format (new method)
     is_print_format = frappe.db.exists("Print Format", template)
