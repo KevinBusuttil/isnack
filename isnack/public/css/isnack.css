@@ -27,3 +27,8 @@
 [data-theme=isn_theme] .navbar-brand:hover {
 	color:#ddd !important;
 }
+
+[data-theme=dark] .indicator-pill .text-muted,
+[data-theme=dark] .indicator-pill .text-muted * {
+	color: #334155;
+}
