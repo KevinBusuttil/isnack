@@ -1482,6 +1482,110 @@ def get_packaging_items():
     
     return {"items": items}
 
+@frappe.whitelist()
+def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = None):
+    """
+    Get packaging BOM items for ended work orders.
+    
+    Only returns packaging items that appear on the BOMs of the ended work orders
+    being closed (and are in Packaging Item Groups).
+    
+    Args:
+        work_orders: JSON array of work order names (preferred)
+        lines: JSON array of line names (fallback to resolve ended WOs)
+    
+    Returns:
+        dict: {"items": [{"item_code": "...", "item_name": "...", "stock_uom": "..."}]}
+    """
+    _require_roles(ROLES_OPERATOR)
+    
+    packaging_groups = _packaging_groups_global()
+    
+    if not packaging_groups:
+        return {"items": []}
+    
+    # Parse work_orders parameter
+    wo_list = []
+    if work_orders:
+        try:
+            wo_list = json.loads(work_orders) if isinstance(work_orders, str) else work_orders
+        except Exception as e:
+            # Log parsing error but continue with empty list
+            frappe.log_error(f"Failed to parse work_orders parameter: {str(e)}", "get_packaging_bom_items_for_ended_wos")
+    
+    # If no explicit work orders provided, resolve from lines
+    if not wo_list and lines:
+        try:
+            line_list = json.loads(lines) if isinstance(lines, str) else lines
+            if line_list:
+                filters = {
+                    "custom_production_ended": 1,
+                    "status": ["!=", "Completed"],
+                    "custom_factory_line": ["in", line_list]
+                }
+                ended_wos = frappe.get_all(
+                    "Work Order",
+                    filters=filters,
+                    fields=["name"],
+                    order_by="creation asc"
+                )
+                wo_list = [wo["name"] for wo in ended_wos]
+        except Exception as e:
+            # Log error but continue - may be invalid lines parameter or query failure
+            frappe.log_error(f"Failed to resolve work orders from lines: {str(e)}", "get_packaging_bom_items_for_ended_wos")
+    
+    if not wo_list:
+        return {"items": []}
+    
+    # Collect BOMs for the work orders in a single query
+    bom_data = frappe.db.get_all(
+        "Work Order",
+        filters={"name": ["in", wo_list]},
+        fields=["name", "bom_no"]
+    )
+    bom_nos = [row["bom_no"] for row in bom_data if row.get("bom_no")]
+    
+    if not bom_nos:
+        return {"items": []}
+    
+    # Get all BOM items from all BOMs in a single query
+    bom_items = frappe.db.get_all(
+        "BOM Item",
+        filters={"parent": ["in", bom_nos]},
+        fields=["item_code"]
+    )
+    
+    # Get unique item codes using set comprehension
+    unique_item_codes = list({row["item_code"] for row in bom_items})
+    
+    if not unique_item_codes:
+        return {"items": []}
+    
+    # Get item groups for all items in a single query
+    item_group_data = frappe.db.get_all(
+        "Item",
+        filters={"name": ["in", unique_item_codes]},
+        fields=["name", "item_group", "item_name", "stock_uom"]
+    )
+    
+    # Filter items that belong to packaging groups
+    packaging_items = []
+    for item_data in item_group_data:
+        ig = item_data.get("item_group") or ""
+        group = ig.strip().lower()
+        
+        if group in packaging_groups:
+            packaging_items.append({
+                "item_code": item_data["name"],
+                "item_name": item_data.get("item_name") or item_data["name"],
+                "stock_uom": item_data.get("stock_uom") or "Nos"
+            })
+    
+    # Sort by item_code for consistency
+    packaging_items.sort(key=lambda x: x["item_code"])
+    
+    return {"items": packaging_items}
+
 def _validate_close_production(lines, ended_wos):
     """
     Validate close production based on Factory Settings validation mode.
