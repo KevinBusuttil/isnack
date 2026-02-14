@@ -1546,38 +1546,38 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
     if not bom_nos:
         return {"items": []}
     
-    # Get distinct BOM items that are in packaging groups
-    # Use a set to track unique items
-    seen_items = set()
-    packaging_items = []
+    # Get all BOM items from all BOMs in a single query
+    bom_items = frappe.db.get_all(
+        "BOM Item",
+        filters={"parent": ["in", bom_nos]},
+        fields=["item_code"]
+    )
     
-    for bom_no in bom_nos:
-        try:
-            bom = frappe.get_doc("BOM", bom_no)
-            for row in bom.items:
-                item_code = row.item_code
-                
-                # Skip if already added
-                if item_code in seen_items:
-                    continue
-                
-                # Check if item is in packaging groups
-                ig = _get_item_group(item_code) or ""
-                group = ig.strip().lower()
-                
-                if group in packaging_groups:
-                    # Get item details in a single query
-                    item_data = frappe.db.get_value("Item", item_code, ["item_name", "stock_uom"], as_dict=True)
-                    if item_data:
-                        packaging_items.append({
-                            "item_code": item_code,
-                            "item_name": item_data.get("item_name") or item_code,
-                            "stock_uom": item_data.get("stock_uom") or "Nos"
-                        })
-                        seen_items.add(item_code)
-        except Exception as e:
-            frappe.log_error(f"Failed to load BOM {bom_no}: {str(e)}", "get_packaging_bom_items_for_ended_wos")
-            continue
+    # Get unique item codes
+    unique_item_codes = list(set([row["item_code"] for row in bom_items]))
+    
+    if not unique_item_codes:
+        return {"items": []}
+    
+    # Get item groups for all items in a single query
+    item_group_data = frappe.db.get_all(
+        "Item",
+        filters={"name": ["in", unique_item_codes]},
+        fields=["name", "item_group", "item_name", "stock_uom"]
+    )
+    
+    # Filter items that belong to packaging groups
+    packaging_items = []
+    for item_data in item_group_data:
+        ig = item_data.get("item_group") or ""
+        group = ig.strip().lower()
+        
+        if group in packaging_groups:
+            packaging_items.append({
+                "item_code": item_data["name"],
+                "item_name": item_data.get("item_name") or item_data["name"],
+                "stock_uom": item_data.get("stock_uom") or "Nos"
+            })
     
     # Sort by item_code for consistency
     packaging_items.sort(key=lambda x: x["item_code"])
