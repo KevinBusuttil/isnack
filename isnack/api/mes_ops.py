@@ -1509,8 +1509,9 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
     if work_orders:
         try:
             wo_list = json.loads(work_orders) if isinstance(work_orders, str) else work_orders
-        except Exception:
-            pass
+        except Exception as e:
+            # Log parsing error but continue with empty list
+            frappe.log_error(f"Failed to parse work_orders parameter: {str(e)}", "get_packaging_bom_items_for_ended_wos")
     
     # If no explicit work orders provided, resolve from lines
     if not wo_list and lines:
@@ -1529,8 +1530,9 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                     order_by="creation asc"
                 )
                 wo_list = [wo["name"] for wo in ended_wos]
-        except Exception:
-            pass
+        except Exception as e:
+            # Log error but continue - may be invalid lines parameter or query failure
+            frappe.log_error(f"Failed to resolve work orders from lines: {str(e)}", "get_packaging_bom_items_for_ended_wos")
     
     if not wo_list:
         return {"items": []}
@@ -1553,8 +1555,8 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
         fields=["item_code"]
     )
     
-    # Get unique item codes
-    unique_item_codes = list(set([row["item_code"] for row in bom_items]))
+    # Get unique item codes using set comprehension
+    unique_item_codes = list({row["item_code"] for row in bom_items})
     
     if not unique_item_codes:
         return {"items": []}
