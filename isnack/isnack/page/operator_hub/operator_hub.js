@@ -1338,13 +1338,16 @@ function init_operator_hub($root) {
       return;
     }
 
-    // Get packaging items
+    // Get packaging items for ended WOs
     let packagingItems = [];
     try {
-      const r2 = await rpc('isnack.api.mes_ops.get_packaging_items', {});
+      const woNames = endedWOs.map(wo => wo.name);
+      const r2 = await rpc('isnack.api.mes_ops.get_packaging_bom_items_for_ended_wos', {
+        work_orders: JSON.stringify(woNames)
+      });
       packagingItems = (r2.message && r2.message.items) || [];
     } catch (e) {
-      console.warn('get_packaging_items failed', e);
+      console.warn('get_packaging_bom_items_for_ended_wos failed', e);
     }
 
     const fields = [];
