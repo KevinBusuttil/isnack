@@ -1535,12 +1535,13 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
     if not wo_list:
         return {"items": []}
     
-    # Collect BOMs for the work orders
-    bom_nos = []
-    for wo_name in wo_list:
-        bom_no = frappe.db.get_value("Work Order", wo_name, "bom_no")
-        if bom_no:
-            bom_nos.append(bom_no)
+    # Collect BOMs for the work orders in a single query
+    bom_data = frappe.db.get_all(
+        "Work Order",
+        filters={"name": ["in", wo_list]},
+        fields=["name", "bom_no"]
+    )
+    bom_nos = [row["bom_no"] for row in bom_data if row.get("bom_no")]
     
     if not bom_nos:
         return {"items": []}
@@ -1565,17 +1566,17 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                 group = ig.strip().lower()
                 
                 if group in packaging_groups:
-                    # Get item details
-                    item_name = frappe.db.get_value("Item", item_code, "item_name") or item_code
-                    stock_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-                    
-                    packaging_items.append({
-                        "item_code": item_code,
-                        "item_name": item_name,
-                        "stock_uom": stock_uom
-                    })
-                    seen_items.add(item_code)
-        except Exception:
+                    # Get item details in a single query
+                    item_data = frappe.db.get_value("Item", item_code, ["item_name", "stock_uom"], as_dict=True)
+                    if item_data:
+                        packaging_items.append({
+                            "item_code": item_code,
+                            "item_name": item_data.get("item_name") or item_code,
+                            "stock_uom": item_data.get("stock_uom") or "Nos"
+                        })
+                        seen_items.add(item_code)
+        except Exception as e:
+            frappe.log_error(f"Failed to load BOM {bom_no}: {str(e)}", "get_packaging_bom_items_for_ended_wos")
             continue
     
     # Sort by item_code for consistency
