@@ -26,7 +26,7 @@ This document lists the major complex tasks delivered across both hubs to help w
    - Added pallet ID tagging and a pallet tracker panel for quick traceability of staged inventory.
 
 8. **Recent activity dashboards**
-   - Implemented “Staged Today,” “Recent Manual Stock Entries,” and “Pallet Tracker” panels for 24-hour visibility.
+   - Implemented “Staged (Production Date),” “Recent Manual Stock Entries,” and “Pallet Tracker” panels for 24-hour visibility.
 
 9. **PO Receipt workflow**
    - Built a Purchase Order receipt flow that lets storekeepers receive PO items directly from the hub.
