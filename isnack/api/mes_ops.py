@@ -193,6 +193,215 @@ def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
 
 
 # ============================================================
+# Batch Code Generation - ISNACK System
+# ============================================================
+
+def generate_batch_code(date=None, sequence: int = 1) -> str:
+    """
+    Generate ISNACK batch code in format: YYM-DD# → [Letter][Letter][Letter][Number][Number][Number]
+    
+    PART 1: THE YEAR (Letters 1 & 2)
+    Map each digit of last two digits of year: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=G, 7=H, 8=I, 9=J
+    - 2025 → CF, 2026 → CG, 2027 → CH, 2028 → CI, 2029 → CJ, 2030 → DA
+    
+    PART 2: THE MONTH (Letter 3)
+    A=Jan, B=Feb, C=Mar, D=Apr, E=May, F=Jun, G=Jul, H=Aug, I=Sep, J=Oct, K=Nov, L=Dec
+    
+    PART 3: THE DAY & SEQUENCE (Numbers 4, 5, & 6)
+    - Numbers 4 & 5: Calendar day of month, zero-padded (01-31)
+    - Number 6: Batch sequence for that day (1-9)
+    
+    Examples:
+    - February 15, 2026 (1st batch) → CGB151
+    - October 31, 2026 (3rd batch) → CGJ313
+    - January 05, 2027 (1st batch) → CHA051
+    
+    Args:
+        date: Date object or string (defaults to today)
+        sequence: Sequence number for the day (1-9)
+    
+    Returns:
+        str: 6-character batch code
+    """
+    from frappe.utils import getdate
+    
+    if date is None:
+        date = frappe.utils.today()
+    
+    date_obj = getdate(date)
+    
+    # Digit to letter mapping
+    digit_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'J'}
+    
+    # PART 1: Year - last two digits, each mapped to letter
+    year_str = str(date_obj.year)[-2:]  # Get last 2 digits
+    year_letter1 = digit_map[int(year_str[0])]
+    year_letter2 = digit_map[int(year_str[1])]
+    
+    # PART 2: Month - A=Jan through L=Dec
+    month_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
+    month_letter = month_letters[date_obj.month - 1]
+    
+    # PART 3: Day (2 digits) + Sequence (1 digit)
+    day_str = f"{date_obj.day:02d}"
+    sequence_str = str(sequence)[-1]  # Last digit only
+    
+    return f"{year_letter1}{year_letter2}{month_letter}{day_str}{sequence_str}"
+
+
+def _get_batch_code_prefix(date=None) -> str:
+    """
+    Generate the 5-character batch code prefix (without sequence number).
+    
+    Args:
+        date: Date object or string (defaults to today)
+    
+    Returns:
+        str: 5-character prefix (e.g., "CGB15" for Feb 15, 2026)
+    """
+    from frappe.utils import getdate
+    
+    if date is None:
+        date = frappe.utils.today()
+    
+    date_obj = getdate(date)
+    
+    # Digit to letter mapping
+    digit_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'J'}
+    
+    # PART 1: Year - last two digits, each mapped to letter
+    year_str = str(date_obj.year)[-2:]
+    year_letter1 = digit_map[int(year_str[0])]
+    year_letter2 = digit_map[int(year_str[1])]
+    
+    # PART 2: Month - A=Jan through L=Dec
+    month_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
+    month_letter = month_letters[date_obj.month - 1]
+    
+    # PART 3: Day (2 digits)
+    day_str = f"{date_obj.day:02d}"
+    
+    return f"{year_letter1}{year_letter2}{month_letter}{day_str}"
+
+
+def _get_next_batch_sequence(date=None) -> int:
+    """
+    Get the next batch sequence number for the given date by querying existing batches.
+    
+    Args:
+        date: Date object or string (defaults to today)
+    
+    Returns:
+        int: Next sequence number (1-9)
+    """
+    from frappe.utils import getdate
+    
+    if date is None:
+        date = frappe.utils.today()
+    
+    date_obj = getdate(date)
+    
+    # Generate the 5-character prefix (without sequence)
+    prefix = _get_batch_code_prefix(date)
+    
+    # Query existing batches matching this prefix
+    existing_batches = frappe.db.sql("""
+        SELECT batch_id
+        FROM `tabBatch`
+        WHERE batch_id LIKE %(pattern)s
+        ORDER BY batch_id DESC
+        LIMIT 1
+    """, {"pattern": f"{prefix}%"}, as_dict=True)
+    
+    if not existing_batches:
+        return 1
+    
+    # Extract the sequence number from the last batch
+    last_batch = existing_batches[0].batch_id
+    if len(last_batch) >= 6:
+        try:
+            last_sequence = int(last_batch[5])  # 6th character (index 5)
+            return min(last_sequence + 1, 9)  # Cap at 9
+        except (ValueError, IndexError):
+            return 1
+    
+    return 1
+
+
+@frappe.whitelist()
+def generate_next_batch_code(date=None) -> str:
+    """
+    Generate the next available batch code for the given date.
+    This is the API endpoint called from the frontend.
+    
+    Args:
+        date: Date string (defaults to today)
+    
+    Returns:
+        str: 6-character batch code with auto-incremented sequence
+    """
+    sequence = _get_next_batch_sequence(date)
+    return generate_batch_code(date, sequence)
+
+
+def _ensure_batch(item_code: str, batch_no: str) -> str:
+    """
+    Create or get existing Batch for the given item/batch_no.
+    
+    Args:
+        item_code: Item code
+        batch_no: Batch number/ID
+    
+    Returns:
+        str: Batch name
+    """
+    # Process spaces in batch number according to settings
+    batch_no = _process_batch_spaces(batch_no)
+    
+    existing_batch = frappe.db.exists("Batch", {"batch_id": batch_no, "item": item_code})
+    if existing_batch:
+        return existing_batch
+    
+    batch = frappe.get_doc({
+        "doctype": "Batch",
+        "item": item_code,
+        "batch_id": batch_no,
+    })
+    batch.insert()
+    return batch.name
+
+
+def _validate_batch_code_format(batch_no: str) -> bool:
+    """
+    Validate that batch code matches ISNACK format: 3 letters (A-L) + 3 digits.
+    
+    Args:
+        batch_no: Batch code to validate
+    
+    Returns:
+        bool: True if valid format
+    
+    Raises:
+        frappe.ValidationError: If format is invalid
+    """
+    import re
+    
+    if not batch_no:
+        frappe.throw(_("Batch number is required"))
+    
+    # Pattern: 3 uppercase letters A-L followed by 3 digits
+    pattern = r'^[A-L]{3}\d{3}$'
+    
+    if not re.match(pattern, batch_no.upper()):
+        frappe.throw(_(
+            "Invalid batch code format. Expected format: 3 letters (A-L) + 3 digits. "
+            "Example: CGB151"
+        ))
+    
+    return True
+
+
+# ============================================================
 # Generic helpers
 # ============================================================
 
@@ -1673,13 +1882,14 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
 
 @frappe.whitelist()
 def close_production(good_qty: float, reject_qty: float = 0, 
-                     packaging_usage: str = None, lines: str = None):
+                     batch_no: str = None, packaging_usage: str = None, lines: str = None):
     """
     Close all ended work orders for the given lines.
     
     Args:
         good_qty: Total good quantity produced (to be split)
         reject_qty: Total reject quantity (to be split)
+        batch_no: Batch number for finished goods (ISNACK format: 3 letters A-L + 3 digits)
         packaging_usage: JSON array of {"item_code": "...", "qty": ...} for packaging materials
         lines: JSON array of line names to filter WOs
     
@@ -1702,6 +1912,10 @@ def close_production(good_qty: float, reject_qty: float = 0,
         frappe.throw(_("Good quantity must be greater than zero"))
     if reject_qty < 0:
         frappe.throw(_("Rejects cannot be negative"))
+    
+    # Validate batch number format if provided
+    if batch_no:
+        _validate_batch_code_format(batch_no)
     
     # Parse lines
     line_list = []
@@ -1777,13 +1991,22 @@ def close_production(good_qty: float, reject_qty: float = 0,
             se.bom_no = wo.bom_no
             
             # Add finished item
-            se.append("items", {
+            finished_item = {
                 "item_code": wo.production_item,
                 "qty": split["good"],
                 "uom": uom,
                 "is_finished_item": 1,
                 "t_warehouse": fg_wh,
-            })
+            }
+            
+            # Add batch number if provided
+            if batch_no:
+                # Ensure batch exists
+                _ensure_batch(wo.production_item, batch_no)
+                finished_item["batch_no"] = batch_no
+                finished_item["use_serial_batch_fields"] = 1
+            
+            se.append("items", finished_item)
             
             # Get materials already consumed via LOAD button
             consumed_from_load = _get_consumed_materials_from_load(wo_name)

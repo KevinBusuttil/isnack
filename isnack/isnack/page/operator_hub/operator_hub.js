@@ -1366,6 +1366,27 @@ function init_operator_hub($root) {
     fields.push({ fieldtype: 'Section Break', label: 'Total Production' });
     fields.push({ label:'Total Good Qty', fieldname:'good_qty', fieldtype:'Float', reqd:1, default: 0 });
     fields.push({ label:'Total Reject Qty', fieldname:'reject_qty', fieldtype:'Float', default: 0 });
+    fields.push({ 
+      label:'Batch No', 
+      fieldname:'batch_no', 
+      fieldtype:'Data', 
+      reqd:1,
+      description: 'Auto-generated batch code. Format: 3 letters (A-L) + 3 digits (e.g., CGB151)',
+      onchange: function() {
+        const val = this.get_value();
+        if (val) {
+          // Validate format: 3 letters A-L followed by 3 digits
+          const pattern = /^[A-La-l]{3}\d{3}$/;
+          if (!pattern.test(val)) {
+            frappe.msgprint({
+              title: 'Invalid Batch Format',
+              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
+              indicator: 'red'
+            });
+          }
+        }
+      }
+    });
 
     // Packaging materials
     if (packagingItems.length) {
@@ -1398,6 +1419,26 @@ function init_operator_hub($root) {
           return;
         }
 
+        // Validate batch number format before submission
+        if (v.batch_no) {
+          const pattern = /^[A-La-l]{3}\d{3}$/;
+          if (!pattern.test(v.batch_no)) {
+            frappe.msgprint({
+              title: 'Invalid Batch Format',
+              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
+              indicator: 'red'
+            });
+            return;
+          }
+        } else {
+          frappe.msgprint({
+            title: 'Batch Number Required',
+            message: 'Batch number is required for production closure',
+            indicator: 'red'
+          });
+          return;
+        }
+
         setStatus('Closing production…');
 
         const packagingUsage = [];
@@ -1413,6 +1454,7 @@ function init_operator_hub($root) {
         rpc('isnack.api.mes_ops.close_production', {
           good_qty: v.good_qty,
           reject_qty: v.reject_qty || 0,
+          batch_no: v.batch_no,
           packaging_usage: JSON.stringify(packagingUsage),
           lines: JSON.stringify(state.current_lines),
         }).then(() => {
@@ -1426,6 +1468,15 @@ function init_operator_hub($root) {
     });
 
     d.show();
+    
+    // Auto-generate and pre-fill batch number
+    rpc('isnack.api.mes_ops.generate_next_batch_code')
+      .then(batchCode => {
+        d.set_value('batch_no', batchCode);
+      })
+      .catch(err => {
+        console.warn('Failed to auto-generate batch code', err);
+      });
   });
 
   // Initial
