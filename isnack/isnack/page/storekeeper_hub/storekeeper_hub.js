@@ -401,7 +401,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   // --- Generate Picklist from selected transfers ---
   const generate_picklist = () => {
     if (!state.selected_transfers.length) {
-      frappe.msgprint(__('Please select at least one staged Stock Entry in "Staged Today".'));
+      frappe.msgprint(__('Please select at least one staged Stock Entry in "Staged (Production Date)".'));
       return;
     }
 
@@ -1204,9 +1204,18 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
   });
 
-  // ---------- Recently Staged / Staged Today ----------
+  // ---------- Recently Staged / Staged (Production Date) ----------
   async function load_staged(){
     $staged.empty().append('<div class="muted">Loading…</div>');
+    
+    // Update the date label to show which posting date is being displayed
+    const $dateLabel = $('#staged-date-label');
+    if (state.posting_date) {
+      $dateLabel.text('(' + frappe.datetime.str_to_user(state.posting_date) + ')');
+    } else {
+      $dateLabel.text('(Last 24h)');
+    }
+    
     const r = await frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
       args: {
