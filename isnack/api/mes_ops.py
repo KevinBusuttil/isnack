@@ -249,6 +249,41 @@ def generate_batch_code(date=None, sequence: int = 1) -> str:
     return f"{year_letter1}{year_letter2}{month_letter}{day_str}{sequence_str}"
 
 
+def _get_batch_code_prefix(date=None) -> str:
+    """
+    Generate the 5-character batch code prefix (without sequence number).
+    
+    Args:
+        date: Date object or string (defaults to today)
+    
+    Returns:
+        str: 5-character prefix (e.g., "CGB15" for Feb 15, 2026)
+    """
+    from frappe.utils import getdate
+    
+    if date is None:
+        date = frappe.utils.today()
+    
+    date_obj = getdate(date)
+    
+    # Digit to letter mapping
+    digit_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'J'}
+    
+    # PART 1: Year - last two digits, each mapped to letter
+    year_str = str(date_obj.year)[-2:]
+    year_letter1 = digit_map[int(year_str[0])]
+    year_letter2 = digit_map[int(year_str[1])]
+    
+    # PART 2: Month - A=Jan through L=Dec
+    month_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
+    month_letter = month_letters[date_obj.month - 1]
+    
+    # PART 3: Day (2 digits)
+    day_str = f"{date_obj.day:02d}"
+    
+    return f"{year_letter1}{year_letter2}{month_letter}{day_str}"
+
+
 def _get_next_batch_sequence(date=None) -> int:
     """
     Get the next batch sequence number for the given date by querying existing batches.
@@ -267,7 +302,7 @@ def _get_next_batch_sequence(date=None) -> int:
     date_obj = getdate(date)
     
     # Generate the 5-character prefix (without sequence)
-    prefix = generate_batch_code(date, sequence=0)[:-1]  # Get first 5 chars
+    prefix = _get_batch_code_prefix(date)
     
     # Query existing batches matching this prefix
     existing_batches = frappe.db.sql("""

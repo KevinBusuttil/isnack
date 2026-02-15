@@ -1371,7 +1371,7 @@ function init_operator_hub($root) {
       fieldname:'batch_no', 
       fieldtype:'Data', 
       reqd:1,
-      description: 'Format: 3 letters (A-L) + 3 digits. Example: CGB151',
+      description: 'Auto-generated batch code. Format: 3 letters (A-L) + 3 digits (e.g., CGB151)',
       onchange: function() {
         const val = this.get_value();
         if (val) {
@@ -1380,7 +1380,7 @@ function init_operator_hub($root) {
           if (!pattern.test(val)) {
             frappe.msgprint({
               title: 'Invalid Batch Format',
-              message: 'Batch code must be 3 letters (A-L) followed by 3 digits. Example: CGB151',
+              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
               indicator: 'red'
             });
           }
@@ -1423,11 +1423,19 @@ function init_operator_hub($root) {
         if (v.batch_no) {
           const pattern = /^[A-La-l]{3}\d{3}$/;
           if (!pattern.test(v.batch_no)) {
-            frappe.msgprint('Invalid batch code format. Expected: 3 letters (A-L) + 3 digits. Example: CGB151');
+            frappe.msgprint({
+              title: 'Invalid Batch Format',
+              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
+              indicator: 'red'
+            });
             return;
           }
         } else {
-          frappe.msgprint('Batch number is required');
+          frappe.msgprint({
+            title: 'Batch Number Required',
+            message: 'Batch number is required for production closure',
+            indicator: 'red'
+          });
           return;
         }
 
