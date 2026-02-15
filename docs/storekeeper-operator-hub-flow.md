@@ -8,6 +8,7 @@ This document explains the operational flow for the Storekeeper Hub and Operator
 - **Open the Storekeeper Hub** page and use the top toolbar filters.
 - **Choose a Factory Line** to target the current production line.
 - **Choose a Source Warehouse** to control where the stock transfers/issue/receipt will pull from.
+- **Set a Posting Date (Production Date)** to specify the production date for which materials are being staged. This defaults to today's date and controls what is displayed in the "Staged (Production Date)" section.
 - **Optional: Set a Pallet ID** to tag transfers with a pallet reference for downstream tracking.
 - Use **Refresh** to reload the latest WOs and staging data.
 
@@ -39,7 +40,7 @@ From the toolbar:
 - **PO Receipt** → create purchase receipt entries from a PO.
 
 ### 7. Recent activity & tracking (right column)
-- **Staged Today** shows the recent staged transfers.
+- **Staged (Production Date)** shows the recent staged transfers for the selected production posting date. When a posting date is selected in the toolbar, this section displays entries staged for that specific production date. If no posting date is specified, it shows entries from the last 24 hours.
 - **Recent Manual Stock Entries (Last 24h)** summarizes manual stock moves.
 - **Pallet Tracker (Last 24h)** shows the latest pallet-related transfers.
 
