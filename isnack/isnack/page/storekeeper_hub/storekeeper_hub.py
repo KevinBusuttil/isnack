@@ -709,7 +709,8 @@ def get_recent_transfers(
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
     conditions = [
         "se.docstatus = 1",
-        "se.purpose = 'Material Transfer for Manufacture'",
+        "se.purpose IN ('Material Transfer for Manufacture', 'Material Transfer')",
+        "se.work_order IS NOT NULL",
     ]
     params: list[object] = []
 
@@ -845,7 +846,7 @@ def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
             from `tabStock Entry` se
             left join `tabWork Order` wo on wo.name = se.work_order
             left join `tabBOM` bom on bom.name = wo.bom_no
-            where se.docstatus=1 and se.purpose='Material Transfer for Manufacture'
+            where se.docstatus=1 and se.purpose IN ('Material Transfer for Manufacture', 'Material Transfer') and se.work_order IS NOT NULL
               and (wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)
             order by se.modified desc
             limit 100
@@ -854,7 +855,7 @@ def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
     else:
         rows = frappe.get_all(
             "Stock Entry",
-            filters={"docstatus": 1, "purpose": "Material Transfer for Manufacture"},
+            filters={"docstatus": 1, "purpose": ["in", ["Material Transfer for Manufacture", "Material Transfer"]], "work_order": ["is", "set"]},
             fields=["name", "posting_date", "posting_time", "to_warehouse", "remarks"],
             order_by="modified desc",
             limit_page_length=100,
