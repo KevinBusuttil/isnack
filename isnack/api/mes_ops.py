@@ -198,7 +198,7 @@ def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
 
 def generate_batch_code(date=None, sequence: int = 1) -> str:
     """
-    Generate ISNACK batch code in format: YYM-DD# → [Letter][Letter][Letter][Number][Number][Number]
+    Generate ISNACK batch code in format: YYM-DD# → [Letter][Letter][Letter]-[Number][Number][Number]
     
     PART 1: THE YEAR (Letters 1 & 2)
     Map each digit of last two digits of year: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=G, 7=H, 8=I, 9=J
@@ -212,16 +212,16 @@ def generate_batch_code(date=None, sequence: int = 1) -> str:
     - Number 6: Batch sequence for that day (1-9)
     
     Examples:
-    - February 15, 2026 (1st batch) → CGB151
-    - October 31, 2026 (3rd batch) → CGJ313
-    - January 05, 2027 (1st batch) → CHA051
+    - February 15, 2026 (1st batch) → CGB-151
+    - October 31, 2026 (3rd batch) → CGJ-313
+    - January 05, 2027 (1st batch) → CHA-051
     
     Args:
         date: Date object or string (defaults to today)
         sequence: Sequence number for the day (1-9)
     
     Returns:
-        str: 6-character batch code
+        str: 7-character batch code (3 letters + dash + 3 digits)
     """
     from frappe.utils import getdate
     
@@ -246,18 +246,18 @@ def generate_batch_code(date=None, sequence: int = 1) -> str:
     day_str = f"{date_obj.day:02d}"
     sequence_str = str(sequence)[-1]  # Last digit only
     
-    return f"{year_letter1}{year_letter2}{month_letter}{day_str}{sequence_str}"
+    return f"{year_letter1}{year_letter2}{month_letter}-{day_str}{sequence_str}"
 
 
 def _get_batch_code_prefix(date=None) -> str:
     """
-    Generate the 5-character batch code prefix (without sequence number).
+    Generate the 6-character batch code prefix (without sequence number).
     
     Args:
         date: Date object or string (defaults to today)
     
     Returns:
-        str: 5-character prefix (e.g., "CGB15" for Feb 15, 2026)
+        str: 6-character prefix with dash (e.g., "CGB-15" for Feb 15, 2026)
     """
     from frappe.utils import getdate
     
@@ -281,7 +281,7 @@ def _get_batch_code_prefix(date=None) -> str:
     # PART 3: Day (2 digits)
     day_str = f"{date_obj.day:02d}"
     
-    return f"{year_letter1}{year_letter2}{month_letter}{day_str}"
+    return f"{year_letter1}{year_letter2}{month_letter}-{day_str}"
 
 
 def _get_next_batch_sequence(date=None) -> int:
@@ -318,9 +318,9 @@ def _get_next_batch_sequence(date=None) -> int:
     
     # Extract the sequence number from the last batch
     last_batch = existing_batches[0].batch_id
-    if len(last_batch) >= 6:
+    if len(last_batch) >= 7:
         try:
-            last_sequence = int(last_batch[5])  # 6th character (index 5)
+            last_sequence = int(last_batch[6])  # 7th character (index 6) - after dash
             return min(last_sequence + 1, 9)  # Cap at 9
         except (ValueError, IndexError):
             return 1
@@ -373,7 +373,7 @@ def _ensure_batch(item_code: str, batch_no: str) -> str:
 
 def _validate_batch_code_format(batch_no: str) -> bool:
     """
-    Validate that batch code matches ISNACK format: 3 letters (A-L) + 3 digits.
+    Validate that batch code matches ISNACK format: 3 letters + dash + 3 digits.
     
     Args:
         batch_no: Batch code to validate
@@ -389,13 +389,13 @@ def _validate_batch_code_format(batch_no: str) -> bool:
     if not batch_no:
         frappe.throw(_("Batch number is required"))
     
-    # Pattern: 3 uppercase letters A-L followed by 3 digits
-    pattern = r'^[A-L]{3}\d{3}$'
+    # Pattern: 3 uppercase letters A-Z followed by dash and 3 digits
+    pattern = r'^[A-Za-z]{3}-\d{3}$'
     
     if not re.match(pattern, batch_no.upper()):
         frappe.throw(_(
-            "Invalid batch code format. Expected format: 3 letters (A-L) + 3 digits. "
-            "Example: CGB151"
+            "Invalid batch code format. Expected format: 3 letters + dash + 3 digits. "
+            "Example: CGB-151"
         ))
     
     return True
@@ -1889,7 +1889,7 @@ def close_production(good_qty: float, reject_qty: float = 0,
     Args:
         good_qty: Total good quantity produced (to be split)
         reject_qty: Total reject quantity (to be split)
-        batch_no: Batch number for finished goods (ISNACK format: 3 letters A-L + 3 digits)
+        batch_no: Batch number for finished goods (ISNACK format: 3 letters + dash + 3 digits (e.g., CGB-151))
         packaging_usage: JSON array of {"item_code": "...", "qty": ...} for packaging materials
         lines: JSON array of line names to filter WOs
     

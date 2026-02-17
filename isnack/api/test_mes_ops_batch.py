@@ -20,19 +20,19 @@ class TestBatchCodeGeneration(unittest.TestCase):
         """Test batch code generation for February 15, 2026."""
         # February 15, 2026, sequence 1
         batch_code = generate_batch_code(date(2026, 2, 15), sequence=1)
-        self.assertEqual(batch_code, "CGB151")
+        self.assertEqual(batch_code, "CGB-151")
     
     def test_generate_batch_code_oct_31_2026(self):
         """Test batch code generation for October 31, 2026."""
         # October 31, 2026, sequence 3
         batch_code = generate_batch_code(date(2026, 10, 31), sequence=3)
-        self.assertEqual(batch_code, "CGJ313")
+        self.assertEqual(batch_code, "CGJ-313")
     
     def test_generate_batch_code_jan_5_2027(self):
         """Test batch code generation for January 5, 2027."""
         # January 5, 2027, sequence 1
         batch_code = generate_batch_code(date(2027, 1, 5), sequence=1)
-        self.assertEqual(batch_code, "CHA051")
+        self.assertEqual(batch_code, "CHA-051")
     
     def test_generate_batch_code_year_2025(self):
         """Test year mapping for 2025 (CF)."""
@@ -67,23 +67,23 @@ class TestBatchCodeGeneration(unittest.TestCase):
         """Test that day is zero-padded correctly."""
         # Day 5 should be '05'
         batch_code = generate_batch_code(date(2026, 1, 5), sequence=1)
-        self.assertEqual(batch_code[3:5], "05")
+        self.assertEqual(batch_code[4:6], "05")
         
         # Day 25 should be '25'
         batch_code = generate_batch_code(date(2026, 1, 25), sequence=1)
-        self.assertEqual(batch_code[3:5], "25")
+        self.assertEqual(batch_code[4:6], "25")
     
     def test_generate_batch_code_sequence_numbers(self):
         """Test sequence number variations."""
         for seq in range(1, 10):
             batch_code = generate_batch_code(date(2026, 2, 15), sequence=seq)
             self.assertEqual(batch_code[-1], str(seq))
-            self.assertEqual(len(batch_code), 6)
+            self.assertEqual(len(batch_code), 7)
     
     def test_generate_batch_code_length(self):
-        """Test that generated batch code is always 6 characters."""
+        """Test that generated batch code is always 7 characters."""
         batch_code = generate_batch_code(date(2026, 2, 15), sequence=1)
-        self.assertEqual(len(batch_code), 6)
+        self.assertEqual(len(batch_code), 7)
     
     @patch('frappe.db.sql')
     def test_get_next_batch_sequence_no_existing(self, mock_sql):
@@ -95,24 +95,24 @@ class TestBatchCodeGeneration(unittest.TestCase):
     @patch('frappe.db.sql')
     def test_get_next_batch_sequence_with_existing(self, mock_sql):
         """Test sequence generation with existing batches."""
-        # Mock existing batch CGB151
-        mock_sql.return_value = [MagicMock(batch_id="CGB151")]
+        # Mock existing batch CGB-151
+        mock_sql.return_value = [MagicMock(batch_id="CGB-151")]
         sequence = _get_next_batch_sequence(date(2026, 2, 15))
         self.assertEqual(sequence, 2)
     
     @patch('frappe.db.sql')
     def test_get_next_batch_sequence_multiple_existing(self, mock_sql):
         """Test sequence generation with multiple existing batches."""
-        # Mock existing batch CGB154 (highest)
-        mock_sql.return_value = [MagicMock(batch_id="CGB154")]
+        # Mock existing batch CGB-154 (highest)
+        mock_sql.return_value = [MagicMock(batch_id="CGB-154")]
         sequence = _get_next_batch_sequence(date(2026, 2, 15))
         self.assertEqual(sequence, 5)
     
     @patch('frappe.db.sql')
     def test_get_next_batch_sequence_cap_at_9(self, mock_sql):
         """Test that sequence caps at 9."""
-        # Mock existing batch CGB159
-        mock_sql.return_value = [MagicMock(batch_id="CGB159")]
+        # Mock existing batch CGB-159
+        mock_sql.return_value = [MagicMock(batch_id="CGB-159")]
         sequence = _get_next_batch_sequence(date(2026, 2, 15))
         self.assertEqual(sequence, 9)
 
@@ -122,7 +122,7 @@ class TestBatchCodeValidation(unittest.TestCase):
     
     def test_validate_valid_format(self):
         """Test validation of valid batch codes."""
-        valid_codes = ["CGB151", "CGJ313", "CHA051", "AAA111", "LLL999"]
+        valid_codes = ["CGB-151", "CGJ-313", "CHA-051", "AAA-111", "ZZZ-999"]
         for code in valid_codes:
             try:
                 result = _validate_batch_code_format(code)
@@ -135,7 +135,7 @@ class TestBatchCodeValidation(unittest.TestCase):
         """Test validation rejects invalid letter patterns."""
         mock_throw.side_effect = frappe.ValidationError
         
-        invalid_codes = ["MGB151", "CZB151", "123456", "CGBA51"]
+        invalid_codes = ["MGB151", "CZB151", "123456", "CGBA51", "CGB151"]
         for code in invalid_codes:
             with self.assertRaises(frappe.ValidationError):
                 _validate_batch_code_format(code)
@@ -145,7 +145,7 @@ class TestBatchCodeValidation(unittest.TestCase):
         """Test validation rejects wrong length."""
         mock_throw.side_effect = frappe.ValidationError
         
-        invalid_codes = ["CGB15", "CGB1512", "CG151", "CGBA151"]
+        invalid_codes = ["CGB-15", "CGB-1512", "CG-151", "CGBA-151"]
         for code in invalid_codes:
             with self.assertRaises(frappe.ValidationError):
                 _validate_batch_code_format(code)
@@ -161,10 +161,21 @@ class TestBatchCodeValidation(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):
             _validate_batch_code_format(None)
     
+    @patch('frappe.throw')
+    def test_validate_old_format_rejected(self, mock_throw):
+        """Test validation explicitly rejects old format without dash."""
+        mock_throw.side_effect = frappe.ValidationError
+        
+        # Old format codes (without dash) should be rejected
+        old_format_codes = ["CGB151", "CGJ313", "CHA051"]
+        for code in old_format_codes:
+            with self.assertRaises(frappe.ValidationError):
+                _validate_batch_code_format(code)
+    
     def test_validate_case_insensitive(self):
         """Test validation accepts lowercase letters."""
         try:
-            result = _validate_batch_code_format("cgb151")
+            result = _validate_batch_code_format("cgb-151")
             self.assertTrue(result)
         except frappe.ValidationError:
             self.fail("Lowercase code raised ValidationError")
