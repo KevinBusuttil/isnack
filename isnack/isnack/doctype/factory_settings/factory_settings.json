@@ -31,6 +31,7 @@
   "default_label_printer",
   "default_a4_printer",
   "enable_silent_printing",
+  "pallet_uom_options",
   "per_user_printer_defaults_section",
   "user_printer_defaults"
  ],
@@ -212,6 +213,13 @@
    "fieldname": "enable_silent_printing",
    "fieldtype": "Check",
    "label": "Enable Silent Printing (QZ Tray)"
+  },
+  {
+   "description": "UOM types available for pallet label calculation (e.g., EURO 1, EURO 4)",
+   "fieldname": "pallet_uom_options",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Pallet UOM Types",
+   "options": "Pallet UOM Option"
   }
  ],
  "grid_page_length": 50,
