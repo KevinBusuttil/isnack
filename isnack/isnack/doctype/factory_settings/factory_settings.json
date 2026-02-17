@@ -27,6 +27,7 @@
   "label_printing_section",
   "default_label_template",
   "default_label_print_format",
+  "default_fg_label_print_format",
   "default_label_printer",
   "default_a4_printer",
   "enable_silent_printing",
@@ -166,7 +167,15 @@
    "label": "Default Label Print Format",
    "options": "Print Format",
    "default": "SATO Label Print",
-   "description": "Default print format used for pallet labels in Storekeeper Hub and Operator Hub"
+   "description": "Default print format used for pallet labels in Storekeeper Hub (Stock Entry documents)"
+  },
+  {
+   "fieldname": "default_fg_label_print_format",
+   "fieldtype": "Link",
+   "label": "Default FG Label Print Format",
+   "options": "Print Format",
+   "default": "SATO FG Label Print",
+   "description": "Print format used for FG carton labels in Operator Hub (Print Carton Label). This format is applied to Work Order documents."
   },
   {
    "fieldname": "default_label_printer",

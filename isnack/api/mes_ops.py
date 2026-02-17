@@ -2143,8 +2143,8 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         frappe.throw(_("Label printing allowed only for finished goods"))
 
     fs = _fs()
-    # Try default_label_print_format first, then fall back to default_label_template for backward compatibility
-    template = template or getattr(fs, "default_label_print_format", None) or getattr(fs, "default_label_template", None)
+    # Try default_fg_label_print_format first (for FG carton labels), then fall back to default_label_print_format and default_label_template for backward compatibility
+    template = template or getattr(fs, "default_fg_label_print_format", None) or getattr(fs, "default_label_print_format", None) or getattr(fs, "default_label_template", None)
 
     if not template:
         frappe.throw(_("No label template or print format provided and no default configured in Factory Settings (default_label_print_format or default_label_template)"))
@@ -2192,7 +2192,7 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     
     # Return print URL for client-side printing
     print_url = frappe.urllib.get_full_url(
-        f"/printview?doctype=Work%20Order&name={frappe.utils.quote(work_order)}&format={frappe.utils.quote(template)}&trigger_print=1"
+        f"/printview?doctype=Work%20Order&name={frappe.utils.quote(work_order)}&format={frappe.utils.quote(template)}&carton_qty={carton_qty}&trigger_print=1"
     )
     
     # Get silent printing settings
