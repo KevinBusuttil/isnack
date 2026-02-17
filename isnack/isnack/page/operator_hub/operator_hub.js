@@ -1371,8 +1371,8 @@ function init_operator_hub($root) {
       fieldname:'batch_no', 
       fieldtype:'Data', 
       reqd:1,
-      read_only: 1,
-      description: 'Auto-generated batch code. Format: 3 letters (A-L) + 3 digits (e.g., CGB151)',
+      read_only: 0,
+      description: 'Batch code format: 3 letters + dash + 3 digits (e.g., CGB-151). Dash is auto-inserted.',
     });
 
     // Packaging materials
@@ -1408,11 +1408,11 @@ function init_operator_hub($root) {
 
         // Validate batch number format before submission
         if (v.batch_no) {
-          const pattern = /^[A-La-l]{3}\d{3}$/;
+          const pattern = /^[A-Za-z]{3}-\d{3}$/;
           if (!pattern.test(v.batch_no)) {
             frappe.msgprint({
               title: 'Invalid Batch Format',
-              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
+              message: 'Batch code must be 3 letters followed by a dash and 3 digits (e.g., CGB-151)',
               indicator: 'red'
             });
             return;
@@ -1455,6 +1455,28 @@ function init_operator_hub($root) {
     });
 
     d.show();
+    
+    // Auto-insert dash after 3rd letter
+    const batchInput = d.fields_dict.batch_no.$input;
+    if (batchInput) {
+      batchInput.on('input', function() {
+        let val = $(this).val().toUpperCase();
+        // Remove any existing dashes for re-processing
+        let letters = val.replace(/-/g, '').substring(0, 6);
+        let letterPart = letters.substring(0, 3).replace(/[^A-Z]/g, '');
+        let digitPart = letters.substring(3).replace(/[^0-9]/g, '').substring(0, 3);
+        
+        let formatted = letterPart;
+        if (letterPart.length === 3) {
+          formatted += '-' + digitPart;
+        }
+        
+        if (formatted !== val) {
+          $(this).val(formatted);
+          d.set_value('batch_no', formatted);
+        }
+      });
+    }
     
     // Auto-generate and pre-fill batch number
     rpc('isnack.api.mes_ops.generate_next_batch_code')
