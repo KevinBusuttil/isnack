@@ -1462,9 +1462,9 @@ function init_operator_hub($root) {
       batchInput.on('input', function() {
         let val = $(this).val().toUpperCase();
         // Remove any existing dashes for re-processing
-        let letters = val.replace(/-/g, '').substring(0, 6);
-        let letterPart = letters.substring(0, 3).replace(/[^A-Z]/g, '');
-        let digitPart = letters.substring(3).replace(/[^0-9]/g, '').substring(0, 3);
+        let cleanedInput = val.replace(/-/g, '').substring(0, 6);
+        let letterPart = cleanedInput.substring(0, 3).replace(/[^A-Z]/g, '');
+        let digitPart = cleanedInput.substring(3).replace(/[^0-9]/g, '').substring(0, 3);
         
         let formatted = letterPart;
         if (letterPart.length === 3) {

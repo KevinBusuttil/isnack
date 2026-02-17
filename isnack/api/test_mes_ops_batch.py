@@ -161,6 +161,17 @@ class TestBatchCodeValidation(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):
             _validate_batch_code_format(None)
     
+    @patch('frappe.throw')
+    def test_validate_old_format_rejected(self, mock_throw):
+        """Test validation explicitly rejects old format without dash."""
+        mock_throw.side_effect = frappe.ValidationError
+        
+        # Old format codes (without dash) should be rejected
+        old_format_codes = ["CGB151", "CGJ313", "CHA051"]
+        for code in old_format_codes:
+            with self.assertRaises(frappe.ValidationError):
+                _validate_batch_code_format(code)
+    
     def test_validate_case_insensitive(self):
         """Test validation accepts lowercase letters."""
         try:
