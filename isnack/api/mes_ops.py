@@ -1667,6 +1667,158 @@ def get_ended_work_orders(lines: str = None):
     return {"work_orders": work_orders}
 
 @frappe.whitelist()
+def get_pallet_label_data(lines: str = None):
+    """
+    Get pallet label data from ended Work Orders (FG items only).
+    Groups by production_item and returns summed quantities.
+    
+    Args:
+        lines: JSON array of line names to filter
+    
+    Returns:
+        dict: {
+            "items": [
+                {
+                    "item_code": "...",
+                    "item_name": "...",
+                    "description": "...",
+                    "default_uom": "...",
+                    "carton_qty": ...,
+                    "work_orders": ["WO-001", "WO-002"]
+                }
+            ],
+            "allowed_pallet_uoms": ["EURO 1", "EURO 4"]
+        }
+    """
+    _require_roles(ROLES_OPERATOR)
+    
+    # Get ended work orders using existing logic
+    ended_wos_result = get_ended_work_orders(lines)
+    work_orders = ended_wos_result.get("work_orders", [])
+    
+    # Group by production_item
+    grouped = {}
+    for wo in work_orders:
+        item_code = wo["production_item"]
+        if item_code not in grouped:
+            grouped[item_code] = {
+                "item_code": item_code,
+                "work_orders": [],
+                "qty": 0
+            }
+        grouped[item_code]["work_orders"].append(wo["name"])
+        grouped[item_code]["qty"] += flt(wo.get("qty", 0))
+    
+    # Enrich with item details
+    items = []
+    for item_code, data in grouped.items():
+        item_details = frappe.db.get_value(
+            "Item",
+            item_code,
+            ["item_name", "description", "stock_uom"],
+            as_dict=True
+        )
+        if item_details:
+            items.append({
+                "item_code": item_code,
+                "item_name": item_details.get("item_name", ""),
+                "description": item_details.get("description", ""),
+                "default_uom": item_details.get("stock_uom", ""),
+                "carton_qty": data["qty"],
+                "work_orders": data["work_orders"]
+            })
+    
+    # Get allowed pallet UOMs from Factory Settings
+    allowed_pallet_uoms = []
+    try:
+        fs = frappe.get_cached_doc("Factory Settings")
+        if hasattr(fs, "pallet_uom_options") and fs.pallet_uom_options:
+            allowed_pallet_uoms = [row.uom for row in fs.pallet_uom_options if row.uom]
+    except Exception:
+        pass
+    
+    return {
+        "items": items,
+        "allowed_pallet_uoms": allowed_pallet_uoms
+    }
+
+@frappe.whitelist()
+def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
+    """
+    Get UOM conversion factor for pallet label calculation.
+    Uses ERPNext standard UOM conversion logic.
+    
+    Args:
+        item_code: Item code
+        from_uom: Source UOM (e.g., "Carton")
+        to_uom: Target UOM (e.g., "EURO 1")
+    
+    Returns:
+        dict: {"conversion_factor": 1.0}
+    """
+    _require_roles(ROLES_OPERATOR)
+    
+    if not item_code or not from_uom or not to_uom:
+        return {"conversion_factor": 1.0}
+    
+    if from_uom == to_uom:
+        return {"conversion_factor": 1.0}
+    
+    try:
+        # Try to use ERPNext's get_conversion_factor if available
+        try:
+            from erpnext.stock.get_item_details import get_conversion_factor
+            factor = get_conversion_factor(item_code, to_uom)
+            if factor and factor.get("conversion_factor"):
+                return {"conversion_factor": flt(factor["conversion_factor"])}
+        except (ImportError, AttributeError):
+            pass
+        
+        # Fallback: Check item-specific UOM conversions
+        item_uoms = frappe.get_all(
+            "UOM Conversion Detail",
+            filters={"parent": item_code, "uom": to_uom},
+            fields=["conversion_factor"],
+            limit=1
+        )
+        if item_uoms and item_uoms[0].get("conversion_factor"):
+            return {"conversion_factor": flt(item_uoms[0]["conversion_factor"])}
+        
+        # Fallback: Check global UOM conversions
+        uom_conversions = frappe.get_all(
+            "UOM Conversion Factor",
+            filters=[
+                ["from_uom", "=", from_uom],
+                ["to_uom", "=", to_uom]
+            ],
+            fields=["value"],
+            limit=1
+        )
+        if uom_conversions and uom_conversions[0].get("value"):
+            return {"conversion_factor": flt(uom_conversions[0]["value"])}
+        
+        # Try inverse conversion
+        uom_conversions_inverse = frappe.get_all(
+            "UOM Conversion Factor",
+            filters=[
+                ["from_uom", "=", to_uom],
+                ["to_uom", "=", from_uom]
+            ],
+            fields=["value"],
+            limit=1
+        )
+        if uom_conversions_inverse and uom_conversions_inverse[0].get("value"):
+            inverse_value = flt(uom_conversions_inverse[0]["value"])
+            if inverse_value:
+                return {"conversion_factor": 1.0 / inverse_value}
+        
+    except Exception as e:
+        frappe.log_error(f"Error getting conversion factor: {str(e)}", "get_pallet_conversion_factor")
+    
+    # Default to 1.0 if no conversion found
+    return {"conversion_factor": 1.0}
+
+@frappe.whitelist()
 def get_packaging_items():
     """
     Get items from Packaging Item Groups (Factory Settings).
