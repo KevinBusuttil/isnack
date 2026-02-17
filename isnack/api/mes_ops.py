@@ -1806,7 +1806,6 @@ def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
             
             # If both conversions exist, calculate the conversion from from_uom to to_uom
             # Formula: pallet_qty = carton_qty / conversion_factor
-            # 
             # Example: If stock UOM is "Carton" and:
             #   - 1 Carton = 1 Carton (from_uom_factor = 1)
             #   - 1 EUR 1 Pallet = 4 Cartons (to_uom_factor = 4)
