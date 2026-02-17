@@ -2191,7 +2191,7 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         pc.insert()
     
     # Return print URL for client-side printing
-    print_url = frappe.urllib.get_full_url(
+    print_url = frappe.utils.get_url(
         f"/printview?doctype=Work%20Order&name={frappe.utils.quote(work_order)}&format={frappe.utils.quote(template)}&carton_qty={carton_qty}&trigger_print=1"
     )
     
@@ -2274,7 +2274,7 @@ def _generate_print_url(source_doctype: str, source_docname: str, print_format: 
     if row_name:
         url += f"&row_name={frappe.utils.quote(row_name)}"
     url += "&trigger_print=1"
-    return frappe.urllib.get_full_url(url)
+    return frappe.utils.get_url(url)
 
 
 @frappe.whitelist()
