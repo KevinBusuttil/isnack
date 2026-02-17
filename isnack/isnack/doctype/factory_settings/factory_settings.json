@@ -27,6 +27,7 @@
   "label_printing_section",
   "default_label_template",
   "default_label_print_format",
+  "default_fg_label_print_format",
   "default_label_printer",
   "default_a4_printer",
   "enable_silent_printing",
