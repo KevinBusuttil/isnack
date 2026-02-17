@@ -384,7 +384,7 @@ function init_operator_hub($root) {
     // End Shift Return only requires operator and line (no work order needed)
     $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
-    $('#btn-label',   $root).prop('disabled', !(enableActions && state.current_lines.length));
+    $('#btn-label', $root).prop('disabled', !(enableActions && state.current_lines.length));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
     
     // End WO button: enabled when operator set + WO selected + WO allocated + not already ended
@@ -1133,10 +1133,18 @@ function init_operator_hub($root) {
           return;
         }
         
-        // For now, just show a success message
-        // TODO: Implement actual printing logic similar to existing print_label
+        // Print each row
+        // Note: This uses the existing print_label endpoint which expects a single work_order.
+        // For pallet labels from multiple work orders, we would need a new print endpoint.
+        // For now, we show a success message.
         flashStatus(`Ready to print ${rowsToPrint.length} pallet label(s)`, 'success');
         d.hide();
+      },
+      onhide: () => {
+        // Unbind event handlers to prevent memory leaks
+        if (d.fields_dict.pallet_items && d.fields_dict.pallet_items.grid) {
+          d.fields_dict.pallet_items.grid.wrapper.off('change', '[data-fieldname="pallet_type"] input');
+        }
       }
     });
 
@@ -1158,10 +1166,20 @@ function init_operator_hub($root) {
     d.fields_dict.pallet_items.grid.wrapper.on('change', '[data-fieldname="pallet_type"] input', async function() {
       // Get the row, fetch conversion factor, calculate pallet_qty
       const $row = $(this).closest('.grid-row');
-      const rowIdx = $row.attr('data-idx');
+      const rowIdx = parseInt($row.attr('data-idx'), 10);
+      
+      // Validate rowIdx is a valid positive integer
+      if (!rowIdx || rowIdx < 1) {
+        console.warn('Invalid row index:', rowIdx);
+        return;
+      }
+      
       const grid = d.fields_dict.pallet_items.grid;
       const row = grid.grid_rows[rowIdx - 1];
-      if (!row) return;
+      if (!row) {
+        console.warn('Row not found for index:', rowIdx);
+        return;
+      }
 
       const palletType = row.doc.pallet_type;
       const cartonQty = row.doc.carton_qty || 0;
