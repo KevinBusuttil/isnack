@@ -1186,8 +1186,16 @@ function init_operator_hub($root) {
       const itemCode = row.doc.item_code;
       const fromUom = row.doc.default_uom;
 
-      if (!palletType || !cartonQty) {
-        row.doc.pallet_qty = 0;
+      if (!palletType) {
+        // Clear pallet_qty if no pallet type is selected
+        row.doc.pallet_qty = null;
+        row.refresh();
+        return;
+      }
+
+      if (!cartonQty) {
+        // If no carton qty, leave pallet_qty empty
+        row.doc.pallet_qty = null;
         row.refresh();
         return;
       }
@@ -1198,8 +1206,19 @@ function init_operator_hub($root) {
           from_uom: fromUom,
           to_uom: palletType
         });
-        const conversionFactor = (r.message && r.message.conversion_factor) || 1;
-        row.doc.pallet_qty = cartonQty / conversionFactor;
+        
+        const result = r.message || {};
+        const found = result.found;
+        const conversionFactor = result.conversion_factor;
+        
+        if (found && conversionFactor) {
+          // Valid conversion found, calculate pallet_qty
+          row.doc.pallet_qty = cartonQty / conversionFactor;
+        } else {
+          // No conversion found, leave pallet_qty blank (user can manually enter)
+          row.doc.pallet_qty = null;
+        }
+        
         row.refresh();
       } catch (err) {
         console.error('Conversion factor fetch failed:', err);

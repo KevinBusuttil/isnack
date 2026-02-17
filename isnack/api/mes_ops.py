@@ -1746,45 +1746,74 @@ def get_pallet_label_data(lines: str = None):
 def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
     """
     Get UOM conversion factor for pallet label calculation.
-    Uses ERPNext standard UOM conversion logic.
+    
+    Priority:
+    1. Check Item's UOM Conversion Detail (child table on Item)
+    2. Check global UOM Conversion Factor table
+    3. If no conversion exists, return found: false
     
     Args:
         item_code: Item code
         from_uom: Source UOM (e.g., "Carton")
-        to_uom: Target UOM (e.g., "EURO 1")
+        to_uom: Target UOM (e.g., "EUR 1 Pallet")
     
     Returns:
-        dict: {"conversion_factor": 1.0}
+        dict: {"conversion_factor": <value>, "found": true} when found
+              {"conversion_factor": null, "found": false} when not found
     """
     _require_roles(ROLES_OPERATOR)
     
     if not item_code or not from_uom or not to_uom:
-        return {"conversion_factor": 1.0}
+        return {"conversion_factor": None, "found": False}
     
     if from_uom == to_uom:
-        return {"conversion_factor": 1.0}
+        return {"conversion_factor": 1.0, "found": True}
     
     try:
-        # Try to use ERPNext's get_conversion_factor if available
-        try:
-            from erpnext.stock.get_item_details import get_conversion_factor
-            factor = get_conversion_factor(item_code, to_uom)
-            if factor and factor.get("conversion_factor"):
-                return {"conversion_factor": flt(factor["conversion_factor"])}
-        except (ImportError, AttributeError):
-            pass
+        # Priority 1: Check item-specific UOM conversions from the Item's UOM Conversion Detail
+        # We need to get the item's stock UOM and the conversion factors for both from_uom and to_uom
+        item = frappe.get_cached_value("Item", item_code, ["stock_uom"], as_dict=True)
+        stock_uom = item.get("stock_uom") if item else None
         
-        # Fallback: Check item-specific UOM conversions
-        item_uoms = frappe.get_all(
-            "UOM Conversion Detail",
-            filters={"parent": item_code, "uom": to_uom},
-            fields=["conversion_factor"],
-            limit=1
-        )
-        if item_uoms and item_uoms[0].get("conversion_factor"):
-            return {"conversion_factor": flt(item_uoms[0]["conversion_factor"])}
+        if stock_uom:
+            # Get conversion factors for both from_uom and to_uom relative to stock UOM
+            from_uom_factor = None
+            to_uom_factor = None
+            
+            if from_uom == stock_uom:
+                from_uom_factor = 1.0
+            else:
+                from_uom_result = frappe.get_all(
+                    "UOM Conversion Detail",
+                    filters={"parent": item_code, "uom": from_uom},
+                    fields=["conversion_factor"],
+                    limit=1
+                )
+                if from_uom_result and from_uom_result[0].get("conversion_factor"):
+                    from_uom_factor = flt(from_uom_result[0]["conversion_factor"])
+            
+            if to_uom == stock_uom:
+                to_uom_factor = 1.0
+            else:
+                to_uom_result = frappe.get_all(
+                    "UOM Conversion Detail",
+                    filters={"parent": item_code, "uom": to_uom},
+                    fields=["conversion_factor"],
+                    limit=1
+                )
+                if to_uom_result and to_uom_result[0].get("conversion_factor"):
+                    to_uom_factor = flt(to_uom_result[0]["conversion_factor"])
+            
+            # If both conversions exist, calculate the conversion from from_uom to to_uom
+            # Formula: from_uom -> stock_uom -> to_uom
+            # from_uom_factor = how many stock UOMs in 1 from_uom
+            # to_uom_factor = how many stock UOMs in 1 to_uom
+            # conversion = from_uom_factor / to_uom_factor
+            if from_uom_factor is not None and to_uom_factor is not None and to_uom_factor != 0:
+                conversion_factor = from_uom_factor / to_uom_factor
+                return {"conversion_factor": conversion_factor, "found": True}
         
-        # Fallback: Check global UOM conversions
+        # Priority 2: Check global UOM Conversion Factor table
         uom_conversions = frappe.get_all(
             "UOM Conversion Factor",
             filters=[
@@ -1795,9 +1824,9 @@ def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
             limit=1
         )
         if uom_conversions and uom_conversions[0].get("value"):
-            return {"conversion_factor": flt(uom_conversions[0]["value"])}
+            return {"conversion_factor": flt(uom_conversions[0]["value"]), "found": True}
         
-        # Try inverse conversion
+        # Try inverse conversion in global table
         uom_conversions_inverse = frappe.get_all(
             "UOM Conversion Factor",
             filters=[
@@ -1810,13 +1839,13 @@ def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
         if uom_conversions_inverse and uom_conversions_inverse[0].get("value"):
             inverse_value = flt(uom_conversions_inverse[0]["value"])
             if inverse_value:
-                return {"conversion_factor": 1.0 / inverse_value}
+                return {"conversion_factor": 1.0 / inverse_value, "found": True}
         
     except Exception as e:
         frappe.log_error(f"Error getting conversion factor: {str(e)}", "get_pallet_conversion_factor")
     
-    # Default to 1.0 if no conversion found
-    return {"conversion_factor": 1.0}
+    # No conversion found
+    return {"conversion_factor": None, "found": False}
 
 @frappe.whitelist()
 def get_packaging_items():
