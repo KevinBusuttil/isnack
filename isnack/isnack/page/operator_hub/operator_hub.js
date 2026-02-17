@@ -1371,21 +1371,8 @@ function init_operator_hub($root) {
       fieldname:'batch_no', 
       fieldtype:'Data', 
       reqd:1,
+      read_only: 1,
       description: 'Auto-generated batch code. Format: 3 letters (A-L) + 3 digits (e.g., CGB151)',
-      onchange: function() {
-        const val = this.get_value();
-        if (val) {
-          // Validate format: 3 letters A-L followed by 3 digits
-          const pattern = /^[A-La-l]{3}\d{3}$/;
-          if (!pattern.test(val)) {
-            frappe.msgprint({
-              title: 'Invalid Batch Format',
-              message: 'Batch code must be 3 letters (A-L) followed by 3 digits (e.g., CGB151)',
-              indicator: 'red'
-            });
-          }
-        }
-      }
     });
 
     // Packaging materials
@@ -1471,7 +1458,8 @@ function init_operator_hub($root) {
     
     // Auto-generate and pre-fill batch number
     rpc('isnack.api.mes_ops.generate_next_batch_code')
-      .then(batchCode => {
+      .then(result => {
+        const batchCode = result.message || result;
         d.set_value('batch_no', batchCode);
       })
       .catch(err => {
