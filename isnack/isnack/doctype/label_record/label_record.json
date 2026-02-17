@@ -20,17 +20,16 @@
  "fields": [
   {
    "fieldname": "label_template",
-   "fieldtype": "Link",
+   "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Label Template",
-   "options": "Label Template",
    "reqd": 1
   },
   {
    "fieldname": "template_engine",
    "fieldtype": "Select",
    "label": "Template Engine",
-   "options": "ZPL\nTSPL\nRAW",
+   "options": "ZPL\nTSPL\nRAW\nJinja\nTemplate",
    "read_only": 1
   },
   {
