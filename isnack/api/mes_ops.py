@@ -1805,12 +1805,20 @@ def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
                     to_uom_factor = flt(to_uom_result[0]["conversion_factor"])
             
             # If both conversions exist, calculate the conversion from from_uom to to_uom
-            # Formula: from_uom -> stock_uom -> to_uom
+            # Formula: pallet_qty = carton_qty / conversion_factor
+            # 
+            # Example: If stock UOM is "Carton" and:
+            #   - 1 Carton = 1 Carton (from_uom_factor = 1)
+            #   - 1 EUR 1 Pallet = 4 Cartons (to_uom_factor = 4)
+            # Then: conversion_factor = to_uom_factor / from_uom_factor = 4 / 1 = 4
+            # So: pallet_qty = 10 cartons / 4 = 2.5 pallets ✓
+            #
+            # General case:
             # from_uom_factor = how many stock UOMs in 1 from_uom
             # to_uom_factor = how many stock UOMs in 1 to_uom
-            # conversion = from_uom_factor / to_uom_factor
-            if from_uom_factor is not None and to_uom_factor is not None and to_uom_factor != 0:
-                conversion_factor = from_uom_factor / to_uom_factor
+            # conversion = to_uom_factor / from_uom_factor
+            if from_uom_factor is not None and to_uom_factor is not None and from_uom_factor != 0:
+                conversion_factor = to_uom_factor / from_uom_factor
                 return {"conversion_factor": conversion_factor, "found": True}
         
         # Priority 2: Check global UOM Conversion Factor table
