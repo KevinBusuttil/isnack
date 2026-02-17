@@ -1011,7 +1011,7 @@ function init_operator_hub($root) {
 
   async function showPrintLabelDialog() {
     // Fetch default print format from Factory Settings
-    const defaultPrintFormat = await frappe.db.get_single_value('Factory Settings', 'default_label_print_format');
+    const defaultPrintFormat = await frappe.db.get_single_value('Factory Settings', 'default_fg_label_print_format');
     
     // Validate that a default print format is configured
     if (!defaultPrintFormat) {
