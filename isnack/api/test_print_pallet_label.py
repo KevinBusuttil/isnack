@@ -60,7 +60,8 @@ class TestPrintPalletLabel(unittest.TestCase):
         self.assertTrue(result["enable_silent_printing"])
         self.assertEqual(result["printer_name"], "Label Printer 1")
         self.assertIsNotNone(result["print_url"])
-        self.assertEqual(len(result["print_urls"]), 1)
+        # pallet_qty=2.5 should return ceil(2.5) = 3 URLs
+        self.assertEqual(len(result["print_urls"]), 3)
         self.assertIn("pallet_qty=2.5", result["print_url"])
         self.assertIn("pallet_type=EURO%201", result["print_url"])
     
@@ -308,6 +309,92 @@ class TestPrintPalletLabel(unittest.TestCase):
         
         # Should use fallback template
         self.assertEqual(result["print_format"], "Generic Label")
+    
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    def test_print_pallet_label_single_pallet(self, mock_generate_url, mock_fs, mock_get_value, mock_exists, mock_require_roles):
+        """Test pallet_qty=1.0 returns exactly 1 URL."""
+        # Mock Factory Settings
+        mock_factory_settings = MagicMock()
+        mock_factory_settings.default_fg_label_print_format = "FG Pallet Label"
+        mock_factory_settings.enable_silent_printing = False
+        mock_factory_settings.default_label_printer = None
+        mock_fs.return_value = mock_factory_settings
+        
+        # Mock Work Order exists
+        def exists_side_effect(doctype, docname=None):
+            if doctype == "Work Order" and docname == "WO-001":
+                return True
+            if doctype == "Print Format" and docname == "FG Pallet Label":
+                return True
+            if doctype == "DocType":
+                return False
+            return False
+        mock_exists.side_effect = exists_side_effect
+        
+        # Mock item details
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        
+        # Mock print URL generation
+        mock_generate_url.return_value = "http://example.com/printview"
+        
+        # Call function with pallet_qty=1.0
+        result = print_pallet_label(
+            item_code="ITEM001",
+            pallet_qty=1.0,
+            pallet_type="EURO 1",
+            work_orders='["WO-001"]',
+            template="FG Pallet Label"
+        )
+        
+        # Should return exactly 1 URL
+        self.assertEqual(len(result["print_urls"]), 1)
+    
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    def test_print_pallet_label_multiple_pallets(self, mock_generate_url, mock_fs, mock_get_value, mock_exists, mock_require_roles):
+        """Test pallet_qty=5.0 returns exactly 5 URLs."""
+        # Mock Factory Settings
+        mock_factory_settings = MagicMock()
+        mock_factory_settings.default_fg_label_print_format = "FG Pallet Label"
+        mock_factory_settings.enable_silent_printing = False
+        mock_factory_settings.default_label_printer = None
+        mock_fs.return_value = mock_factory_settings
+        
+        # Mock Work Order exists
+        def exists_side_effect(doctype, docname=None):
+            if doctype == "Work Order" and docname == "WO-001":
+                return True
+            if doctype == "Print Format" and docname == "FG Pallet Label":
+                return True
+            if doctype == "DocType":
+                return False
+            return False
+        mock_exists.side_effect = exists_side_effect
+        
+        # Mock item details
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        
+        # Mock print URL generation
+        mock_generate_url.return_value = "http://example.com/printview"
+        
+        # Call function with pallet_qty=5.0
+        result = print_pallet_label(
+            item_code="ITEM001",
+            pallet_qty=5.0,
+            pallet_type="EURO 1",
+            work_orders='["WO-001"]',
+            template="FG Pallet Label"
+        )
+        
+        # Should return exactly 5 URLs
+        self.assertEqual(len(result["print_urls"]), 5)
 
 
 if __name__ == "__main__":

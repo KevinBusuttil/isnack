@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from string import Template
 from typing import Optional, Tuple
 
@@ -2501,11 +2502,15 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
     default_label_printer = getattr(fs, "default_label_printer", None)
     
+    # Generate multiple print URLs based on pallet_qty (one per pallet)
+    num_copies = max(1, math.ceil(flt(pallet_qty)))
+    print_urls = [print_url] * num_copies
+    
     return {
         "success": True,
         "label_record": label_record.name if label_record else None,
         "print_url": print_url,
-        "print_urls": [print_url],  # Single URL in list for consistency
+        "print_urls": print_urls,  # One URL per pallet copy
         "doctype": "Work Order",
         "docname": first_work_order,
         "print_format": template,
