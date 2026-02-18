@@ -1051,7 +1051,50 @@ function init_operator_hub($root) {
       return;
     }
 
-    // 3. Build the dialog with a Table (grid) field
+    // 3. Helper function to calculate pallet_qty for a grid row
+    async function calculatePalletQty(row) {
+      const palletType = row.doc.pallet_type;
+      const cartonQty = row.doc.carton_qty || 0;
+      const itemCode = row.doc.item_code;
+      const fromUom = row.doc.default_uom;
+
+      if (!palletType || !cartonQty) {
+        // Clear pallet_qty if no pallet type or no carton qty
+        row.doc.pallet_qty = null;
+        row.refresh();
+        return;
+      }
+
+      try {
+        console.log(`Fetching conversion: ${itemCode} from ${fromUom} to ${palletType}`);
+        const r = await rpc('isnack.api.mes_ops.get_pallet_conversion_factor', {
+          item_code: itemCode,
+          from_uom: fromUom,
+          to_uom: palletType
+        });
+        
+        const result = r.message || {};
+        const found = result.found;
+        const conversionFactor = result.conversion_factor;
+        
+        if (found && conversionFactor) {
+          // Valid conversion found, calculate pallet_qty
+          row.doc.pallet_qty = cartonQty / conversionFactor;
+          console.log(`Conversion found: ${conversionFactor}, pallet_qty = ${row.doc.pallet_qty}`);
+        } else {
+          // No conversion found, leave pallet_qty blank (user can manually enter)
+          row.doc.pallet_qty = null;
+          console.log('No conversion found');
+        }
+        
+        row.refresh();
+      } catch (err) {
+        console.error('Conversion factor fetch failed:', err);
+        frappe.show_alert({message: 'Failed to get conversion factor', indicator: 'orange'});
+      }
+    }
+
+    // 4. Build the dialog with a Table (grid) field
     const d = new frappe.ui.Dialog({
       title: 'Print Pallet Label (FG only)',
       size: 'extra-large',
@@ -1096,6 +1139,10 @@ function init_operator_hub($root) {
               in_list_view: 1,
               read_only: 0,
               columns: 1,
+              on_change: function() {
+                // Auto-recalculate pallet_qty when carton_qty changes
+                calculatePalletQty(this.grid_row);
+              }
             },
             {
               fieldname: 'pallet_type',
@@ -1108,6 +1155,10 @@ function init_operator_hub($root) {
               get_query: () => ({
                 filters: { name: ['in', allowedPalletUoms] }
               }),
+              on_change: function() {
+                // Auto-calculate pallet_qty when pallet_type changes
+                calculatePalletQty(this.grid_row);
+              }
             },
             {
               fieldname: 'pallet_qty',
@@ -1139,12 +1190,6 @@ function init_operator_hub($root) {
         // For now, we show a success message.
         flashStatus(`Ready to print ${rowsToPrint.length} pallet label(s)`, 'success');
         d.hide();
-      },
-      onhide: () => {
-        // Unbind event handlers to prevent memory leaks
-        if (d.fields_dict.pallet_items && d.fields_dict.pallet_items.grid) {
-          d.fields_dict.pallet_items.grid.wrapper.off('change', '[data-fieldname="pallet_type"] input');
-        }
       }
     });
 
@@ -1160,71 +1205,6 @@ function init_operator_hub($root) {
       });
     });
     d.fields_dict.pallet_items.grid.refresh();
-
-    // 5. Bind Pallet Type change event to auto-calculate Pallet Qty
-    // When pallet_type changes on a row, fetch conversion factor and calculate
-    d.fields_dict.pallet_items.grid.wrapper.on('change', '[data-fieldname="pallet_type"] input', async function() {
-      // Get the row, fetch conversion factor, calculate pallet_qty
-      const $row = $(this).closest('.grid-row');
-      const rowIdx = parseInt($row.attr('data-idx'), 10);
-      
-      // Validate rowIdx is a valid positive integer
-      if (!rowIdx || rowIdx < 1) {
-        console.warn('Invalid row index:', rowIdx);
-        return;
-      }
-      
-      const grid = d.fields_dict.pallet_items.grid;
-      const row = grid.grid_rows[rowIdx - 1];
-      if (!row) {
-        console.warn('Row not found for index:', rowIdx);
-        return;
-      }
-
-      const palletType = row.doc.pallet_type;
-      const cartonQty = row.doc.carton_qty || 0;
-      const itemCode = row.doc.item_code;
-      const fromUom = row.doc.default_uom;
-
-      if (!palletType) {
-        // Clear pallet_qty if no pallet type is selected
-        row.doc.pallet_qty = null;
-        row.refresh();
-        return;
-      }
-
-      if (!cartonQty) {
-        // If no carton qty, leave pallet_qty empty
-        row.doc.pallet_qty = null;
-        row.refresh();
-        return;
-      }
-
-      try {
-        const r = await rpc('isnack.api.mes_ops.get_pallet_conversion_factor', {
-          item_code: itemCode,
-          from_uom: fromUom,
-          to_uom: palletType
-        });
-        
-        const result = r.message || {};
-        const found = result.found;
-        const conversionFactor = result.conversion_factor;
-        
-        if (found && conversionFactor) {
-          // Valid conversion found, calculate pallet_qty
-          row.doc.pallet_qty = cartonQty / conversionFactor;
-        } else {
-          // No conversion found, leave pallet_qty blank (user can manually enter)
-          row.doc.pallet_qty = null;
-        }
-        
-        row.refresh();
-      } catch (err) {
-        console.error('Conversion factor fetch failed:', err);
-        frappe.show_alert({message: 'Failed to get conversion factor', indicator: 'orange'});
-      }
-    });
 
     d.show();
   }
