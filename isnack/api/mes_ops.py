@@ -2625,7 +2625,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
         frappe.throw(_("No valid quantities provided."))
 
     # Get first source document for compatibility
-    first_source = record.sources[0] if record.sources else None
+    first_source = record.sources[0] if (record.sources and len(record.sources) > 0) else None
     source_doctype = first_source.source_doctype if first_source else None
     source_docname = first_source.source_docname if first_source else None
 
