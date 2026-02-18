@@ -15,7 +15,8 @@
   "item_name",
   "batch_no",
   "source_doctype",
-  "source_docname"
+  "source_docname",
+  "work_orders"
  ],
  "fields": [
   {
@@ -82,6 +83,12 @@
    "label": "Source Document",
    "options": "source_doctype",
    "read_only": 1
+  },
+  {
+   "fieldname": "work_orders",
+   "fieldtype": "Table",
+   "label": "Work Orders",
+   "options": "Label Record Work Order"
   }
  ],
  "grid_page_length": 50,
