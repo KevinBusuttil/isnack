@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "format:LBL-{YYYY}-{MM}-{#####}",
- "creation": "2026-01-06 00:00:00.000000",
+ "creation": "2026-01-06 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -10,9 +9,9 @@
   "template_engine",
   "payload",
   "payload_hash",
-  "quantity",
   "item_code",
   "item_name",
+  "quantity",
   "batch_no",
   "sources"
  ],
@@ -46,12 +45,15 @@
   {
    "fieldname": "quantity",
    "fieldtype": "Float",
+   "in_list_view": 1,
    "label": "Quantity",
    "read_only": 1
   },
   {
    "fieldname": "item_code",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Item",
    "options": "Item",
    "read_only": 1
@@ -59,12 +61,16 @@
   {
    "fieldname": "item_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Item Name",
    "read_only": 1
   },
   {
    "fieldname": "batch_no",
    "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Batch No",
    "read_only": 1
   },
@@ -78,7 +84,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-01-06 00:00:00.000000",
+ "modified": "2026-02-18 16:04:46.470504",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Label Record",
@@ -98,7 +104,6 @@
    "write": 1
   }
  ],
- "quick_entry": 0,
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
