@@ -1053,6 +1053,9 @@ function init_operator_hub($root) {
 
     // 3. Helper function to calculate pallet_qty for a grid row
     async function calculatePalletQty(row) {
+      if (!row || !row.doc) {
+        return;
+      }
       const palletType = row.doc.pallet_type;
       const cartonQty = row.doc.carton_qty || 0;
       const itemCode = row.doc.item_code;
@@ -1139,7 +1142,7 @@ function init_operator_hub($root) {
               in_list_view: 1,
               read_only: 0,
               columns: 1,
-              onchange: () => {
+              onchange: function () {
                 // Auto-recalculate pallet_qty when carton_qty changes
                 calculatePalletQty(this.grid_row);
               }
@@ -1155,7 +1158,7 @@ function init_operator_hub($root) {
               get_query: () => ({
                 filters: { name: ['in', allowedPalletUoms] }
               }),
-              onchange: () => {
+              onchange: function () {
                 // Auto-calculate pallet_qty when pallet_type changes
                 calculatePalletQty(this.grid_row);
               }
