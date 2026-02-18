@@ -2399,6 +2399,120 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     }
 
 
+@frappe.whitelist()
+def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str, 
+                       work_orders: str, template: Optional[str] = None):
+    """
+    Create pallet label record and return print information for client-side printing.
+    The label record is kept for audit trail, but printing happens on the client.
+    
+    Args:
+        item_code: Item code for the pallet
+        pallet_qty: Quantity to print on the pallet label
+        pallet_type: Pallet UOM type (e.g., "EURO 1")
+        work_orders: JSON string list of Work Order names
+        template: Label template/print format name (defaults to Factory Settings)
+    
+    Returns:
+        dict: Contains print_url, print_urls, doctype, docname, print_format, label_record, 
+              enable_silent_printing, and printer_name
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    # Parse work_orders JSON string
+    try:
+        wo_list = json.loads(work_orders) if isinstance(work_orders, str) else work_orders
+        if not isinstance(wo_list, list):
+            wo_list = [wo_list]
+    except (json.JSONDecodeError, TypeError):
+        wo_list = []
+    
+    if not wo_list:
+        frappe.throw(_("At least one work order is required"))
+    
+    # Use first work order for traceability
+    first_work_order = wo_list[0]
+    
+    # Validate that the first work order exists
+    if not frappe.db.exists("Work Order", first_work_order):
+        frappe.throw(_("Work Order {0} not found").format(first_work_order))
+
+    fs = _fs()
+    # Try default_fg_label_print_format first (for FG pallet labels), then fall back to 
+    # default_label_print_format and default_label_template for backward compatibility
+    template = template or getattr(fs, "default_fg_label_print_format", None) or \
+               getattr(fs, "default_label_print_format", None) or \
+               getattr(fs, "default_label_template", None)
+
+    if not template:
+        frappe.throw(_("No label template or print format provided and no default configured in Factory Settings (default_fg_label_print_format, default_label_print_format or default_label_template)"))
+
+    # Check if template is a Print Format (new method)
+    is_print_format = frappe.db.exists("Print Format", template)
+    
+    # Get item details
+    item_details = frappe.db.get_value("Item", item_code, ["item_name"], as_dict=True)
+    item_name = item_details.get("item_name") if item_details else item_code
+    
+    # Create audit trail record (Label Record for history)
+    label_record = None
+    if frappe.db.exists("DocType", "Label Record"):
+        label_record = frappe.new_doc("Label Record")
+        label_record.label_template = template
+        label_record.template_engine = "Jinja" if is_print_format else "Template"
+        
+        # Store pallet info in payload
+        payload_info = {
+            "pallet_type": pallet_type,
+            "work_orders": wo_list,
+            "print_format": template if is_print_format else None
+        }
+        label_record.payload = json.dumps(payload_info)
+        label_record.payload_hash = hashlib.sha256(
+            f"{template}_{pallet_qty}_{item_code}_{pallet_type}".encode("utf-8")
+        ).hexdigest()
+        
+        label_record.quantity = pallet_qty
+        label_record.item_code = item_code
+        label_record.item_name = item_name
+        label_record.source_doctype = "Work Order"
+        label_record.source_docname = first_work_order
+        label_record.flags.ignore_permissions = True
+        label_record.insert()
+
+        # Create Label Print Job for audit trail
+        if frappe.db.exists("DocType", "Label Print Job"):
+            print_job = frappe.new_doc("Label Print Job")
+            print_job.label_record = label_record.name
+            print_job.quantity = pallet_qty
+            print_job.status = "Queued"
+            print_job.requested_by = frappe.session.user
+            print_job.requested_at = frappe.utils.now_datetime()
+            print_job.flags.ignore_permissions = True
+            print_job.insert()
+    
+    # Generate print URL with pallet_qty and pallet_type as query parameters
+    # so the Print Format can access them
+    base_url = _generate_print_url("Work Order", first_work_order, template)
+    # Add pallet-specific parameters
+    print_url = f"{base_url}&pallet_qty={pallet_qty}&pallet_type={frappe.utils.quote(pallet_type)}"
+    
+    # Get silent printing settings
+    enable_silent_printing = getattr(fs, "enable_silent_printing", False)
+    default_label_printer = getattr(fs, "default_label_printer", None)
+    
+    return {
+        "success": True,
+        "label_record": label_record.name if label_record else None,
+        "print_url": print_url,
+        "print_urls": [print_url],  # Single URL in list for consistency
+        "doctype": "Work Order",
+        "docname": first_work_order,
+        "print_format": template,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": default_label_printer
+    }
+
 
 def _create_label_print_job(label_record, printer, quantity, reason_code=None, parent_print_job=None):
     if not frappe.db.exists("DocType", "Label Print Job"):
