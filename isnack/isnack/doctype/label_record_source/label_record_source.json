@@ -6,22 +6,31 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "work_order",
-  "work_order_status"
+  "source_doctype",
+  "source_docname",
+  "source_status"
  ],
  "fields": [
   {
-   "fieldname": "work_order",
+   "fieldname": "source_doctype",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Work Order",
-   "options": "Work Order",
+   "label": "Source DocType",
+   "options": "DocType",
    "reqd": 1
   },
   {
-   "fieldname": "work_order_status",
+   "fieldname": "source_docname",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Source Document",
+   "options": "source_doctype",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_status",
    "fieldtype": "Data",
-   "label": "Work Order Status",
+   "label": "Source Status",
    "read_only": 1
   }
  ],
@@ -31,7 +40,7 @@
  "modified": "2026-02-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
- "name": "Label Record Work Order",
+ "name": "Label Record Source",
  "owner": "Administrator",
  "permissions": [],
  "sort_field": "modified",

@@ -14,9 +14,7 @@
   "item_code",
   "item_name",
   "batch_no",
-  "source_doctype",
-  "source_docname",
-  "work_orders"
+  "sources"
  ],
  "fields": [
   {
@@ -71,24 +69,10 @@
    "read_only": 1
   },
   {
-   "fieldname": "source_doctype",
-   "fieldtype": "Link",
-   "label": "Source DocType",
-   "options": "DocType",
-   "read_only": 1
-  },
-  {
-   "fieldname": "source_docname",
-   "fieldtype": "Dynamic Link",
-   "label": "Source Document",
-   "options": "source_doctype",
-   "read_only": 1
-  },
-  {
-   "fieldname": "work_orders",
+   "fieldname": "sources",
    "fieldtype": "Table",
-   "label": "Work Orders",
-   "options": "Label Record Work Order"
+   "label": "Source Documents",
+   "options": "Label Record Source"
   }
  ],
  "grid_page_length": 50,
