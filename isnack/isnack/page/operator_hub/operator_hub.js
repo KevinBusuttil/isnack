@@ -1171,15 +1171,19 @@ function init_operator_hub($root) {
               read_only: 0,  // editable for manual override
               columns: 1,
             },
+            {
+              fieldname: 'work_orders',
+              fieldtype: 'Data',
+              label: 'Work Orders',
+              hidden: 1,
+              in_list_view: 0,
+            }
           ]
         }
       ],
       primary_action_label: 'Print Labels',
       primary_action: async (v) => {
-        // Collect grid data and call print API for each row
         const gridData = d.fields_dict.pallet_items.grid.get_data();
-        
-        // Filter rows that have a pallet_type selected
         const rowsToPrint = gridData.filter(row => row.pallet_type && row.pallet_qty > 0);
         
         if (!rowsToPrint.length) {
@@ -1187,11 +1191,64 @@ function init_operator_hub($root) {
           return;
         }
         
-        // Print each row
-        // Note: This uses the existing print_label endpoint which expects a single work_order.
-        // For pallet labels from multiple work orders, we would need a new print endpoint.
-        // For now, we show a success message.
-        flashStatus(`Ready to print ${rowsToPrint.length} pallet label(s)`, 'success');
+        setStatus(`Printing ${rowsToPrint.length} pallet label(s)…`);
+        
+        let printedCount = 0;
+        let firstEnableSilent = false;
+        let firstPrinterName = null;
+        
+        for (let idx = 0; idx < rowsToPrint.length; idx++) {
+          const row = rowsToPrint[idx];
+          
+          try {
+            // Call the new backend API for each row
+            const result = await rpc('isnack.api.mes_ops.print_pallet_label', {
+              item_code: row.item_code,
+              pallet_qty: row.pallet_qty,
+              pallet_type: row.pallet_type,
+              work_orders: JSON.stringify(row.work_orders || []),
+              template: defaultPrintFormat
+            });
+            
+            if (result.message && result.message.print_urls && result.message.print_urls.length > 0) {
+              const enableSilent = result.message.enable_silent_printing;
+              const printerName = result.message.printer_name;
+              
+              if (idx === 0) {
+                firstEnableSilent = enableSilent;
+                firstPrinterName = printerName;
+              }
+              
+              for (let urlIdx = 0; urlIdx < result.message.print_urls.length; urlIdx++) {
+                const url = result.message.print_urls[urlIdx];
+                
+                // Add delay between prints (except for the very first print)
+                if (printedCount > 0) {
+                  await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+                }
+                
+                await handleLabelPrint(url, enableSilent, printerName, `pallet label ${row.item_code} (${idx + 1}/${rowsToPrint.length})`);
+                printedCount++;
+              }
+            }
+          } catch (err) {
+            console.error(`Failed to print pallet label for ${row.item_code}:`, err);
+            frappe.show_alert({message: `Failed to print label for ${row.item_code}`, indicator: 'red'});
+          }
+        }
+        
+        // Show final success message
+        if (printedCount > 0) {
+          const action = firstEnableSilent ? 'sent to printer' : 'dialog(s) opened';
+          frappe.show_alert({
+            message: `${printedCount} pallet label(s) ${action}`,
+            indicator: 'green'
+          });
+          flashStatus(`Printed ${printedCount} pallet label(s)`, 'success');
+        } else {
+          flashStatus('No labels were printed', 'warning');
+        }
+        
         d.hide();
       }
     });
@@ -1205,6 +1262,7 @@ function init_operator_hub($root) {
         carton_qty: item.carton_qty,
         pallet_type: '',
         pallet_qty: 0,
+        work_orders: item.work_orders || [],  // Store work_orders array
       });
     });
     d.fields_dict.pallet_items.grid.refresh();
