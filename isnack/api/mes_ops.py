@@ -2353,8 +2353,10 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         label_record.item_code = wo.production_item
         label_record.item_name = wo.item_name
         label_record.batch_no = wo.get("batch_no")
-        label_record.source_doctype = "Work Order"
-        label_record.source_docname = wo.name
+        label_record.append("sources", {
+            "source_doctype": "Work Order",
+            "source_docname": wo.name,
+        })
         label_record.flags.ignore_permissions = True
         label_record.insert()
 
@@ -2476,13 +2478,12 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         label_record.quantity = pallet_qty
         label_record.item_code = item_code
         label_record.item_name = item_name
-        label_record.source_doctype = "Work Order"
-        label_record.source_docname = first_work_order
         
-        # Populate work_orders child table for multi-WO support
+        # Populate sources child table for multi-WO support
         for wo_name in wo_list:
-            label_record.append("work_orders", {
-                "work_order": wo_name,
+            label_record.append("sources", {
+                "source_doctype": "Work Order",
+                "source_docname": wo_name,
             })
         
         label_record.flags.ignore_permissions = True
@@ -2552,7 +2553,6 @@ def list_label_records(work_order: str):
         return []
 
     # Query via child table to find labels linked to ANY of the work orders
-    # (not just the first one stored in source_docname)
     records = frappe.db.sql("""
         SELECT DISTINCT
             lr.name,
@@ -2563,12 +2563,9 @@ def list_label_records(work_order: str):
             lr.batch_no,
             lr.creation
         FROM `tabLabel Record` lr
-        LEFT JOIN `tabLabel Record Work Order` lrwo ON lrwo.parent = lr.name
-        WHERE lr.source_doctype = 'Work Order'
-            AND (
-                lr.source_docname = %(work_order)s
-                OR lrwo.work_order = %(work_order)s
-            )
+        INNER JOIN `tabLabel Record Source` lrs ON lrs.parent = lr.name
+        WHERE lrs.source_doctype = 'Work Order'
+            AND lrs.source_docname = %(work_order)s
         ORDER BY lr.creation DESC
         LIMIT 20
     """, {"work_order": work_order}, as_dict=True)
@@ -2627,6 +2624,11 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     if not cleaned_quantities:
         frappe.throw(_("No valid quantities provided."))
 
+    # Get first source document for compatibility
+    first_source = record.sources[0] if record.sources else None
+    source_doctype = first_source.source_doctype if first_source else None
+    source_docname = first_source.source_docname if first_source else None
+
     # Check if the label_template is a Print Format (new method)
     is_print_format = frappe.db.exists("Print Format", record.label_template)
     
@@ -2638,11 +2640,11 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     print_urls = []
     
     # Special handling for Stock Entry with multiple items when reprinting (not splitting)
-    if (record.source_doctype == "Stock Entry" and 
+    if (source_doctype == "Stock Entry" and 
         not quantities and 
-        record.source_docname):
+        source_docname):
         # When reprinting a Stock Entry Label Record, print all items in the Stock Entry
-        se_doc = frappe.get_doc("Stock Entry", record.source_docname)
+        se_doc = frappe.get_doc("Stock Entry", source_docname)
         if se_doc.items and len(se_doc.items) > 1:
             # Multiple items: generate one print URL per item
             for item in se_doc.items:
@@ -2651,8 +2653,8 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                 
                 # Generate print URL with row_name parameter
                 print_urls.append(_generate_print_url(
-                    record.source_doctype,
-                    record.source_docname,
+                    source_doctype,
+                    source_docname,
                     record.label_template,
                     row_name=item.name
                 ))
@@ -2662,10 +2664,10 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                 if target_printer:
                     jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
                 
-                if record.source_doctype and record.source_docname:
+                if source_doctype and source_docname:
                     print_urls.append(_generate_print_url(
-                        record.source_doctype,
-                        record.source_docname,
+                        source_doctype,
+                        source_docname,
                         record.label_template
                     ))
     else:
@@ -2675,10 +2677,10 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                 jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
             
             # Generate print URL for client-side printing
-            if record.source_doctype and record.source_docname:
+            if source_doctype and source_docname:
                 print_urls.append(_generate_print_url(
-                    record.source_doctype,
-                    record.source_docname,
+                    source_doctype,
+                    source_docname,
                     record.label_template
                 ))
 
@@ -2689,8 +2691,8 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
         "label_record": record.name,
         "jobs": [job.name for job in jobs if job],
         "print_urls": print_urls,
-        "doctype": record.source_doctype,
-        "docname": record.source_docname,
+        "doctype": source_doctype,
+        "docname": source_docname,
         "print_format": record.label_template,
         "enable_silent_printing": enable_silent_printing,
         "printer_name": target_printer

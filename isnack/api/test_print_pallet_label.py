@@ -143,13 +143,11 @@ class TestPrintPalletLabel(unittest.TestCase):
         self.assertEqual(mock_label_record.quantity, 2.5)
         self.assertEqual(mock_label_record.item_code, "ITEM001")
         self.assertEqual(mock_label_record.item_name, "Test Item")
-        self.assertEqual(mock_label_record.source_doctype, "Work Order")
-        self.assertEqual(mock_label_record.source_docname, "WO-001")
         
-        # Verify work_orders child table was populated
+        # Verify sources child table was populated
         self.assertEqual(mock_label_record.append.call_count, 2)
-        mock_label_record.append.assert_any_call("work_orders", {"work_order": "WO-001"})
-        mock_label_record.append.assert_any_call("work_orders", {"work_order": "WO-002"})
+        mock_label_record.append.assert_any_call("sources", {"source_doctype": "Work Order", "source_docname": "WO-001"})
+        mock_label_record.append.assert_any_call("sources", {"source_doctype": "Work Order", "source_docname": "WO-002"})
         
         # Verify payload includes pallet info
         payload_dict = json.loads(mock_label_record.payload)
@@ -439,10 +437,13 @@ class TestListLabelRecords(unittest.TestCase):
         call_args = mock_sql.call_args
         sql_query = call_args[0][0]
         
-        # Verify query includes both source_docname and child table join
-        self.assertIn("LEFT JOIN `tabLabel Record Work Order` lrwo", sql_query)
-        self.assertIn("lr.source_docname = %(work_order)s", sql_query)
-        self.assertIn("lrwo.work_order = %(work_order)s", sql_query)
+        # Verify query uses new sources child table
+        self.assertIn("INNER JOIN `tabLabel Record Source` lrs", sql_query)
+        self.assertIn("lrs.source_doctype = 'Work Order'", sql_query)
+        self.assertIn("lrs.source_docname = %(work_order)s", sql_query)
+        # Verify old fields are not present
+        self.assertNotIn("lr.source_docname", sql_query)
+        self.assertNotIn("Label Record Work Order", sql_query)
         
         # Verify work_order parameter was passed
         self.assertEqual(call_args[1], {"work_order": "WO-002"})
