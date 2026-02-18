@@ -1139,7 +1139,7 @@ function init_operator_hub($root) {
               in_list_view: 1,
               read_only: 0,
               columns: 1,
-              on_change: function() {
+              onchange: () => {
                 // Auto-recalculate pallet_qty when carton_qty changes
                 calculatePalletQty(this.grid_row);
               }
@@ -1155,7 +1155,7 @@ function init_operator_hub($root) {
               get_query: () => ({
                 filters: { name: ['in', allowedPalletUoms] }
               }),
-              on_change: function() {
+              onchange: () => {
                 // Auto-calculate pallet_qty when pallet_type changes
                 calculatePalletQty(this.grid_row);
               }
