@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import frappe
-from isnack.api.mes_ops import print_pallet_label
+from isnack.api.mes_ops import print_pallet_label, list_label_records
 
 
 class TestPrintPalletLabel(unittest.TestCase):
@@ -145,6 +145,11 @@ class TestPrintPalletLabel(unittest.TestCase):
         self.assertEqual(mock_label_record.item_name, "Test Item")
         self.assertEqual(mock_label_record.source_doctype, "Work Order")
         self.assertEqual(mock_label_record.source_docname, "WO-001")
+        
+        # Verify work_orders child table was populated
+        self.assertEqual(mock_label_record.append.call_count, 2)
+        mock_label_record.append.assert_any_call("work_orders", {"work_order": "WO-001"})
+        mock_label_record.append.assert_any_call("work_orders", {"work_order": "WO-002"})
         
         # Verify payload includes pallet info
         payload_dict = json.loads(mock_label_record.payload)
@@ -395,6 +400,59 @@ class TestPrintPalletLabel(unittest.TestCase):
         
         # Should return exactly 5 URLs
         self.assertEqual(len(result["print_urls"]), 5)
+
+
+class TestListLabelRecords(unittest.TestCase):
+    """Tests for list_label_records function."""
+    
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.sql')
+    def test_list_label_records_multi_wo(self, mock_sql, mock_exists, mock_require_roles):
+        """Test that list_label_records queries via child table for multi-WO support."""
+        # Mock DocType exists
+        def exists_side_effect(doctype, docname=None):
+            if doctype == "DocType" and docname == "Label Record":
+                return True
+            return False
+        mock_exists.side_effect = exists_side_effect
+        
+        # Mock SQL query results
+        mock_records = [
+            {
+                "name": "LBL-001",
+                "label_template": "FG Pallet Label",
+                "quantity": 2.5,
+                "item_code": "ITEM001",
+                "item_name": "Test Item",
+                "batch_no": None,
+                "creation": "2026-02-18 10:00:00"
+            }
+        ]
+        mock_sql.return_value = mock_records
+        
+        # Call function with WO-002 (not the first work order)
+        result = list_label_records("WO-002")
+        
+        # Verify SQL was called with correct query
+        mock_sql.assert_called_once()
+        call_args = mock_sql.call_args
+        sql_query = call_args[0][0]
+        
+        # Verify query includes both source_docname and child table join
+        self.assertIn("LEFT JOIN `tabLabel Record Work Order` lrwo", sql_query)
+        self.assertIn("lr.source_docname = %(work_order)s", sql_query)
+        self.assertIn("lrwo.work_order = %(work_order)s", sql_query)
+        
+        # Verify work_order parameter was passed
+        self.assertEqual(call_args[1], {"work_order": "WO-002"})
+        
+        # Verify as_dict=True
+        self.assertEqual(call_args[1].get("work_order"), "WO-002")
+        
+        # Verify result
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["name"], "LBL-001")
 
 
 if __name__ == "__main__":

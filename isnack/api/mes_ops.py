@@ -2478,6 +2478,13 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         label_record.item_name = item_name
         label_record.source_doctype = "Work Order"
         label_record.source_docname = first_work_order
+        
+        # Populate work_orders child table for multi-WO support
+        for wo_name in wo_list:
+            label_record.append("work_orders", {
+                "work_order": wo_name,
+            })
+        
         label_record.flags.ignore_permissions = True
         label_record.insert()
 
@@ -2544,24 +2551,29 @@ def list_label_records(work_order: str):
     if not frappe.db.exists("DocType", "Label Record"):
         return []
 
-    return frappe.get_all(
-        "Label Record",
-        fields=[
-            "name",
-            "label_template",
-            "quantity",
-            "item_code",
-            "item_name",
-            "batch_no",
-            "creation",
-        ],
-        filters={
-            "source_doctype": "Work Order",
-            "source_docname": work_order,
-        },
-        order_by="creation desc",
-        limit=20,
-    )
+    # Query via child table to find labels linked to ANY of the work orders
+    # (not just the first one stored in source_docname)
+    records = frappe.db.sql("""
+        SELECT DISTINCT
+            lr.name,
+            lr.label_template,
+            lr.quantity,
+            lr.item_code,
+            lr.item_name,
+            lr.batch_no,
+            lr.creation
+        FROM `tabLabel Record` lr
+        LEFT JOIN `tabLabel Record Work Order` lrwo ON lrwo.parent = lr.name
+        WHERE lr.source_doctype = 'Work Order'
+            AND (
+                lr.source_docname = %(work_order)s
+                OR lrwo.work_order = %(work_order)s
+            )
+        ORDER BY lr.creation DESC
+        LIMIT 20
+    """, {"work_order": work_order}, as_dict=True)
+
+    return records
 
 
 def _generate_print_url(source_doctype: str, source_docname: str, print_format: str, row_name: str = None) -> str:
