@@ -12,7 +12,10 @@ function update_multi_currency(frm) {
 		return row.account_currency && row.account_currency !== company_currency;
 	});
 
-	frm.set_value("multi_currency", has_foreign_currency ?  1 : 0);
+	// Only update if value actually changes to prevent cascading events
+	if (frm.doc.multi_currency !== (has_foreign_currency ? 1 : 0)) {
+		frm.set_value("multi_currency", has_foreign_currency ? 1 : 0);
+	}
 }
 
 erpnext.journal_entry.set_account_details = function(frm, dt, dn) {
@@ -33,6 +36,8 @@ erpnext.journal_entry.set_account_details = function(frm, dt, dn) {
 			callback: function (r) {
 				if (r.message) {
 					$.extend(d, r.message);
+					// Update multi_currency after account_currency is populated by server
+					update_multi_currency(frm);
 					erpnext.journal_entry.set_amount_on_last_row(frm, dt, dn);
 					erpnext.journal_entry.set_debit_credit_in_company_currency(frm, dt, dn);
 					refresh_field("accounts");
@@ -49,18 +54,8 @@ frappe.ui.form.on('Journal Entry', {
 });
 
 frappe.ui.form.on('Journal Entry Account', {
-	// Let ERPNext handle account selection - it will set BOTH currency AND exchange rate
-	account: function(frm, cdt, cdn) {
-		update_multi_currency(frm);
-	},
-	
-	// Trigger when account_currency changes (in case it's set some other way)
+	// Trigger when account_currency changes (after server populates it or set manually)
 	account_currency: function(frm, cdt, cdn) {
-		update_multi_currency(frm);
-	},
-	
-	// Trigger when exchange_rate changes
-	exchange_rate: function(frm, cdt, cdn) {
 		update_multi_currency(frm);
 	},
 	
