@@ -27,5 +27,12 @@ frappe.query_reports["Document Attachments"] = {
 			"reqd": 0,
 			"options": "\nJournal Entry\nLanded Cost Voucher\nPurchase Invoice\nService Invoice"
 		}
-	]
+	],
+	formatter: function(value, row, column, data, default_formatter) {
+		value = default_formatter(value, row, column, data);
+		if (column.fieldname === "full_url" && data && data.full_url && /^https?:\/\//.test(data.full_url)) {
+			value = `<a href="${data.full_url}" target="_blank">${value}</a>`;
+		}
+		return value;
+	}
 };
