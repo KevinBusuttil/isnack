@@ -1,3 +1,5 @@
+frappe.ui.form.off("Production Plan", "make_work_order");
+
 frappe.ui.form.on("Production Plan", {
   make_work_order(frm) {
     // Guard: if not submitted, just run directly
