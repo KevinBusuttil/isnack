@@ -930,6 +930,113 @@ def find_se_by_item_row(rowname: str):
     return parent
 
 
+@frappe.whitelist()
+def get_combined_items_for_labels(stock_entries):
+    """
+    Given a list of Stock Entry names, fetch all Stock Entry Detail rows,
+    group by (item_code, batch_no), sum qty, and return the grouped list.
+
+    Returns: [
+        {
+            'item_code': str,
+            'item_name': str,
+            'batch_no': str or None,
+            'uom': str,
+            'qty': float,
+            'stock_entries': [list of SE names contributing]
+        },
+        ...
+    ]
+    """
+    if isinstance(stock_entries, str):
+        try:
+            stock_entries = json.loads(stock_entries or "[]")
+        except Exception:
+            stock_entries = [s.strip() for s in stock_entries.split(",") if s.strip()]
+
+    if not stock_entries:
+        frappe.throw(_("No Stock Entries provided."))
+
+    frappe.db.sql("SET SESSION group_concat_max_len = 65536")
+    rows = frappe.db.sql(
+        """
+        select
+            sed.item_code,
+            sed.item_name,
+            sed.batch_no,
+            sed.uom,
+            sum(sed.qty) as qty,
+            group_concat(sed.parent order by sed.parent separator ',') as contributing_entries
+        from `tabStock Entry Detail` sed
+        join `tabStock Entry` se on se.name = sed.parent
+        where sed.parent in %(stock_entries)s
+            and se.docstatus = 1
+        group by sed.item_code, sed.batch_no, sed.uom
+        order by sed.item_code, sed.batch_no
+        """,
+        {"stock_entries": tuple(stock_entries)},
+        as_dict=True,
+    )
+
+    for row in rows:
+        entries_str = row.pop("contributing_entries", "") or ""
+        row["stock_entries"] = list(dict.fromkeys(entries_str.split(","))) if entries_str else []
+        row["qty"] = float(row["qty"] or 0)
+
+    return rows
+
+
+@frappe.whitelist()
+def print_combined_pallet_labels(items):
+    """
+    Given a list of grouped items (item_code, batch_no, qty),
+    generate print URLs for each item using the configured label print format.
+    Each item gets one print URL with the item details passed as query parameters.
+
+    Returns: {
+        'print_urls': [str],
+        'enable_silent_printing': bool,
+        'printer_name': str or None
+    }
+    """
+    if isinstance(items, str):
+        try:
+            items = json.loads(items or "[]")
+        except Exception:
+            items = []
+
+    try:
+        fs = frappe.get_single("Factory Settings")
+        fmt = getattr(fs, "default_label_print_format", None) or "SATO Label Print"
+        enable_silent_printing = getattr(fs, "enable_silent_printing", False)
+        default_label_printer = getattr(fs, "default_label_printer", None)
+    except Exception:
+        fmt = "SATO Label Print"
+        enable_silent_printing = False
+        default_label_printer = None
+
+    print_urls = []
+    for item in items:
+        item_code = item.get("item_code", "")
+        batch_no = item.get("batch_no") or ""
+        qty = item.get("qty", 0)
+        params = (
+            f"doctype={frappe.utils.quote('Stock Entry')}"
+            f"&format={frappe.utils.quote(fmt)}"
+            f"&item_code={frappe.utils.quote(item_code)}"
+            f"&batch_no={frappe.utils.quote(batch_no)}"
+            f"&qty={frappe.utils.quote(str(qty))}"
+            f"&trigger_print=1"
+        )
+        print_urls.append(f"/printview?{params}")
+
+    return {
+        "print_urls": print_urls,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": default_label_printer,
+    }
+
+
 # --- NEW: Remaining requirement helpers (for auto-fill) ----------------------
 
 

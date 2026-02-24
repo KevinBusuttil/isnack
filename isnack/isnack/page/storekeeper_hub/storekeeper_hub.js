@@ -336,6 +336,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   const refresh_btn = $filters.find('.refresh');
   const picklist_btn = $filters.find('.generate-picklist');
+  const pallet_labels_btn = $filters.find('.print-pallet-labels');
   const se_transfer_btn = $filters.find('.se-transfer');
   const se_issue_btn    = $filters.find('.se-issue');
   const se_receipt_btn  = $filters.find('.se-receipt');
@@ -446,7 +447,200 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   picklist_btn.on('click', generate_picklist);
 
-  // Optional live refresh on factory line change
+  // --- Print Pallet Labels (combined) ---
+  async function show_print_pallet_labels_dialog() {
+    // Fetch staged entries fresh from the same API used by load_staged
+    let staged_entries = [];
+    try {
+      const r = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
+        args: {
+          factory_line: state.factory_line || null,
+          hours: state.hours,
+          posting_date: state.posting_date || null
+        }
+      });
+      staged_entries = r.message || [];
+    } catch (e) {
+      frappe.show_alert({ message: __('Failed to load staged entries'), indicator: 'red' });
+      return;
+    }
+
+    if (!staged_entries.length) {
+      frappe.msgprint(__('No staged stock entries found.'));
+      return;
+    }
+
+    // Build the stock entry list HTML
+    const build_se_rows = (entries) => {
+      return entries.map(se => `
+        <div class="hub-row" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border-color);">
+          <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" style="flex-shrink:0;" />
+          <div style="flex:1;min-width:0;">
+            <b>${frappe.utils.escape_html(se.name)}</b><br>
+            <span class="muted">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}</span>
+            ${se.remarks ? '<br><span class="muted">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
+          </div>
+        </div>
+      `).join('');
+    };
+
+    const se_header = `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 4px 8px;border-bottom:2px solid var(--border-color);font-weight:bold;">
+        <input type="checkbox" id="ppl-select-all" style="flex-shrink:0;" />
+        <span>${__('Select All')}</span>
+      </div>
+    `;
+
+    const items_table_html = `
+      <div id="ppl-items-section" style="margin-top:16px;display:none;">
+        <h6>${__('Grouped Items')}</h6>
+        <table class="table table-bordered table-condensed" style="margin-bottom:0;">
+          <thead>
+            <tr>
+              <th>${__('Item Code')}</th>
+              <th>${__('Item Name')}</th>
+              <th>${__('Batch No')}</th>
+              <th>${__('UOM')}</th>
+              <th style="text-align:right;">${__('Total Qty')}</th>
+            </tr>
+          </thead>
+          <tbody id="ppl-items-tbody"></tbody>
+        </table>
+      </div>
+    `;
+
+    const d = new frappe.ui.Dialog({
+      title: __('Print Pallet Labels'),
+      size: 'extra-large',
+      fields: [
+        {
+          fieldtype: 'HTML',
+          fieldname: 'ppl_content',
+          options: `
+            <div id="ppl-se-section">
+              <h6>${__('Select Stock Entries')}</h6>
+              ${se_header}
+              <div id="ppl-se-list">${build_se_rows(staged_entries)}</div>
+            </div>
+            <div style="margin-top:12px;">
+              <button class="btn btn-sm btn-default" id="ppl-apply-btn">${__('Apply')}</button>
+            </div>
+            ${items_table_html}
+          `
+        }
+      ],
+      primary_action_label: __('Print'),
+      primary_action: async () => {
+        const $tbody = d.$wrapper.find('#ppl-items-tbody');
+        const rows = $tbody.find('tr.ppl-item-row');
+        if (!rows.length) {
+          frappe.show_alert({ message: __('Please click Apply first to load items.'), indicator: 'orange' });
+          return;
+        }
+
+        const items = [];
+        rows.each(function () {
+          items.push($(this).data('item'));
+        });
+
+        d.hide();
+
+        try {
+          const r = await frappe.call({
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_combined_pallet_labels',
+            args: { items: items },
+            freeze: true,
+            freeze_message: __('Preparing labels…')
+          });
+
+          if (r.message) {
+            const { print_urls, enable_silent_printing, printer_name } = r.message;
+            if (!print_urls || !print_urls.length) {
+              frappe.show_alert({ message: __('No print URLs returned'), indicator: 'red' });
+              return;
+            }
+
+            for (let idx = 0; idx < print_urls.length; idx++) {
+              if (idx > 0) {
+                await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+              }
+              const fullUrl = frappe.urllib.get_full_url(print_urls[idx]);
+              await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, `combined item ${idx + 1}`);
+            }
+
+            const action = enable_silent_printing ? 'sent to printer' : 'dialog(s) opened';
+            frappe.show_alert({
+              message: `${print_urls.length} label(s) ${action}`,
+              indicator: 'green'
+            });
+          }
+        } catch (err) {
+          console.error('Print combined labels error:', err);
+          frappe.show_alert({ message: __('Failed to print combined labels'), indicator: 'red' });
+        }
+      }
+    });
+
+    d.show();
+
+    // Wire up Select All checkbox
+    d.$wrapper.find('#ppl-select-all').on('change', function () {
+      d.$wrapper.find('.ppl-se-check').prop('checked', this.checked);
+    });
+
+    // Wire up Apply button
+    d.$wrapper.find('#ppl-apply-btn').on('click', async () => {
+      const selected = [];
+      d.$wrapper.find('.ppl-se-check:checked').each(function () {
+        selected.push($(this).data('name'));
+      });
+
+      if (!selected.length) {
+        frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
+        return;
+      }
+
+      const $tbody = d.$wrapper.find('#ppl-items-tbody');
+      const $section = d.$wrapper.find('#ppl-items-section');
+      $tbody.html('<tr><td colspan="5" class="muted">' + __('Loading…') + '</td></tr>');
+      $section.show();
+
+      try {
+        const r = await frappe.call({
+          method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_items_for_labels',
+          args: { stock_entries: selected }
+        });
+
+        const items = r.message || [];
+        $tbody.empty();
+
+        if (!items.length) {
+          $tbody.html('<tr><td colspan="5" class="muted">' + __('No items found.') + '</td></tr>');
+          return;
+        }
+
+        items.forEach(item => {
+          const $tr = $(`
+            <tr class="ppl-item-row">
+              <td>${frappe.utils.escape_html(item.item_code || '')}</td>
+              <td>${frappe.utils.escape_html(item.item_name || '')}</td>
+              <td>${frappe.utils.escape_html(item.batch_no || '')}</td>
+              <td>${frappe.utils.escape_html(item.uom || '')}</td>
+              <td style="text-align:right;">${frappe.utils.escape_html(String(item.qty))}</td>
+            </tr>
+          `);
+          $tr.data('item', item);
+          $tbody.append($tr);
+        });
+      } catch (err) {
+        console.error('Get combined items error:', err);
+        $tbody.html('<tr><td colspan="5" class="text-danger">' + __('Failed to load items.') + '</td></tr>');
+      }
+    });
+  }
+
+  pallet_labels_btn.on('click', show_print_pallet_labels_dialog);
   if (factory_line.$input) factory_line.$input.on('change', refresh);
 
   function make_stock_entry(purpose, defaults = {}) {
