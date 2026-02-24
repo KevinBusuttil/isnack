@@ -38,6 +38,11 @@
   margin-left: auto;
 }
 
+.storekeeper-hub .hub-toolbar .refresh-control {
+  display: inline-flex;
+  align-items: flex-end;
+}
+
 .storekeeper-hub .hub-toolbar .quick-stock-entries {
   display: inline-flex;
   gap: 4px;
@@ -55,14 +60,16 @@
 }
 
 .storekeeper-hub .hub-toolbar .refresh {
-  background: #0f4c81;
-  border-color: #0f4c81;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 2px 6px rgba(15, 76, 129, 0.35);
+  background: transparent;
+  border: 1px solid var(--text-900);
+  color: var(--text-900);
+  box-shadow: none;
 }
 
 .storekeeper-hub .hub-toolbar .refresh:hover {
-  background: #0b3b65;
-  border-color: #0b3b65;
+  background: rgba(120, 194, 236, 0.1);
+  border-color: var(--text-900);
+  color: var(--text-900);
 }
 
 .storekeeper-hub .hub-columns {
