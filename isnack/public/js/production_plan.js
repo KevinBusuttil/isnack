@@ -1,6 +1,16 @@
 frappe.ui.form.off("Production Plan", "make_work_order");
 
 frappe.ui.form.on("Production Plan", {
+  refresh(frm) {
+    if (!frm.doc.__islocal) {
+      frm.add_custom_button(
+        __("Work Orders"),
+        () => frappe.set_route("List", "Work Order", { production_plan: frm.doc.name }),
+        __("View")
+      );
+    }
+  },
+
   make_work_order(frm) {
     // Guard: if not submitted, just run directly
     if (!frm.doc.name || frm.doc.docstatus !== 1) {
