@@ -593,7 +593,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           </div>
           <div class="meta">
             <span class="meta-item">
-              <span class="meta-label">BOM</span>
               <span class="meta-value meta-value-bom">${frappe.utils.escape_html(b.bom_no)}</span>
             </span>
             <span class="meta-item">
