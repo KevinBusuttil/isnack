@@ -626,7 +626,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               <td class="ppl-item-name">${frappe.utils.escape_html(item.item_name || '')}</td>
               <td>${item.batch_no ? '<span class="ppl-batch-badge">' + frappe.utils.escape_html(item.batch_no) + '</span>' : '<span class="muted">\u2014</span>'}</td>
               <td>${frappe.utils.escape_html(item.uom || '')}</td>
-              <td style="text-align:right;"><span class="ppl-qty-badge">${frappe.utils.escape_html(String(item.total_qty))}</span></td>
+              <td style="text-align:right;"><span class="ppl-qty-badge">${frappe.utils.escape_html(String(item.qty))}</span></td>
             </tr>
           `);
           $tr.data('item', item);

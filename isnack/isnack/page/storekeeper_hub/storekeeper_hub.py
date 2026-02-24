@@ -1058,7 +1058,11 @@ def print_combined_pallet_labels(items):
 
     try:
         fs = frappe.get_single("Factory Settings")
-        fmt = getattr(fs, "default_label_print_format", None) or "SATO Label Print"
+        fmt = (
+            getattr(fs, "default_collective_label_print_format", None)
+            or getattr(fs, "default_label_print_format", None)
+            or "SATO Label Print"
+        )
         enable_silent_printing = getattr(fs, "enable_silent_printing", False)
         default_label_printer = getattr(fs, "default_label_printer", None)
     except Exception:
@@ -1066,26 +1070,80 @@ def print_combined_pallet_labels(items):
         enable_silent_printing = False
         default_label_printer = None
 
+    base_url = "/api/method/isnack.isnack.page.storekeeper_hub.storekeeper_hub.render_collective_label"
     print_urls = []
     for item in items:
         item_code = item.get("item_code", "")
+        item_name = item.get("item_name", "")
         batch_no = item.get("batch_no") or ""
+        uom = item.get("uom", "")
         qty = item.get("qty", 0)
         params = (
-            f"doctype={frappe.utils.quote('Stock Entry')}"
-            f"&format={frappe.utils.quote(fmt)}"
-            f"&item_code={frappe.utils.quote(item_code)}"
+            f"item_code={frappe.utils.quote(item_code)}"
+            f"&item_name={frappe.utils.quote(item_name)}"
             f"&batch_no={frappe.utils.quote(batch_no)}"
+            f"&uom={frappe.utils.quote(uom)}"
             f"&qty={frappe.utils.quote(str(qty))}"
-            f"&trigger_print=1"
+            f"&print_format={frappe.utils.quote(fmt)}"
         )
-        print_urls.append(f"/printview?{params}")
+        print_urls.append(f"{base_url}?{params}")
 
     return {
         "print_urls": print_urls,
         "enable_silent_printing": enable_silent_printing,
         "printer_name": default_label_printer,
     }
+
+
+@frappe.whitelist(allow_guest=False)
+def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty="0", print_format=""):
+    """
+    Render a collective/combined pallet label by loading the specified print format
+    template and rendering it server-side with the provided item data as context.
+
+    Returns a complete HTML page with auto-print JavaScript.
+    """
+    context = {
+        "item_code": item_code,
+        "item_name": item_name,
+        "batch_no": batch_no,
+        "uom": uom,
+        "qty": flt(qty),
+    }
+
+    template_html = ""
+    if print_format:
+        try:
+            pf = frappe.get_doc("Print Format", print_format)
+        except frappe.DoesNotExistError:
+            template_html = f"<p>Print format <em>{frappe.utils.escape_html(print_format)}</em> not found.</p>"
+            pf = None
+        if pf is not None:
+            try:
+                template_html = frappe.render_template(pf.html or "", context)
+            except Exception as exc:
+                frappe.log_error(frappe.get_traceback(), "render_collective_label template error")
+                template_html = f"<p>Error rendering print format <em>{frappe.utils.escape_html(print_format)}</em>: {frappe.utils.escape_html(str(exc))}</p>"
+
+    page_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; padding: 0; }}
+  @media print {{ @page {{ margin: 0; }} }}
+</style>
+</head>
+<body>
+{template_html}
+<script>window.onload = function() {{ window.print(); }};</script>
+</body>
+</html>"""
+
+    frappe.response["type"] = "page"
+    frappe.local.response["content_type"] = "text/html; charset=utf-8"
+    frappe.local.response["body"] = page_html
+    return page_html
 
 
 # --- NEW: Remaining requirement helpers (for auto-fill) ----------------------

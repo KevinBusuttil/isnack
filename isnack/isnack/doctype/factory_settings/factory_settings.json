@@ -27,6 +27,7 @@
   "label_printing_section",
   "default_label_template",
   "default_label_print_format",
+  "default_collective_label_print_format",
   "default_fg_label_print_format",
   "default_label_printer",
   "default_a4_printer",
@@ -168,6 +169,14 @@
    "fieldname": "default_label_print_format",
    "fieldtype": "Link",
    "label": "Default Label Print Format",
+   "options": "Print Format"
+  },
+  {
+   "default": "SATO Label Print Collective",
+   "description": "Print format used for collective/combined pallet labels in Storekeeper Hub (Print Pallet Labels). This format is rendered directly without being attached to a specific document instance.",
+   "fieldname": "default_collective_label_print_format",
+   "fieldtype": "Link",
+   "label": "Default Collective Label Print Format",
    "options": "Print Format"
   },
   {
