@@ -23,10 +23,7 @@
 }
 
 .storekeeper-hub .hub-toolbar {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: end;
+  display: block;
   background: linear-gradient(180deg, var(--cerulean-300), var(--cerulean-500));
   padding: 16px;
   border-radius: 12px;
@@ -34,22 +31,38 @@
   margin-bottom: 16px;
 }
 
+.storekeeper-hub .hub-toolbar .toolbar-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
 .storekeeper-hub .hub-toolbar .quick-stock-entries {
   display: inline-flex;
   gap: 4px;
-  margin-left: 8px;
 }
 
 .storekeeper-hub .hub-toolbar .quick-stock-entries .btn {
   padding-inline: 6px;
 }
 
-.storekeeper-hub .filters,
-.storekeeper-hub .scan {
+.storekeeper-hub .filters {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.storekeeper-hub .hub-toolbar .refresh {
+  background: #0f4c81;
+  border-color: #0f4c81;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 2px 6px rgba(15, 76, 129, 0.35);
+}
+
+.storekeeper-hub .hub-toolbar .refresh:hover {
+  background: #0b3b65;
+  border-color: #0b3b65;
 }
 
 .storekeeper-hub .hub-columns {
