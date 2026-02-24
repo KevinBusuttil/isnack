@@ -6,7 +6,10 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import frappe
-from isnack.isnack.page.storekeeper_hub.storekeeper_hub import get_items_per_stock_entry
+from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
+    get_items_per_stock_entry,
+    print_combined_pallet_labels,
+)
 
 
 class TestGetItemsPerStockEntry(unittest.TestCase):
@@ -159,6 +162,142 @@ class TestGetItemsPerStockEntry(unittest.TestCase):
         params = call_args[0][1]
         self.assertIn('stock_entries', params)
         self.assertEqual(set(params['stock_entries']), set(se_list))
+
+
+class TestPrintCombinedPalletLabels(unittest.TestCase):
+    """Tests for print_combined_pallet_labels function."""
+
+    def _make_factory_settings(self, fmt="SATO Label Print Collective", silent=False, printer=None):
+        fs = MagicMock()
+        fs.default_collective_label_print_format = fmt
+        fs.default_label_print_format = "SATO Label Print"
+        fs.enable_silent_printing = silent
+        fs.default_label_printer = printer
+        return fs
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_generates_printview_urls(self, mock_get_single, mock_get_value):
+        """Each item should produce a /printview URL, not a custom API URL."""
+        mock_get_single.return_value = self._make_factory_settings()
+
+        items = [
+            {
+                'item_code': 'ITEM-001',
+                'item_name': 'Test Item',
+                'batch_no': 'BATCH-A',
+                'uom': 'Kg',
+                'qty': 10.0,
+                'stock_entries': ['MAT-STE-2026-00001'],
+            }
+        ]
+        result = print_combined_pallet_labels(items)
+
+        self.assertIn('print_urls', result)
+        self.assertEqual(len(result['print_urls']), 1)
+        url = result['print_urls'][0]
+        self.assertTrue(url.startswith('/printview'), f"Expected /printview URL, got: {url}")
+        self.assertIn('Stock+Entry', url)
+        self.assertIn('MAT-STE-2026-00001', url)
+        self.assertIn('SED-ROW-001', url)
+        self.assertIn('trigger_print=1', url)
+        self.assertNotIn('/api/method/', url)
+
+    @patch('frappe.db.get_value', return_value=None)
+    @patch('frappe.get_single')
+    def test_generates_url_without_row_name_when_row_not_found(self, mock_get_single, mock_get_value):
+        """When no matching row is found, a /printview URL without row_name is generated."""
+        mock_get_single.return_value = self._make_factory_settings()
+
+        items = [
+            {
+                'item_code': 'ITEM-999',
+                'batch_no': None,
+                'stock_entries': ['MAT-STE-2026-00001'],
+            }
+        ]
+        result = print_combined_pallet_labels(items)
+
+        self.assertEqual(len(result['print_urls']), 1)
+        url = result['print_urls'][0]
+        self.assertTrue(url.startswith('/printview'))
+        self.assertNotIn('row_name', url)
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_skips_items_without_stock_entries(self, mock_get_single, mock_get_value):
+        """Items without stock_entries are skipped and produce no URL."""
+        mock_get_single.return_value = self._make_factory_settings()
+
+        items = [
+            {'item_code': 'ITEM-001', 'batch_no': 'B1', 'stock_entries': []},
+            {'item_code': 'ITEM-002', 'batch_no': 'B2', 'stock_entries': ['MAT-STE-2026-00001']},
+        ]
+        result = print_combined_pallet_labels(items)
+
+        self.assertEqual(len(result['print_urls']), 1)
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_uses_print_format_from_factory_settings(self, mock_get_single, mock_get_value):
+        """The collective label print format from Factory Settings is used in the URL."""
+        mock_get_single.return_value = self._make_factory_settings(fmt="SATO Label Print Collective")
+
+        items = [
+            {
+                'item_code': 'ITEM-001',
+                'batch_no': 'B1',
+                'stock_entries': ['MAT-STE-2026-00001'],
+            }
+        ]
+        result = print_combined_pallet_labels(items)
+
+        self.assertIn('SATO+Label+Print+Collective', result['print_urls'][0])
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_returns_empty_list_for_empty_items(self, mock_get_single, mock_get_value):
+        """Empty items list returns empty print_urls."""
+        mock_get_single.return_value = self._make_factory_settings()
+
+        result = print_combined_pallet_labels([])
+
+        self.assertEqual(result['print_urls'], [])
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_accepts_json_string_input(self, mock_get_single, mock_get_value):
+        """JSON string input for items is parsed correctly."""
+        mock_get_single.return_value = self._make_factory_settings()
+
+        items_json = json.dumps([
+            {
+                'item_code': 'ITEM-001',
+                'batch_no': 'B1',
+                'stock_entries': ['MAT-STE-2026-00001'],
+            }
+        ])
+        result = print_combined_pallet_labels(items_json)
+
+        self.assertEqual(len(result['print_urls']), 1)
+
+    @patch('frappe.db.get_value', return_value='SED-ROW-001')
+    @patch('frappe.get_single')
+    def test_returns_silent_printing_settings(self, mock_get_single, mock_get_value):
+        """Silent printing settings from Factory Settings are returned."""
+        mock_get_single.return_value = self._make_factory_settings(silent=True, printer='LabelPrinter1')
+
+        items = [
+            {
+                'item_code': 'ITEM-001',
+                'batch_no': 'B1',
+                'stock_entries': ['MAT-STE-2026-00001'],
+            }
+        ]
+        result = print_combined_pallet_labels(items)
+
+        self.assertTrue(result['enable_silent_printing'])
+        self.assertEqual(result['printer_name'], 'LabelPrinter1')
 
 
 if __name__ == '__main__':
