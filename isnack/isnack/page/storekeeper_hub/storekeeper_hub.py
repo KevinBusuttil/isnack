@@ -1040,9 +1040,11 @@ def get_combined_items_for_labels(stock_entries):
 @frappe.whitelist()
 def print_combined_pallet_labels(items):
     """
-    Given a list of grouped items (item_code, batch_no, qty),
-    generate print URLs for each item using the configured label print format.
-    Each item gets one print URL with the item details passed as query parameters.
+    Given a list of grouped items (item_code, batch_no, stock_entries, ...),
+    generate /printview URLs for each item using the configured collective label
+    print format.  Each item uses the first contributing Stock Entry and looks up
+    the matching Stock Entry Detail row so that Frappe's full print infrastructure
+    (CSS, Jinja helpers, QR codes, etc.) is used.
 
     Returns: {
         'print_urls': [str],
@@ -1070,23 +1072,26 @@ def print_combined_pallet_labels(items):
         enable_silent_printing = False
         default_label_printer = None
 
-    base_url = "/api/method/isnack.isnack.page.storekeeper_hub.storekeeper_hub.render_collective_label"
     print_urls = []
     for item in items:
         item_code = item.get("item_code", "")
-        item_name = item.get("item_name", "")
-        batch_no = item.get("batch_no") or ""
-        uom = item.get("uom", "")
-        qty = item.get("qty", 0)
-        params = (
-            f"item_code={frappe.utils.quote(item_code)}"
-            f"&item_name={frappe.utils.quote(item_name)}"
-            f"&batch_no={frappe.utils.quote(batch_no)}"
-            f"&uom={frappe.utils.quote(uom)}"
-            f"&qty={frappe.utils.quote(str(qty))}"
-            f"&print_format={frappe.utils.quote(fmt)}"
+        batch_no = item.get("batch_no") or None
+        se_names = item.get("stock_entries", [])
+        if not se_names:
+            continue
+        se_name = se_names[0]
+        filters = {"parent": se_name, "item_code": item_code}
+        if batch_no:
+            filters["batch_no"] = batch_no
+        row_name = frappe.db.get_value("Stock Entry Detail", filters, "name")
+        url = (
+            f"/printview?doctype={frappe.utils.quote('Stock Entry')}"
+            f"&name={frappe.utils.quote(se_name)}"
+            f"&format={frappe.utils.quote(fmt)}"
+            + (f"&row_name={frappe.utils.quote(row_name)}" if row_name else "")
+            + "&trigger_print=1"
         )
-        print_urls.append(f"{base_url}?{params}")
+        print_urls.append(url)
 
     return {
         "print_urls": print_urls,
