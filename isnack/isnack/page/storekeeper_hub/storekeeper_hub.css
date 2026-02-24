@@ -503,6 +503,7 @@
 .ppl-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   background: var(--cerulean-600);
   color: white;
@@ -651,4 +652,64 @@
   padding: 6px;
   font-style: italic;
   color: var(--text-600);
+}
+
+/* Collapse/expand toggle button in ppl-header */
+.ppl-se-toggle {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.5);
+  color: white;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.ppl-se-toggle:hover {
+  background: rgba(255,255,255,0.2);
+  border-color: white;
+  color: white;
+}
+
+/* Apply button */
+.ppl-apply-btn {
+  background: var(--cerulean-100);
+  border: 1px solid var(--cerulean-500);
+  color: var(--cerulean-700);
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 4px 16px;
+}
+
+.ppl-apply-btn:hover {
+  background: var(--cerulean-300);
+  border-color: var(--cerulean-600);
+  color: white;
+}
+
+/* Grouped Items section */
+.ppl-grouped-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--cerulean-700);
+  margin: 0 0 8px 0;
+}
+
+.ppl-grouped-table {
+  width: 100%;
+  font-size: 12px;
+}
+
+.ppl-grouped-table thead th {
+  background: var(--cerulean-100);
+  color: var(--cerulean-700);
+  font-weight: 600;
+  border-bottom: 1px solid var(--cerulean-300);
+}
+
+.ppl-grouped-table tbody tr:last-child td {
+  border-bottom: none;
 }
