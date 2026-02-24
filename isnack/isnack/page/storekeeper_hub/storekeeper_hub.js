@@ -592,9 +592,18 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             <span class="muted">(${frappe.utils.escape_html(b.item_code)})</span>
           </div>
           <div class="meta">
-            BOM: ${frappe.utils.escape_html(b.bom_no)} ·
-            WOs: ${b.wos.length} ·
-            Total Qty: ${fmt_qty(b.total_qty)} ${frappe.utils.escape_html(b.uom || '')}
+            <span class="meta-item">
+              <span class="meta-label">BOM</span>
+              <span class="meta-value meta-value-bom">${frappe.utils.escape_html(b.bom_no)}</span>
+            </span>
+            <span class="meta-item">
+              <span class="meta-label">WOs</span>
+              <span class="meta-value meta-value-wos">${b.wos.length}</span>
+            </span>
+            <span class="meta-item">
+              <span class="meta-label">Qty</span>
+              <span class="meta-value meta-value-qty">${fmt_qty(b.total_qty)} ${frappe.utils.escape_html(b.uom || '')}</span>
+            </span>
           </div>
           <div class="wo-list"></div>
           <div class="mt-2">
