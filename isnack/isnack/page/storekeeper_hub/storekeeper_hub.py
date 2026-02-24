@@ -1140,10 +1140,10 @@ def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty
 </body>
 </html>"""
 
-    frappe.response["type"] = "page"
-    frappe.local.response["content_type"] = "text/html; charset=utf-8"
-    frappe.local.response["body"] = page_html
-    return page_html
+    frappe.response["type"] = "raw"
+    frappe.response["status_code"] = 200
+    frappe.response["content_type"] = "text/html; charset=utf-8"
+    frappe.response["body"] = page_html
 
 
 # --- NEW: Remaining requirement helpers (for auto-fill) ----------------------
