@@ -1140,10 +1140,14 @@ def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty
 </body>
 </html>"""
 
-    frappe.response["type"] = "raw"
+    # `raw` is not a valid response type in newer Frappe versions.
+    # Use a binary inline response so the browser can render HTML directly.
+    frappe.response["type"] = "binary"
     frappe.response["status_code"] = 200
     frappe.response["content_type"] = "text/html; charset=utf-8"
-    frappe.response["body"] = page_html
+    frappe.response["display_content_as"] = "inline"
+    frappe.response["filename"] = "collective-label.html"
+    frappe.response["filecontent"] = page_html
 
 
 # --- NEW: Remaining requirement helpers (for auto-fill) ----------------------
