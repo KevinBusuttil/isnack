@@ -931,6 +931,57 @@ def find_se_by_item_row(rowname: str):
 
 
 @frappe.whitelist()
+def get_items_per_stock_entry(stock_entries):
+    """
+    Given a list of Stock Entry names, fetch all Stock Entry Detail rows
+    and return them grouped by Stock Entry name (not combined across entries).
+
+    Returns: {
+        'SE-NAME': [
+            {'item_code': str, 'item_name': str, 'batch_no': str|None, 'uom': str, 'qty': float},
+            ...
+        ],
+        ...
+    }
+    """
+    if isinstance(stock_entries, str):
+        try:
+            stock_entries = json.loads(stock_entries or "[]")
+        except Exception:
+            stock_entries = [s.strip() for s in stock_entries.split(",") if s.strip()]
+
+    if not stock_entries:
+        return {}
+
+    rows = frappe.db.sql(
+        """
+        select
+            sed.parent,
+            sed.item_code,
+            sed.item_name,
+            sed.batch_no,
+            sed.uom,
+            sed.qty
+        from `tabStock Entry Detail` sed
+        join `tabStock Entry` se on se.name = sed.parent
+        where sed.parent in %(stock_entries)s
+            and se.docstatus = 1
+        order by sed.parent, sed.item_code, sed.batch_no
+        """,
+        {"stock_entries": tuple(stock_entries)},
+        as_dict=True,
+    )
+
+    result = {}
+    for row in rows:
+        parent = row.pop("parent")
+        row["qty"] = float(row["qty"] or 0)
+        result.setdefault(parent, []).append(row)
+
+    return result
+
+
+@frappe.whitelist()
 def get_combined_items_for_labels(stock_entries):
     """
     Given a list of Stock Entry names, fetch all Stock Entry Detail rows,
