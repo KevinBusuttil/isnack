@@ -1075,7 +1075,10 @@ def print_combined_pallet_labels(items):
     print_urls = []
     for item in items:
         item_code = item.get("item_code", "")
+        item_name = item.get("item_name", "")
         batch_no = item.get("batch_no") or None
+        uom = item.get("uom", "")
+        qty = item.get("qty", 0)
         se_names = item.get("stock_entries", [])
         if not se_names:
             continue
@@ -1089,6 +1092,11 @@ def print_combined_pallet_labels(items):
             f"&name={frappe.utils.quote(se_name)}"
             f"&format={frappe.utils.quote(fmt)}"
             + (f"&row_name={frappe.utils.quote(row_name)}" if row_name else "")
+            + f"&item_code={frappe.utils.quote(item_code)}"
+            + f"&item_name={frappe.utils.quote(item_name)}"
+            + f"&batch_no={frappe.utils.quote(batch_no or '')}"
+            + f"&uom={frappe.utils.quote(uom)}"
+            + f"&qty={frappe.utils.quote(str(qty))}"
             + "&trigger_print=1"
         )
         print_urls.append(url)
