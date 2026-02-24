@@ -471,45 +471,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    // Build the stock entry list HTML
-    const build_se_rows = (entries) => {
-      return entries.map(se => `
-        <div class="hub-row" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border-color);">
-          <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" style="flex-shrink:0;" />
-          <div style="flex:1;min-width:0;">
-            <b>${frappe.utils.escape_html(se.name)}</b><br>
-            <span class="muted">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}</span>
-            ${se.remarks ? '<br><span class="muted">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
-          </div>
-        </div>
-      `).join('');
-    };
-
-    const se_header = `
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 4px 8px;border-bottom:2px solid var(--border-color);font-weight:bold;">
-        <input type="checkbox" id="ppl-select-all" style="flex-shrink:0;" />
-        <span>${__('Select All')}</span>
-      </div>
-    `;
-
-    const items_table_html = `
-      <div id="ppl-items-section" style="margin-top:16px;display:none;">
-        <h6>${__('Grouped Items')}</h6>
-        <table class="table table-bordered table-condensed" style="margin-bottom:0;">
-          <thead>
-            <tr>
-              <th>${__('Item Code')}</th>
-              <th>${__('Item Name')}</th>
-              <th>${__('Batch No')}</th>
-              <th>${__('UOM')}</th>
-              <th style="text-align:right;">${__('Total Qty')}</th>
-            </tr>
-          </thead>
-          <tbody id="ppl-items-tbody"></tbody>
-        </table>
-      </div>
-    `;
-
     const d = new frappe.ui.Dialog({
       title: __('Print Pallet Labels'),
       size: 'extra-large',
@@ -518,40 +479,51 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           fieldtype: 'HTML',
           fieldname: 'ppl_content',
           options: `
-            <div id="ppl-se-section">
-              <h6>${__('Select Stock Entries')}</h6>
-              ${se_header}
-              <div id="ppl-se-list">${build_se_rows(staged_entries)}</div>
+            <div class="ppl-dialog">
+              <div class="ppl-header">
+                <label class="ppl-select-all-label">
+                  <input type="checkbox" id="ppl-select-all" checked />
+                  <span>${__('Select All')}</span>
+                </label>
+              </div>
+              <div id="ppl-se-list" class="ppl-se-list">
+                <div class="ppl-loading">${__('Loading items\u2026')}</div>
+              </div>
             </div>
-            <div style="margin-top:12px;">
-              <button class="btn btn-sm btn-default" id="ppl-apply-btn">${__('Apply')}</button>
-            </div>
-            ${items_table_html}
           `
         }
       ],
       primary_action_label: __('Print'),
       primary_action: async () => {
-        const $tbody = d.$wrapper.find('#ppl-items-tbody');
-        const rows = $tbody.find('tr.ppl-item-row');
-        if (!rows.length) {
-          frappe.show_alert({ message: __('Please click Apply first to load items.'), indicator: 'orange' });
+        const selected = [];
+        d.$wrapper.find('.ppl-se-check:checked').each(function () {
+          selected.push($(this).data('name'));
+        });
+
+        if (!selected.length) {
+          frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
           return;
         }
-
-        const items = [];
-        rows.each(function () {
-          items.push($(this).data('item'));
-        });
 
         d.hide();
 
         try {
+          const items_r = await frappe.call({
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_items_for_labels',
+            args: { stock_entries: selected }
+          });
+          const items = items_r.message || [];
+
+          if (!items.length) {
+            frappe.show_alert({ message: __('No items found for selected entries.'), indicator: 'orange' });
+            return;
+          }
+
           const r = await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_combined_pallet_labels',
             args: { items: items },
             freeze: true,
-            freeze_message: __('Preparing labels…')
+            freeze_message: __('Preparing labels\u2026')
           });
 
           if (r.message) {
@@ -586,57 +558,75 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     // Wire up Select All checkbox
     d.$wrapper.find('#ppl-select-all').on('change', function () {
-      d.$wrapper.find('.ppl-se-check').prop('checked', this.checked);
+      const checked = this.checked;
+      d.$wrapper.find('.ppl-se-check').prop('checked', checked);
+      d.$wrapper.find('.ppl-se-card').toggleClass('ppl-se-selected', checked);
     });
 
-    // Wire up Apply button
-    d.$wrapper.find('#ppl-apply-btn').on('click', async () => {
-      const selected = [];
-      d.$wrapper.find('.ppl-se-check:checked').each(function () {
-        selected.push($(this).data('name'));
+    // Load items per stock entry, then render cards
+    const se_names = staged_entries.map(se => se.name);
+    let items_by_se = {};
+    try {
+      const ir = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_items_per_stock_entry',
+        args: { stock_entries: se_names }
+      });
+      items_by_se = ir.message || {};
+    } catch (e) {
+      console.error('Failed to load SE items:', e);
+    }
+
+    const $list = d.$wrapper.find('#ppl-se-list');
+    $list.empty();
+
+    staged_entries.forEach(se => {
+      const items = items_by_se[se.name] || [];
+      const items_rows_html = items.length
+        ? items.map(item => `
+            <tr>
+              <td class="ppl-item-code">${frappe.utils.escape_html(item.item_code || '')}</td>
+              <td class="ppl-item-name">${frappe.utils.escape_html(item.item_name || '')}</td>
+              <td>${item.batch_no ? '<span class="ppl-batch-badge">' + frappe.utils.escape_html(item.batch_no) + '</span>' : '<span class="muted">\u2014</span>'}</td>
+              <td><span class="ppl-qty-badge">${frappe.utils.escape_html(String(item.qty))} ${frappe.utils.escape_html(item.uom || '')}</span></td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
+
+      const $card = $(`
+        <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
+          <div class="ppl-se-card-header">
+            <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" checked />
+            <div class="ppl-se-info">
+              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)}</span>
+              <span class="ppl-se-meta">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${frappe.utils.escape_html(se.posting_time || '')}</span>
+              ${se.remarks ? '<span class="ppl-se-remarks">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
+            </div>
+          </div>
+          <div class="ppl-se-items">
+            <table class="ppl-items-table">
+              <thead>
+                <tr>
+                  <th>${__('Item Code')}</th>
+                  <th>${__('Item Name')}</th>
+                  <th>${__('Batch')}</th>
+                  <th>${__('Qty / UOM')}</th>
+                </tr>
+              </thead>
+              <tbody>${items_rows_html}</tbody>
+            </table>
+          </div>
+        </div>
+      `);
+
+      $card.find('.ppl-se-check').on('change', function () {
+        $card.toggleClass('ppl-se-selected', this.checked);
+        // Sync select-all state
+        const total = d.$wrapper.find('.ppl-se-check').length;
+        const checked_count = d.$wrapper.find('.ppl-se-check:checked').length;
+        d.$wrapper.find('#ppl-select-all').prop('checked', total === checked_count);
       });
 
-      if (!selected.length) {
-        frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
-        return;
-      }
-
-      const $tbody = d.$wrapper.find('#ppl-items-tbody');
-      const $section = d.$wrapper.find('#ppl-items-section');
-      $tbody.html('<tr><td colspan="5" class="muted">' + __('Loading…') + '</td></tr>');
-      $section.show();
-
-      try {
-        const r = await frappe.call({
-          method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_items_for_labels',
-          args: { stock_entries: selected }
-        });
-
-        const items = r.message || [];
-        $tbody.empty();
-
-        if (!items.length) {
-          $tbody.html('<tr><td colspan="5" class="muted">' + __('No items found.') + '</td></tr>');
-          return;
-        }
-
-        items.forEach(item => {
-          const $tr = $(`
-            <tr class="ppl-item-row">
-              <td>${frappe.utils.escape_html(item.item_code || '')}</td>
-              <td>${frappe.utils.escape_html(item.item_name || '')}</td>
-              <td>${frappe.utils.escape_html(item.batch_no || '')}</td>
-              <td>${frappe.utils.escape_html(item.uom || '')}</td>
-              <td style="text-align:right;">${frappe.utils.escape_html(String(item.qty))}</td>
-            </tr>
-          `);
-          $tr.data('item', item);
-          $tbody.append($tr);
-        });
-      } catch (err) {
-        console.error('Get combined items error:', err);
-        $tbody.html('<tr><td colspan="5" class="text-danger">' + __('Failed to load items.') + '</td></tr>');
-      }
+      $list.append($card);
     });
   }
 
