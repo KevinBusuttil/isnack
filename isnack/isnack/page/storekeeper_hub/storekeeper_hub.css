@@ -255,8 +255,42 @@
   color: var(--text-900);
 }
 .storekeeper-hub .bucket .meta {
-  color: var(--text-600);
   font-size: 12px;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.storekeeper-hub .bucket .meta .meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f3f8fb;
+  border: 1px solid #d8e6ee;
+}
+
+.storekeeper-hub .bucket .meta .meta-label {
+  color: var(--text-600);
+  font-weight: 600;
+}
+
+.storekeeper-hub .bucket .meta .meta-value {
+  font-weight: 700;
+}
+
+.storekeeper-hub .bucket .meta .meta-value-bom {
+  color: #155e75;
+}
+
+.storekeeper-hub .bucket .meta .meta-value-wos {
+  color: #1d4ed8;
+}
+
+.storekeeper-hub .bucket .meta .meta-value-qty {
+  color: #047857;
 }
 
 .storekeeper-hub .wo-list {
