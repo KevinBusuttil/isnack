@@ -202,6 +202,11 @@ class TestPrintCombinedPalletLabels(unittest.TestCase):
         self.assertIn('SED-ROW-001', url)
         self.assertIn('trigger_print=1', url)
         self.assertNotIn('/api/method/', url)
+        self.assertIn('item_code=ITEM-001', url)
+        self.assertIn('item_name=', url)
+        self.assertIn('batch_no=BATCH-A', url)
+        self.assertIn('uom=Kg', url)
+        self.assertIn('qty=10.0', url)
 
     @patch('frappe.db.get_value', return_value=None)
     @patch('frappe.get_single')
@@ -212,7 +217,10 @@ class TestPrintCombinedPalletLabels(unittest.TestCase):
         items = [
             {
                 'item_code': 'ITEM-999',
+                'item_name': 'Unknown Item',
                 'batch_no': None,
+                'uom': 'Each',
+                'qty': 5.0,
                 'stock_entries': ['MAT-STE-2026-00001'],
             }
         ]
@@ -222,6 +230,8 @@ class TestPrintCombinedPalletLabels(unittest.TestCase):
         url = result['print_urls'][0]
         self.assertTrue(url.startswith('/printview'))
         self.assertNotIn('row_name', url)
+        self.assertIn('item_code=ITEM-999', url)
+        self.assertIn('qty=5.0', url)
 
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
