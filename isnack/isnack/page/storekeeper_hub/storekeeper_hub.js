@@ -480,14 +480,35 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           fieldname: 'ppl_content',
           options: `
             <div class="ppl-dialog">
-              <div class="ppl-header">
-                <label class="ppl-select-all-label">
-                  <input type="checkbox" id="ppl-select-all" checked />
-                  <span>${__('Select All')}</span>
-                </label>
+              <div class="ppl-se-section">
+                <div class="ppl-header">
+                  <label class="ppl-select-all-label">
+                    <input type="checkbox" id="ppl-select-all" checked />
+                    <span>${__('Select All')}</span>
+                  </label>
+                  <button class="btn btn-xs ppl-se-toggle" id="ppl-se-toggle" aria-label="${__('Collapse stock entries')}" aria-expanded="true">&#x25B2;</button>
+                </div>
+                <div id="ppl-se-list" class="ppl-se-list">
+                  <div class="ppl-loading">${__('Loading items\u2026')}</div>
+                </div>
               </div>
-              <div id="ppl-se-list" class="ppl-se-list">
-                <div class="ppl-loading">${__('Loading items\u2026')}</div>
+              <div style="margin-top:12px;">
+                <button class="btn btn-sm ppl-apply-btn" id="ppl-apply-btn">${__('Apply')}</button>
+              </div>
+              <div id="ppl-items-section" style="margin-top:16px;display:none;">
+                <h6 class="ppl-grouped-title">${__('Grouped Items')}</h6>
+                <table class="table table-bordered table-condensed ppl-grouped-table" style="margin-bottom:0;">
+                  <thead>
+                    <tr>
+                      <th>${__('Item Code')}</th>
+                      <th>${__('Item Name')}</th>
+                      <th>${__('Batch No')}</th>
+                      <th>${__('UOM')}</th>
+                      <th style="text-align:right;">${__('Total Qty')}</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ppl-items-tbody"></tbody>
+                </table>
               </div>
             </div>
           `
@@ -495,29 +516,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       ],
       primary_action_label: __('Print'),
       primary_action: async () => {
-        const selected = [];
-        d.$wrapper.find('.ppl-se-check:checked').each(function () {
-          selected.push($(this).data('name'));
-        });
+        const $tbody = d.$wrapper.find('#ppl-items-tbody');
+        const rows = $tbody.find('tr.ppl-item-row');
 
-        if (!selected.length) {
-          frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
+        if (!rows.length) {
+          frappe.show_alert({ message: __('Please click Apply first to load items.'), indicator: 'orange' });
           return;
         }
+
+        const items = [];
+        rows.each(function () {
+          items.push($(this).data('item'));
+        });
 
         d.hide();
 
         try {
-          const items_r = await frappe.call({
-            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_items_for_labels',
-            args: { stock_entries: selected }
-          });
-          const items = items_r.message || [];
-
-          if (!items.length) {
-            frappe.show_alert({ message: __('No items found for selected entries.'), indicator: 'orange' });
-            return;
-          }
 
           const r = await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_combined_pallet_labels',
@@ -561,6 +575,75 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const checked = this.checked;
       d.$wrapper.find('.ppl-se-check').prop('checked', checked);
       d.$wrapper.find('.ppl-se-card').toggleClass('ppl-se-selected', checked);
+    });
+
+    // Wire up collapse/expand toggle for stock entries section
+    d.$wrapper.find('#ppl-se-toggle').on('click', function () {
+      const $seList = d.$wrapper.find('#ppl-se-list');
+      if ($seList.is(':visible')) {
+        $seList.slideUp(200);
+        $(this).html('&#x25BC;').attr('aria-expanded', 'false').attr('aria-label', __('Expand stock entries'));
+      } else {
+        $seList.slideDown(200);
+        $(this).html('&#x25B2;').attr('aria-expanded', 'true').attr('aria-label', __('Collapse stock entries'));
+      }
+    });
+
+    // Wire up Apply button
+    d.$wrapper.find('#ppl-apply-btn').on('click', async function () {
+      const selected = [];
+      d.$wrapper.find('.ppl-se-check:checked').each(function () {
+        selected.push($(this).data('name'));
+      });
+
+      if (!selected.length) {
+        frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
+        return;
+      }
+
+      const $tbody = d.$wrapper.find('#ppl-items-tbody');
+      const $section = d.$wrapper.find('#ppl-items-section');
+      $tbody.html(`<tr><td colspan="5" style="text-align:center;">${__('Loading\u2026')}</td></tr>`);
+      $section.show();
+
+      try {
+        const items_r = await frappe.call({
+          method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_items_for_labels',
+          args: { stock_entries: selected }
+        });
+        const items = items_r.message || [];
+
+        $tbody.empty();
+        if (!items.length) {
+          $tbody.html(`<tr><td colspan="5" class="ppl-no-items">${__('No items found.')}</td></tr>`);
+          return;
+        }
+
+        items.forEach(function (item) {
+          const $tr = $(`
+            <tr class="ppl-item-row">
+              <td class="ppl-item-code">${frappe.utils.escape_html(item.item_code || '')}</td>
+              <td class="ppl-item-name">${frappe.utils.escape_html(item.item_name || '')}</td>
+              <td>${item.batch_no ? '<span class="ppl-batch-badge">' + frappe.utils.escape_html(item.batch_no) + '</span>' : '<span class="muted">\u2014</span>'}</td>
+              <td>${frappe.utils.escape_html(item.uom || '')}</td>
+              <td style="text-align:right;"><span class="ppl-qty-badge">${frappe.utils.escape_html(String(item.total_qty))}</span></td>
+            </tr>
+          `);
+          $tr.data('item', item);
+          $tbody.append($tr);
+        });
+
+        // Auto-collapse stock entries section after Apply
+        const $seList = d.$wrapper.find('#ppl-se-list');
+        if ($seList.is(':visible')) {
+          $seList.slideUp(200);
+          d.$wrapper.find('#ppl-se-toggle').html('&#x25BC;').attr('aria-expanded', 'false').attr('aria-label', __('Expand stock entries'));
+        }
+      } catch (err) {
+        console.error('Apply error:', err);
+        frappe.show_alert({ message: __('Failed to load items'), indicator: 'red' });
+        $tbody.html(`<tr><td colspan="5" class="ppl-no-items">${__('Error loading items.')}</td></tr>`);
+      }
     });
 
     // Load items per stock entry, then render cards
