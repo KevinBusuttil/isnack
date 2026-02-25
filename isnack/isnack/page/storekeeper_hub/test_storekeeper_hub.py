@@ -327,7 +327,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         pf.html = html
         return pf
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -352,7 +352,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('enable_silent_printing', result)
         self.assertIn('printer_name', result)
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
     def test_html_contains_all_item_codes(self, mock_get_single, mock_get_value, mock_get_print_style):
@@ -372,7 +372,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('ITEM-001', result['html'])
         self.assertIn('ITEM-002', result['html'])
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -388,7 +388,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertIn('break-after: page', result['html'])
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -403,7 +403,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertNotIn('break-after: page', result['html'])
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -418,7 +418,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertIn('window.print()', result['html'])
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -445,7 +445,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('ITEM-001', url)
         self.assertIn('trigger_print=1', url)
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -460,7 +460,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('<!DOCTYPE html>', result['html'])
         self.assertNotIn('break-after', result['html'])
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')
@@ -475,7 +475,7 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertEqual(len(result['print_urls']), 1)
 
-    @patch('frappe.get_print_style', return_value='')
+    @patch('isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_print_style', return_value='')
     @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
     @patch('frappe.get_single')

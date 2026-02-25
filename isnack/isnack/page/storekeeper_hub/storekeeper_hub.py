@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
+from frappe.www.printview import get_print_style
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -1208,7 +1209,7 @@ def get_combined_pallet_labels_html(items):
         wrapped.append(f"<div{style}>{part}</div>")
     combined_body = "\n".join(wrapped)
 
-    print_css = frappe.get_print_style()
+    print_css = get_print_style()
     page_html = f"""<!DOCTYPE html>
 <html>
 <head>
