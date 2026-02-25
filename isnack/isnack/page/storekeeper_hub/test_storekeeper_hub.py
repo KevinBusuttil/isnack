@@ -327,14 +327,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         pf.html = html
         return pf
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl.replace('{{ item_code }}', ctx.get('item_code', '')))
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_returns_html_and_print_urls(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_returns_html_and_print_urls(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """Result contains both 'html' and 'print_urls' keys."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {
@@ -353,32 +352,33 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('enable_silent_printing', result)
         self.assertIn('printer_name', result)
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl.replace('{{ item_code }}', ctx.get('item_code', '')))
+    @patch('frappe.get_print_style', return_value='')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_html_contains_all_item_codes(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_html_contains_all_item_codes(self, mock_get_single, mock_get_value, mock_get_print_style):
         """Combined HTML contains rendered content for every item."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
+
+        def get_print_side_effect(doctype, doc_name, fmt, **kwargs):
+            return f"<p>{frappe.form_dict.get('item_code', '')}</p>"
 
         items = [
             {'item_code': 'ITEM-001', 'batch_no': 'B1', 'uom': 'Kg', 'qty': 5.0, 'stock_entries': ['SE-001']},
             {'item_code': 'ITEM-002', 'batch_no': 'B2', 'uom': 'Nos', 'qty': 3.0, 'stock_entries': ['SE-002']},
         ]
-        result = get_combined_pallet_labels_html(items)
+        with patch('frappe.get_print', side_effect=get_print_side_effect):
+            result = get_combined_pallet_labels_html(items)
 
         self.assertIn('ITEM-001', result['html'])
         self.assertIn('ITEM-002', result['html'])
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_html_contains_page_break_between_multiple_labels(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_html_contains_page_break_between_multiple_labels(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """Combined HTML has a page-break CSS style between labels."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {'item_code': 'ITEM-001', 'batch_no': None, 'uom': 'Kg', 'qty': 1.0, 'stock_entries': ['SE-001']},
@@ -388,14 +388,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertIn('break-after: page', result['html'])
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_single_item_has_no_page_break(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_single_item_has_no_page_break(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """A single label should not have a trailing page-break style."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {'item_code': 'ITEM-001', 'batch_no': None, 'uom': 'Kg', 'qty': 1.0, 'stock_entries': ['SE-001']},
@@ -404,14 +403,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertNotIn('break-after: page', result['html'])
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_html_contains_auto_print_script(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_html_contains_auto_print_script(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """Combined HTML includes the window.print() auto-print script."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {'item_code': 'ITEM-001', 'batch_no': None, 'uom': 'Kg', 'qty': 1.0, 'stock_entries': ['SE-001']},
@@ -420,14 +418,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertIn('window.print()', result['html'])
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_print_urls_match_print_combined_pallet_labels(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_print_urls_match_print_combined_pallet_labels(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """print_urls in the result should be the same /printview URLs as print_combined_pallet_labels."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {
@@ -448,14 +445,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('ITEM-001', url)
         self.assertIn('trigger_print=1', url)
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_empty_items_returns_empty_html_and_urls(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_empty_items_returns_empty_html_and_urls(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """Empty items list results in no rendered labels and empty print_urls."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         result = get_combined_pallet_labels_html([])
 
@@ -464,14 +460,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
         self.assertIn('<!DOCTYPE html>', result['html'])
         self.assertNotIn('break-after', result['html'])
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_accepts_json_string_input(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_accepts_json_string_input(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """JSON string input is parsed correctly."""
         mock_get_single.return_value = self._make_factory_settings()
-        mock_get_doc.return_value = self._make_print_format()
 
         items_json = json.dumps([
             {'item_code': 'ITEM-001', 'batch_no': 'B1', 'stock_entries': ['SE-001']},
@@ -480,14 +475,13 @@ class TestGetCombinedPalletLabelsHtml(unittest.TestCase):
 
         self.assertEqual(len(result['print_urls']), 1)
 
-    @patch('frappe.render_template', side_effect=lambda tmpl, ctx: tmpl)
+    @patch('frappe.get_print_style', return_value='')
+    @patch('frappe.get_print', return_value='<p>rendered</p>')
     @patch('frappe.db.get_value', return_value='SED-ROW-001')
-    @patch('frappe.get_doc')
     @patch('frappe.get_single')
-    def test_returns_silent_printing_settings(self, mock_get_single, mock_get_doc, mock_get_value, mock_render):
+    def test_returns_silent_printing_settings(self, mock_get_single, mock_get_value, mock_get_print, mock_get_print_style):
         """Silent printing settings from Factory Settings are returned."""
         mock_get_single.return_value = self._make_factory_settings(silent=True, printer='LabelPrinter1')
-        mock_get_doc.return_value = self._make_print_format()
 
         items = [
             {'item_code': 'ITEM-001', 'batch_no': 'B1', 'uom': 'Kg', 'qty': 1.0, 'stock_entries': ['SE-001']},
