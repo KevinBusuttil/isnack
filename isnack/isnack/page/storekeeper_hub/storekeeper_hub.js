@@ -1672,7 +1672,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             </div>
           </div>
           <div class="cell staged-meta">
-            ${frappe.datetime.str_to_user(se.posting_date)} ${se.posting_time || ''}
+            ${frappe.datetime.str_to_user(se.posting_date)}
           </div>
           <div class="cell"><div class="btn-group"></div></div>
         </div>
