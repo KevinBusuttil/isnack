@@ -399,16 +399,53 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   refresh_btn.on('click', refresh);
 
-  // --- Generate Picklist from selected transfers ---
-  const generate_picklist = () => {
-    if (!state.selected_transfers.length) {
-      frappe.msgprint(__('Please select at least one staged Stock Entry in "Staged (Production Date)".'));
+  // --- Generate Picklist ---
+  async function generate_picklist() {
+    let staged_entries = [];
+    try {
+      const r = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_recent_transfers',
+        args: {
+          factory_line: state.factory_line || null,
+          hours: state.hours,
+          posting_date: state.posting_date || null
+        }
+      });
+      staged_entries = r.message || [];
+    } catch (e) {
+      frappe.show_alert({ message: __('Failed to load staged entries'), indicator: 'red' });
+      return;
+    }
+
+    if (!staged_entries.length) {
+      frappe.msgprint(__('No staged stock entries found.'));
       return;
     }
 
     const d = new frappe.ui.Dialog({
       title: __('Generate Picklist'),
+      size: 'extra-large',
       fields: [
+        {
+          fieldtype: 'HTML',
+          fieldname: 'gpl_content',
+          options: `
+            <div class="ppl-dialog">
+              <div class="ppl-se-section">
+                <div class="ppl-header">
+                  <label class="ppl-select-all-label">
+                    <input type="checkbox" id="gpl-select-all" checked />
+                    <span>${__('Select All')}</span>
+                  </label>
+                  <button class="btn btn-xs ppl-se-toggle" id="gpl-se-toggle" aria-label="${__('Collapse stock entries')}" aria-expanded="true">&#x25B2;</button>
+                </div>
+                <div id="gpl-se-list" class="ppl-se-list">
+                  <div class="ppl-loading">${__('Loading items\u2026')}</div>
+                </div>
+              </div>
+            </div>
+          `
+        },
         {
           fieldname: 'group_same_items',
           fieldtype: 'Check',
@@ -418,12 +455,22 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       ],
       primary_action_label: __('Create Picklist'),
       primary_action: async (values) => {
+        const selected = [];
+        d.$wrapper.find('.ppl-se-check:checked').each(function () {
+          selected.push($(this).data('name'));
+        });
+
+        if (!selected.length) {
+          frappe.show_alert({ message: __('Please select at least one stock entry.'), indicator: 'orange' });
+          return;
+        }
+
         d.hide();
         try {
           const r = await frappe.call({
             method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.generate_picklist',
             args: {
-              transfers: state.selected_transfers,
+              transfers: selected,
               group_same_items: values.group_same_items ? 1 : 0
             },
             freeze: true,
@@ -443,7 +490,92 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
 
     d.show();
-  };
+
+    // Wire up Select All checkbox
+    d.$wrapper.find('#gpl-select-all').on('change', function () {
+      const checked = this.checked;
+      d.$wrapper.find('.ppl-se-check').prop('checked', checked);
+      d.$wrapper.find('.ppl-se-card').toggleClass('ppl-se-selected', checked);
+    });
+
+    // Wire up collapse/expand toggle for stock entries section
+    d.$wrapper.find('#gpl-se-toggle').on('click', function () {
+      const $seList = d.$wrapper.find('#gpl-se-list');
+      if ($seList.is(':visible')) {
+        $seList.slideUp(200);
+        $(this).html('&#x25BC;').attr('aria-expanded', 'false').attr('aria-label', __('Expand stock entries'));
+      } else {
+        $seList.slideDown(200);
+        $(this).html('&#x25B2;').attr('aria-expanded', 'true').attr('aria-label', __('Collapse stock entries'));
+      }
+    });
+
+    // Load items per stock entry, then render cards
+    const se_names = staged_entries.map(se => se.name);
+    let items_by_se = {};
+    try {
+      const ir = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_items_per_stock_entry',
+        args: { stock_entries: se_names }
+      });
+      items_by_se = ir.message || {};
+    } catch (e) {
+      console.error('Failed to load SE items:', e);
+    }
+
+    const $list = d.$wrapper.find('#gpl-se-list');
+    $list.empty();
+
+    staged_entries.forEach(se => {
+      const items = items_by_se[se.name] || [];
+      const items_rows_html = items.length
+        ? items.map(item => `
+            <tr>
+              <td class="ppl-item-code">${frappe.utils.escape_html(item.item_code || '')}</td>
+              <td class="ppl-item-name">${frappe.utils.escape_html(item.item_name || '')}</td>
+              <td>${item.batch_no ? '<span class="ppl-batch-badge">' + frappe.utils.escape_html(item.batch_no) + '</span>' : '<span class="muted">\u2014</span>'}</td>
+              <td><span class="ppl-qty-badge">${frappe.utils.escape_html(String(item.qty))} ${frappe.utils.escape_html(item.uom || '')}</span></td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
+
+      const $card = $(`
+        <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
+          <div class="ppl-se-card-header">
+            <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" checked />
+            <div class="ppl-se-info">
+              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)}</span>
+              <span class="ppl-se-meta">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${frappe.utils.escape_html(se.posting_time || '')}</span>
+              ${se.remarks ? '<span class="ppl-se-remarks">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
+            </div>
+          </div>
+          <div class="ppl-se-items">
+            <table class="ppl-items-table">
+              <thead>
+                <tr>
+                  <th>${__('Item Code')}</th>
+                  <th>${__('Item Name')}</th>
+                  <th>${__('Batch')}</th>
+                  <th>${__('Qty / UOM')}</th>
+                </tr>
+              </thead>
+              <tbody>${items_rows_html}</tbody>
+            </table>
+          </div>
+        </div>
+      `);
+
+      $card.find('.ppl-se-check').on('change', function () {
+        $card.toggleClass('ppl-se-selected', this.checked);
+        // Sync select-all state
+        const total = d.$wrapper.find('.ppl-se-check').length;
+        const checked_count = d.$wrapper.find('.ppl-se-check:checked').length;
+        d.$wrapper.find('#gpl-select-all').prop('checked', total === checked_count);
+      });
+
+      $list.append($card);
+    });
+  }
 
   picklist_btn.on('click', generate_picklist);
 
