@@ -1142,14 +1142,6 @@ def get_combined_pallet_labels_html(items):
         enable_silent_printing = False
         default_label_printer = None
 
-    # Load the print format template once
-    template_html = ""
-    try:
-        pf = frappe.get_doc("Print Format", fmt)
-        template_html = pf.html or ""
-    except frappe.DoesNotExistError:
-        template_html = f"<p>Print format <em>{frappe.utils.escape_html(fmt)}</em> not found.</p>"
-
     label_parts = []
     print_urls = []
     for item in items:
@@ -1182,19 +1174,31 @@ def get_combined_pallet_labels_html(items):
         )
         print_urls.append(url)
 
-        # Render label HTML for this item
-        context = {
-            "item_code": item_code,
-            "item_name": item_name,
-            "batch_no": batch_no,
-            "uom": uom,
-            "qty": flt(qty),
-        }
+        # Render label HTML using frappe.get_print() for the full print pipeline
+        # (doc, Jinja helpers, CSS, QR codes, etc.).  Set frappe.form_dict so the
+        # print format template can read query-string-style parameters.
+        original_form_dict = dict(frappe.form_dict)
         try:
-            rendered = frappe.render_template(template_html, context)
+            frappe.form_dict.update({
+                "row_name": row_name or "",
+                "item_code": item_code,
+                "item_name": item_name,
+                "batch_no": batch_no or "",
+                "uom": uom,
+                "qty": str(flt(qty)),
+            })
+            rendered = frappe.get_print(
+                "Stock Entry",
+                se_name,
+                fmt,
+                no_letterhead=1,
+            )
         except Exception as exc:
-            frappe.log_error(frappe.get_traceback(), "get_combined_pallet_labels_html template error")
+            frappe.log_error(frappe.get_traceback(), "get_combined_pallet_labels_html render error")
             rendered = f"<p>Error rendering label for {frappe.utils.escape_html(item_code)}: {frappe.utils.escape_html(str(exc))}</p>"
+        finally:
+            frappe.form_dict.clear()
+            frappe.form_dict.update(original_form_dict)
         label_parts.append(rendered)
 
     # Wrap each label in a page-break div; last label has no trailing break
@@ -1204,11 +1208,13 @@ def get_combined_pallet_labels_html(items):
         wrapped.append(f"<div{style}>{part}</div>")
     combined_body = "\n".join(wrapped)
 
+    print_css = frappe.get_print_style()
     page_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
+  {print_css}
   body {{ margin: 0; padding: 0; }}
   @media print {{ @page {{ margin: 0; }} }}
 </style>
@@ -1228,29 +1234,50 @@ def get_combined_pallet_labels_html(items):
 
 
 @frappe.whitelist(allow_guest=False)
-def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty="0", print_format=""):
+def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty="0", print_format="", se_name=""):
     """
     Render a collective/combined pallet label by loading the specified print format
-    template and rendering it server-side with the provided item data as context.
+    via frappe.get_print() and rendering it server-side with the provided item data.
 
     Returns a complete HTML page with auto-print JavaScript.
     """
-    context = {
-        "item_code": item_code,
-        "item_name": item_name,
-        "batch_no": batch_no,
-        "uom": uom,
-        "qty": flt(qty),
-    }
-
     template_html = ""
-    if print_format:
+    if print_format and se_name:
+        original_form_dict = dict(frappe.form_dict)
+        try:
+            frappe.form_dict.update({
+                "item_code": item_code,
+                "item_name": item_name,
+                "batch_no": batch_no or "",
+                "uom": uom,
+                "qty": str(flt(qty)),
+            })
+            template_html = frappe.get_print(
+                "Stock Entry",
+                se_name,
+                print_format,
+                no_letterhead=1,
+            )
+        except Exception as exc:
+            frappe.log_error(frappe.get_traceback(), "render_collective_label render error")
+            template_html = f"<p>Error rendering print format <em>{frappe.utils.escape_html(print_format)}</em>: {frappe.utils.escape_html(str(exc))}</p>"
+        finally:
+            frappe.form_dict.clear()
+            frappe.form_dict.update(original_form_dict)
+    elif print_format:
         try:
             pf = frappe.get_doc("Print Format", print_format)
         except frappe.DoesNotExistError:
             template_html = f"<p>Print format <em>{frappe.utils.escape_html(print_format)}</em> not found.</p>"
             pf = None
         if pf is not None:
+            context = {
+                "item_code": item_code,
+                "item_name": item_name,
+                "batch_no": batch_no,
+                "uom": uom,
+                "qty": flt(qty),
+            }
             try:
                 template_html = frappe.render_template(pf.html or "", context)
             except Exception as exc:
