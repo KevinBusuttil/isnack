@@ -1108,6 +1108,125 @@ def print_combined_pallet_labels(items):
     }
 
 
+@frappe.whitelist()
+def get_combined_pallet_labels_html(items):
+    """
+    Render all pallet labels into a single HTML page with CSS page breaks between
+    each label.  Also returns the individual /printview URLs (for QZ Tray silent
+    printing) and the current print-settings flags.
+
+    Returns: {
+        'html': str,            # combined HTML page with all labels + auto-print JS
+        'print_urls': [str],    # individual /printview URLs (for QZ Tray path)
+        'enable_silent_printing': bool,
+        'printer_name': str or None
+    }
+    """
+    if isinstance(items, str):
+        try:
+            items = json.loads(items or "[]")
+        except Exception:
+            items = []
+
+    try:
+        fs = frappe.get_single("Factory Settings")
+        fmt = (
+            getattr(fs, "default_collective_label_print_format", None)
+            or getattr(fs, "default_label_print_format", None)
+            or "SATO Label Print"
+        )
+        enable_silent_printing = getattr(fs, "enable_silent_printing", False)
+        default_label_printer = getattr(fs, "default_label_printer", None)
+    except Exception:
+        fmt = "SATO Label Print"
+        enable_silent_printing = False
+        default_label_printer = None
+
+    # Load the print format template once
+    template_html = ""
+    try:
+        pf = frappe.get_doc("Print Format", fmt)
+        template_html = pf.html or ""
+    except frappe.DoesNotExistError:
+        template_html = f"<p>Print format <em>{frappe.utils.escape_html(fmt)}</em> not found.</p>"
+
+    label_parts = []
+    print_urls = []
+    for item in items:
+        item_code = item.get("item_code", "")
+        item_name = item.get("item_name", "")
+        batch_no = item.get("batch_no") or None
+        uom = item.get("uom", "")
+        qty = item.get("qty", 0)
+        se_names = item.get("stock_entries", [])
+        if not se_names:
+            continue
+        se_name = se_names[0]
+
+        # Build individual print URL (for QZ Tray / silent printing)
+        filters = {"parent": se_name, "item_code": item_code}
+        if batch_no:
+            filters["batch_no"] = batch_no
+        row_name = frappe.db.get_value("Stock Entry Detail", filters, "name")
+        url = (
+            f"/printview?doctype={frappe.utils.quote('Stock Entry')}"
+            f"&name={frappe.utils.quote(se_name)}"
+            f"&format={frappe.utils.quote(fmt)}"
+            + (f"&row_name={frappe.utils.quote(row_name)}" if row_name else "")
+            + f"&item_code={frappe.utils.quote(item_code)}"
+            + f"&item_name={frappe.utils.quote(item_name)}"
+            + f"&batch_no={frappe.utils.quote(batch_no or '')}"
+            + f"&uom={frappe.utils.quote(uom)}"
+            + f"&qty={frappe.utils.quote(str(qty))}"
+            + "&trigger_print=1"
+        )
+        print_urls.append(url)
+
+        # Render label HTML for this item
+        context = {
+            "item_code": item_code,
+            "item_name": item_name,
+            "batch_no": batch_no,
+            "uom": uom,
+            "qty": flt(qty),
+        }
+        try:
+            rendered = frappe.render_template(template_html, context)
+        except Exception as exc:
+            frappe.log_error(frappe.get_traceback(), "get_combined_pallet_labels_html template error")
+            rendered = f"<p>Error rendering label for {frappe.utils.escape_html(item_code)}: {frappe.utils.escape_html(str(exc))}</p>"
+        label_parts.append(rendered)
+
+    # Wrap each label in a page-break div; last label has no trailing break
+    wrapped = []
+    for i, part in enumerate(label_parts):
+        style = ' style="break-after: page;"' if i < len(label_parts) - 1 else ""
+        wrapped.append(f"<div{style}>{part}</div>")
+    combined_body = "\n".join(wrapped)
+
+    page_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; padding: 0; }}
+  @media print {{ @page {{ margin: 0; }} }}
+</style>
+</head>
+<body>
+{combined_body}
+<script>window.onload = function() {{ window.print(); }};</script>
+</body>
+</html>"""
+
+    return {
+        "html": page_html,
+        "print_urls": print_urls,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": default_label_printer,
+    }
+
+
 @frappe.whitelist(allow_guest=False)
 def render_collective_label(item_code="", item_name="", batch_no="", uom="", qty="0", print_format=""):
     """
