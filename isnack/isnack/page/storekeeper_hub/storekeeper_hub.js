@@ -531,37 +531,69 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
         d.hide();
 
-        try {
+        // Pre-open a blank window synchronously while still in the user-gesture
+        // context so the browser does not treat it as a popup.  For non-silent
+        // printing we write the combined HTML to this window; for silent
+        // printing (QZ Tray) we close it and use the individual print URLs.
+        const printWin = window.open('', '_blank');
 
+        try {
           const r = await frappe.call({
-            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.print_combined_pallet_labels',
+            method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_combined_pallet_labels_html',
             args: { items: items },
             freeze: true,
             freeze_message: __('Preparing labels\u2026')
           });
 
           if (r.message) {
-            const { print_urls, enable_silent_printing, printer_name } = r.message;
-            if (!print_urls || !print_urls.length) {
-              frappe.show_alert({ message: __('No print URLs returned'), indicator: 'red' });
-              return;
-            }
+            const { html, print_urls, enable_silent_printing, printer_name } = r.message;
 
-            for (let idx = 0; idx < print_urls.length; idx++) {
-              if (idx > 0) {
-                await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+            if (enable_silent_printing && printer_name) {
+              // Silent printing via QZ Tray – close the pre-opened window and
+              // send each label to the physical printer sequentially.
+              if (printWin && !printWin.closed) printWin.close();
+
+              if (!print_urls || !print_urls.length) {
+                frappe.show_alert({ message: __('No print URLs returned'), indicator: 'red' });
+                return;
               }
-              const fullUrl = frappe.urllib.get_full_url(print_urls[idx]);
-              await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, `combined item ${idx + 1}`);
-            }
 
-            const action = enable_silent_printing ? 'sent to printer' : 'dialog(s) opened';
-            frappe.show_alert({
-              message: `${print_urls.length} label(s) ${action}`,
-              indicator: 'green'
-            });
+              for (let idx = 0; idx < print_urls.length; idx++) {
+                if (idx > 0) {
+                  await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+                }
+                const fullUrl = frappe.urllib.get_full_url(print_urls[idx]);
+                await handleLabelPrint(fullUrl, enable_silent_printing, printer_name, `combined item ${idx + 1}`);
+              }
+
+              frappe.show_alert({
+                message: `${print_urls.length} label(s) sent to printer`,
+                indicator: 'green'
+              });
+            } else {
+              // Non-silent printing – write the combined HTML (all labels with
+              // CSS page breaks) into the single pre-opened window so every
+              // label prints without triggering the popup blocker.
+              if (!printWin || printWin.closed) {
+                frappe.show_alert({ message: __('Could not open print window. Please allow popups for this site.'), indicator: 'red' });
+                return;
+              }
+              if (!html) {
+                printWin.close();
+                frappe.show_alert({ message: __('No label HTML returned'), indicator: 'red' });
+                return;
+              }
+              printWin.document.write(html);
+              printWin.document.close();
+
+              frappe.show_alert({
+                message: `${(print_urls || []).length || items.length} label(s) dialog(s) opened`,
+                indicator: 'green'
+              });
+            }
           }
         } catch (err) {
+          if (printWin && !printWin.closed) printWin.close();
           console.error('Print combined labels error:', err);
           frappe.show_alert({ message: __('Failed to print combined labels'), indicator: 'red' });
         }
