@@ -285,7 +285,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const $filters = $hub.find('.filters');
 
   const factory_line = frappe.ui.form.make_control({
-    df: { fieldtype: 'Link', label: 'Factory Line', fieldname: 'factory_line', options: 'Factory Line', reqd: 0 },
+    df: { fieldtype: 'Link', label: 'Factory Section', fieldname: 'factory_line', options: 'Factory Line', reqd: 0 },
     parent: $filters.find('.factory-line'),
     render_input: true
   });
@@ -1084,7 +1084,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
 
     if (!$buckets.children().length) {
-      $buckets.append('<div class="muted">No open Work Orders for this factory line.</div>');
+      $buckets.append('<div class="muted">No open Work Orders for this factory section.</div>');
     }
   }
 

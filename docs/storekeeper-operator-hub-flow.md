@@ -6,7 +6,7 @@ This document explains the operational flow for the Storekeeper Hub and Operator
 
 ### 1. Start-of-shift setup
 - **Open the Storekeeper Hub** page and use the top toolbar filters.
-- **Choose a Factory Line** to target the current production line.
+- **Choose a Factory Section** to target the current production line.
 - **Choose a Source Warehouse** to control where the stock transfers/issue/receipt will pull from.
 - **Set a Posting Date (Production Date)** to specify the production date for which materials are being staged. This defaults to today's date and controls what is displayed in the "Staged (Production Date)" section.
 - **Optional: Set a Pallet ID** to tag transfers with a pallet reference for downstream tracking.
@@ -48,7 +48,7 @@ From the toolbar:
 
 ### 1. Set operator & line
 - Use **Set Operator** to select the current Employee.
-- Use **Set Line** to select one or more Factory Lines.
+- Use **Set Line** to select one or more Factory Sections.
 - The hub then loads the **Assigned Work Orders** queue for those lines.
 
 ### 2. Select a Work Order

@@ -23,7 +23,7 @@ def _wip_for(wo: dict) -> str:
     return wip or ""
 
 def _wo_line(wo_doc):
-    """Resolve Factory Line for a Work Order."""
+    """Resolve Factory Section for a Work Order."""
     if getattr(wo_doc, "custom_factory_line", None):
         return wo_doc.custom_factory_line
 
@@ -111,7 +111,7 @@ def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
 
 
 def _staging_for(wo_doc):
-    """Return staging warehouse from Factory Settings -> Line Warehouse Map (by Factory Line)."""
+    """Return staging warehouse from Factory Settings -> Line Warehouse Map (by Factory Section)."""
     # Child table for Factory Settings line_warehouse_map
     meta = frappe.get_meta("Line Warehouse Map")
     fields = ["factory_line", "staging_warehouse"]
@@ -227,10 +227,10 @@ def _order_wos_fifo(wo_names):
     return order
 
 
-# --- Factory Line helpers -----------------------------------------------------
+# --- Factory Section helpers -----------------------------------------------------
 
 def _resolve_line_for_row(row: dict, bom_line_map: dict[str, str | None]) -> str | None:
-    """Resolve Factory Line for a WO row, preferring WO fields then BOM default."""
+    """Resolve Factory Section for a WO row, preferring WO fields then BOM default."""
     if not row:
         return None
     if row.get("custom_factory_line"):
@@ -240,12 +240,12 @@ def _resolve_line_for_row(row: dict, bom_line_map: dict[str, str | None]) -> str
     return None
 
 def _normalize_factory_line(value: str | None) -> str | None:
-    """Trim and blank-to-None normalization for factory line filter values."""
+    """Trim and blank-to-None normalization for factory section filter values."""
     line = (cstr(value) or "").strip()
     return line or None
 
 def _filter_wos_by_factory_line(wos, factory_line):
-    """Given WO rows with bom_no, filter by Factory Line (WO fields or BOM default)."""
+    """Given WO rows with bom_no, filter by Factory Section (WO fields or BOM default)."""
     factory_line = _normalize_factory_line(factory_line)    
     if not factory_line:
         return wos
@@ -276,7 +276,7 @@ def _filter_wos_by_factory_line(wos, factory_line):
 
 @frappe.whitelist()
 def get_queue(factory_line: str | None = None, posting_date: str | None = None):
-    """Work Orders Not Started/In Process; normalized for UI; optional filter by Factory Line
+    """Work Orders Not Started/In Process; normalized for UI; optional filter by Factory Section
     (WO field or BOM default) and Production Plan posting_date.
     """
     factory_line = _normalize_factory_line(factory_line)
@@ -342,7 +342,7 @@ def get_queue(factory_line: str | None = None, posting_date: str | None = None):
 
 @frappe.whitelist()
 def get_buckets(factory_line: str | None = None, posting_date: str | None = None):
-    """Group open WOs by BOM (same-BOM bucket), optionally filtered by Factory Line and
+    """Group open WOs by BOM (same-BOM bucket), optionally filtered by Factory Section and
     Production Plan posting_date.
     """
     factory_line = _normalize_factory_line(factory_line)
@@ -838,7 +838,7 @@ def get_recent_manual_stock_entries(
 
 @frappe.whitelist()
 def get_recent_pallets(factory_line: str | None = None, hours: int = 24):
-    """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by Factory Line."""
+    """List Material Transfers that include 'Pallet:' in remarks, optionally filtered by Factory Section."""
     factory_line = _normalize_factory_line(factory_line)
     if factory_line:
         q = """

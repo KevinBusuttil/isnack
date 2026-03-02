@@ -479,7 +479,7 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 1. **Operator and Line Selection**
    - Operator selects employee profile
-   - Selects one or more factory lines
+   - Selects one or more factory sections
    - System loads assigned work orders for those lines
 
 2. **Work Order Queue with Status Chips**
@@ -548,7 +548,7 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 **Steps:**
 - Open Storekeeper Hub page
-- **Select Factory Line**: Target production line for staging
+- **Select Factory Section**: Target production line for staging
 - **Select Source Warehouse**: Warehouse to pull materials from
 - **Set Production Date (Posting Date)**: Date for material staging (defaults to today)
 - **Optional: Set Pallet ID**: Tag transfers with pallet reference for tracking
@@ -714,11 +714,11 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 #### 1. Set Operator & Line
 
-**Purpose:** Identify the operator and assign factory line(s) for the session.
+**Purpose:** Identify the operator and assign factory section(s) for the session.
 
 **Steps:**
 - Click **Set Operator** → Select Employee profile
-- Click **Set Line** → Select one or more Factory Lines
+- Click **Set Line** → Select one or more Factory Sections
 - System loads assigned work orders for selected lines
 
 **Result:** Work Order Queue displays WOs assigned to your line(s).
@@ -1009,7 +1009,7 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 **Type:** Single DocType (one instance)  
 **Key Fields:** All MES settings including scanning, consumption, label printing, line rules
 
-### Factory Line
+### Factory Section
 **Purpose:** Define production lines with warehouse mappings  
 **Key Fields:** Line name, source warehouse, WIP warehouse, FG warehouse, SFG warehouse
 
@@ -1058,20 +1058,20 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 **Key Fields:** User, default label printer, default A4 printer
 
 ### Line Warehouse Map
-**Purpose:** Map warehouses to factory lines  
-**Key Fields:** Factory line, source warehouse, WIP warehouse, FG warehouse, SFG warehouse
+**Purpose:** Map warehouses to factory sections  
+**Key Fields:** Factory section, source warehouse, WIP warehouse, FG warehouse, SFG warehouse
 
 ### Line Allowed Item Groups
 **Purpose:** Restrict items allowed on specific lines  
-**Key Fields:** Factory line, item group
+**Key Fields:** Factory section, item group
 
 ### Line Backflush Item Groups
 **Purpose:** Define backflush item groups per line  
-**Key Fields:** Factory line, item group
+**Key Fields:** Factory section, item group
 
 ### Line Packaging Item Groups
 **Purpose:** Define packaging item groups per line  
-**Key Fields:** Factory line, item group
+**Key Fields:** Factory section, item group
 
 ### Pallet UOM Option
 **Purpose:** Configure pallet UOM types  
@@ -1162,9 +1162,9 @@ Navigate to: **Home → Manufacturing → Factory Settings**
 **Pallet UOM Options:**
 - Add allowed pallet UOM types (e.g., EURO 1, EURO 4)
 
-#### 2. Setup Factory Lines
+#### 2. Setup Factory Sections
 
-Navigate to: **Home → Manufacturing → Factory Line**
+Navigate to: **Home → Manufacturing → Factory Section**
 
 **For each production line, create:**
 - Line name and description
