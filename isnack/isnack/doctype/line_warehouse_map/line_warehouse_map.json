@@ -47,7 +47,7 @@
    "fieldname": "factory_line",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Factory Line",
+   "label": "Factory Section",
    "options": "Factory Line",
    "reqd": 1
   }

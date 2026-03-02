@@ -428,9 +428,9 @@ function init_operator_hub($root) {
     const r = await rpc('isnack.api.mes_ops.list_workstations');
     const opts = (r.message || []);
     const d = new frappe.ui.Dialog({
-      title: 'Select Factory Lines',
+      title: 'Select Factory Sections',
       fields: [{ 
-        label:'Factory Lines', 
+        label:'Factory Sections', 
         fieldname:'lines', 
         fieldtype:'MultiSelectPills', 
         options: opts,
@@ -870,7 +870,7 @@ function init_operator_hub($root) {
   // End Shift Return - return WIP without work order
   $('#btn-end-shift-return', $root).on('click', async () => {
     if (!state.current_lines.length) {
-      frappe.msgprint('Please set a Factory Line first');
+      frappe.msgprint('Please set a Factory Section first');
       return;
     }
     if (!state.current_emp) {
@@ -884,9 +884,9 @@ function init_operator_hub($root) {
     let selectedLine;
     if (state.current_lines.length > 1) {
       const lineDialog = new frappe.ui.Dialog({
-        title: 'Select Line for WIP Return',
+        title: 'Select Section for WIP Return',
         fields: [{
-          label: 'Factory Line',
+          label: 'Factory Section',
           fieldname: 'line',
           fieldtype: 'Select',
           options: state.current_lines.join('\n'),
@@ -914,7 +914,7 @@ function init_operator_hub($root) {
       const wipItems = (resp && resp.message && resp.message.items) || [];
       
       if (!wipItems.length) {
-        frappe.msgprint(`No items in WIP for line ${line}`);
+        frappe.msgprint(`No items in WIP for section ${line}`);
         flashStatus('No WIP inventory', 'neutral');
         return;
       }

@@ -689,12 +689,12 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
     }
 
 # ============================================================
-# Line queue + banner (Factory Line / Work Order centric)
+# Line queue + banner (Factory Section / Work Order centric)
 # ============================================================
 
 @frappe.whitelist()
 def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
-    """Return Work Orders for one or more lines (Factory Lines)."""
+    """Return Work Orders for one or more lines (Factory Sections)."""
     # Parse lines parameter (JSON array from frontend)
     selected_lines = []
     if lines:
@@ -901,7 +901,7 @@ def set_work_order_state(
     reason: Optional[str] = None,
     remarks: Optional[str] = None,
 ):
-    """Start / Pause / Stop a Work Order directly (Factory Line execution)."""
+    """Start / Pause / Stop a Work Order directly (Factory Section execution)."""
     _require_roles(ROLES_OPERATOR)
     wo = frappe.get_doc("Work Order", work_order)
 
@@ -2704,7 +2704,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
 
 @frappe.whitelist()
 def list_workstations():
-    """Deprecated name; now returns Factory Lines for Operator Hub."""
+    """Deprecated name; now returns Factory Sections for Operator Hub."""
     _require_roles(["Factory Operator", "Production Manager"])
     target_dt = "Factory Line" if frappe.db.exists("DocType", "Factory Line") else "Workstation"
     rows = frappe.get_all(target_dt, fields=["name"], order_by="name asc", limit=500)
@@ -2858,7 +2858,7 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
 @frappe.whitelist()
 def get_wip_inventory(line: Optional[str] = None):
     """
-    Get current WIP inventory for a Factory Line.
+    Get current WIP inventory for a Factory Section.
     Returns list of items with item_code, item_name, qty, batch_no, uom.
     """
     _require_roles(["Factory Operator", "Stores User", "Production Manager"])
