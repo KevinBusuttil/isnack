@@ -970,12 +970,27 @@ function init_operator_hub($root) {
           
           setStatus('Posting WIP return…');
           try {
-            await rpc('isnack.api.mes_ops.return_wip_to_staging', {
+            const res = await rpc('isnack.api.mes_ops.return_wip_to_staging', {
               line: line,
               items: JSON.stringify(itemsToReturn)
             });
             d.hide();
-            frappe.show_alert({ message: 'WIP return posted successfully', indicator: 'green' });
+            const seName = res && res.message && res.message.stock_entry;
+            if (seName) {
+              const printUrl = frappe.urllib.get_full_url(
+                `/printview?doctype=Stock+Entry&name=${encodeURIComponent(seName)}&format=Material+Return+Note&no_letterhead=0&letterhead=&settings=%7B%7D&_lang=en`
+              );
+              const fs = state.factory_settings || {};
+              const enableSilent = fs.enable_silent_printing && fs.printer_name;
+              if (enableSilent) {
+                await handleLabelPrint(printUrl, true, fs.printer_name, 'Material Return Note');
+              } else {
+                window.open(printUrl, '_blank');
+              }
+              frappe.show_alert({ message: `WIP return posted — ${seName}`, indicator: 'green' });
+            } else {
+              frappe.show_alert({ message: 'WIP return posted successfully', indicator: 'green' });
+            }
             flashStatus('WIP return completed', 'success');
           } catch (err) {
             console.error('Error posting WIP return', err);

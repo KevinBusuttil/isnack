@@ -1,0 +1,171 @@
+{%- from "templates/print_formats/standard_macros.html" import add_header -%}
+{%- set print_heading = "Material Return Note" -%}
+
+<style>
+  .mrn-wrap {
+    font-size: 10pt;
+    font-family: sans-serif;
+  }
+  .mrn-wrap h2 {
+    margin: 0 0 6px 0;
+    font-size: 14pt;
+  }
+  .mrn-meta {
+    width: 100%;
+    margin-bottom: 10px;
+    border-collapse: collapse;
+  }
+  .mrn-meta td {
+    padding: 2px 6px;
+    vertical-align: top;
+  }
+  table.mrn-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+  }
+  table.mrn-table th,
+  table.mrn-table td {
+    border: 1px solid #000;
+    padding: 3px 5px;
+  }
+  table.mrn-table th {
+    background-color: #f0f0f0;
+    font-size: 9pt;
+  }
+  .text-right {
+    text-align: right;
+  }
+  .mrn-totals {
+    margin-top: 4px;
+    text-align: right;
+    font-weight: bold;
+  }
+  .mrn-sig-table {
+    width: 100%;
+    margin-top: 40px;
+    border-collapse: collapse;
+  }
+  .mrn-sig-table td {
+    width: 50%;
+    vertical-align: top;
+    padding: 0 10px 0 0;
+    border: none;
+  }
+  .mrn-sig-line {
+    border-top: 1px solid #000;
+    margin-top: 30px;
+    padding-top: 4px;
+    font-size: 9pt;
+  }
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 12mm;
+    }
+  }
+  @media screen {
+    .print-format {
+      width: 180mm;
+      padding: 5mm;
+    }
+    .mrn-wrap {
+      font-size: 9pt;
+    }
+  }
+</style>
+
+<div class="mrn-wrap">
+
+  {# --- Header --- #}
+  {{ add_header(0, 1, doc, letter_head, no_letterhead, print_heading) }}
+
+  <h2>Material Return Note</h2>
+
+  {# --- Production / Transfer Details --- #}
+  <table class="mrn-meta">
+    <tr>
+      <td style="width: 20%;"><b>Stock Entry No:</b></td>
+      <td style="width: 30%;">{{ doc.name }}</td>
+      <td style="width: 20%;"><b>Date:</b></td>
+      <td style="width: 30%;">{{ frappe.utils.format_date(doc.posting_date) }}</td>
+    </tr>
+    <tr>
+      <td><b>Factory Section:</b></td>
+      <td>{{ doc.custom_factory_line or '—' }}</td>
+      <td><b>Time:</b></td>
+      <td>{{ doc.posting_time or '' }}</td>
+    </tr>
+    <tr>
+      <td><b>From Warehouse:</b></td>
+      <td>{{ doc.from_warehouse or '' }}</td>
+      {%- if doc.remarks %}
+      <td><b>Remarks:</b></td>
+      <td>{{ doc.remarks }}</td>
+      {%- else %}
+      <td></td><td></td>
+      {%- endif %}
+    </tr>
+    <tr>
+      <td><b>To Warehouse:</b></td>
+      <td>{{ doc.to_warehouse or '' }}</td>
+      <td></td><td></td>
+    </tr>
+  </table>
+
+  {# --- Items Table --- #}
+  <table class="mrn-table table table-bordered table-condensed">
+    <thead>
+      <tr>
+        <th style="width: 4%;">#</th>
+        <th style="width: 12%;">Item Code</th>
+        <th>Item Name</th>
+        <th style="width: 12%;">Batch No</th>
+        <th style="width: 7%;">UoM</th>
+        <th style="width: 8%;" class="text-right">Qty</th>
+        <th style="width: 14%;">Source Whse</th>
+        <th style="width: 14%;">Target Whse</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- set total_qty = namespace(value=0) -%}
+      {% for item in doc.items %}
+      {%- set total_qty.value = total_qty.value + (item.qty or 0) -%}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ item.item_code }}</td>
+        <td>{{ item.item_name or '' }}</td>
+        <td>{{ item.batch_no or '—' }}</td>
+        <td>{{ item.uom or '' }}</td>
+        <td class="text-right">{{ "%.3f"|format(item.qty or 0) }}</td>
+        <td>{{ item.s_warehouse or '' }}</td>
+        <td>{{ item.t_warehouse or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# --- Totals --- #}
+  <div class="mrn-totals">
+    Total Qty: {{ "%.3f"|format(total_qty.value) }}
+  </div>
+
+  {# --- Signature Section --- #}
+  <table class="mrn-sig-table">
+    <tr>
+      <td>
+        <b>Returned By (Operator)</b>
+        <div class="mrn-sig-line">Name: ________________________________</div>
+        <div class="mrn-sig-line">Signature: ____________________________</div>
+        <div class="mrn-sig-line">Date: _________________________________</div>
+      </td>
+      <td>
+        <b>Received By (Storekeeper)</b>
+        <div class="mrn-sig-line">Name: ________________________________</div>
+        <div class="mrn-sig-line">Signature: ____________________________</div>
+        <div class="mrn-sig-line">Date: _________________________________</div>
+      </td>
+    </tr>
+  </table>
+
+</div>
