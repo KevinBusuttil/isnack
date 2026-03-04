@@ -793,6 +793,30 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 ---
 
+#### 4a. Manual Load Materials
+
+**Purpose:** Consume materials manually for operators who do not have barcode scanners.
+
+**Workflow:**
+
+1. Click **Manual Load** button
+2. Select **Item Code** from the dropdown (description auto-populates)
+3. Select **Batch No** — filtered to batches available in the Staging Warehouse for the current line
+4. **Available Qty** auto-populates with the quantity in the Staging Warehouse for the selected batch
+5. Enter **Qty** to consume (cannot exceed Available Qty)
+6. Click **Add** to add the item to the consumption list
+7. Repeat steps 2–6 for additional items
+8. Click **Post Consumption** to submit
+
+**Features:**
+- Works without barcode scanner
+- Batch filter shows only batches with available stock in the Staging Warehouse
+- Qty validation prevents over-entry at dialog level
+- Over-consumption threshold check (same as scan-based Load)
+- Creates the same Stock Entry type as scanner-based Load
+
+**Result:** Material consumption recorded accurately without requiring a barcode scanner.
+
 #### 5. Request More Material
 
 **Purpose:** Request additional materials when quantities are insufficient.
