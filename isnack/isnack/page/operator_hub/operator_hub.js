@@ -377,7 +377,8 @@ function init_operator_hub($root) {
     }
     $pauseBtn.prop('disabled', !enableActions);
 
-    $('#btn-load',    $root).prop('disabled', !enableActions);
+    $('#btn-load',        $root).prop('disabled', !enableActions);
+    $('#btn-manual-load', $root).prop('disabled', !enableActions);
     $('#btn-request', $root).prop('disabled', !enableActions);
     $('#btn-return',  $root).prop('disabled', !enableActions);
     
@@ -789,6 +790,117 @@ function init_operator_hub($root) {
     setScanMode(true);
     flashStatus(`Ready to scan for ${state.current_wo}`); 
     focus_scan();
+  });
+
+  $('#btn-manual-load',$root).on('click', () => {
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    setScanMode(false);
+    const lines = [];
+
+    const listHTML = `
+      <div class="mb-2 text-muted">Select item and batch, enter quantity, then click <b>Add</b>. When done, click <b>Post Consumption</b>.</div>
+      <div id="manual-load-list" class="list-group" style="max-height:220px; overflow:auto;"></div>
+    `;
+
+    const d = new frappe.ui.Dialog({
+      title: 'Manual Load Materials',
+      fields: [
+        { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 1 },
+        { label: 'Description', fieldname: 'item_desc', fieldtype: 'Small Text', read_only: 1 },
+        { label: 'Batch No', fieldname: 'batch_no', fieldtype: 'Link', options: 'Batch', reqd: 0 },
+        { label: 'Available Qty', fieldname: 'available_qty', fieldtype: 'Float', read_only: 1 },
+        { label: 'Qty', fieldname: 'qty', fieldtype: 'Float', reqd: 1 },
+        { fieldname: 'list', fieldtype: 'HTML', options: listHTML },
+      ],
+      primary_action_label: 'Post Consumption',
+      primary_action: async () => {
+        if (!lines.length) { frappe.msgprint('No items to add'); return; }
+        setStatus('Posting manual consumption…');
+        try {
+          await rpc('isnack.api.mes_ops.manual_load_materials', {
+            work_order: state.current_wo,
+            items: JSON.stringify(lines)
+          });
+          d.hide();
+          flashStatus('Manual load posted', 'success');
+          if (state.current_wo) await load_materials_snapshot(state.current_wo);
+        } catch(e) {
+          frappe.msgprint('Failed to post consumption: ' + (e.message || e));
+        }
+      }
+    });
+
+    // When item_code changes: fetch description, clear batch/qty, update batch filter
+    d.fields_dict.item_code.df.onchange = function() {
+      const item_code = (d.get_value('item_code') || '').trim();
+      d.set_value('item_desc', '');
+      d.set_value('batch_no', '');
+      d.set_value('available_qty', 0);
+      d.set_value('qty', 0);
+      if (!item_code) return;
+
+      // Fetch item description
+      frappe.db.get_value('Item', item_code, 'description').then(r => {
+        if (r && r.message) d.set_value('item_desc', r.message.description || '');
+      });
+
+      // Update batch filter to show only batches in staging for this item/WO
+      d.fields_dict.batch_no.get_query = function() {
+        return {
+          filters: { item: item_code }
+        };
+      };
+    };
+
+    // When batch_no changes: fetch available qty from staging
+    d.fields_dict.batch_no.df.onchange = function() {
+      const item_code = (d.get_value('item_code') || '').trim();
+      const batch_no  = (d.get_value('batch_no')  || '').trim();
+      d.set_value('available_qty', 0);
+      d.set_value('qty', 0);
+      if (!item_code || !batch_no) return;
+
+      rpc('isnack.api.mes_ops.get_batch_available_qty', {
+        work_order: state.current_wo,
+        item_code,
+        batch_no
+      }).then(r => {
+        const msg = r && r.message;
+        if (msg) d.set_value('available_qty', parseFloat(msg.qty) || 0);
+      });
+    };
+
+    function redraw() {
+      const $box = d.$wrapper.find('#manual-load-list'); $box.empty();
+      if (!lines.length) { $box.append(`<div class="list-group-item text-muted">Nothing added yet.</div>`); return; }
+      lines.forEach((r, idx) => {
+        $box.append(`
+          <div class="list-group-item d-flex justify-content-between align-items-center">
+            <span><b>${frappe.utils.escape_html(r.item_code)}</b>${r.batch_no ? `<span class="text-muted"> — Batch ${frappe.utils.escape_html(r.batch_no)}</span>` : ''}</span>
+            <span><span class="me-3">${r.qty}</span><button type="button" class="btn btn-sm btn-outline-danger" data-del="${idx}">Remove</button></span>
+          </div>`);
+      });
+      $box.find('[data-del]').on('click', (e) => { const i = +e.currentTarget.getAttribute('data-del'); lines.splice(i,1); redraw(); });
+    }
+
+    function addLine() {
+      const item_code = (d.get_value('item_code') || '').trim();
+      const batch_no  = (d.get_value('batch_no')  || '').trim();
+      const qty       = parseFloat(d.get_value('qty') || 0);
+      const avail_qty = parseFloat(d.get_value('available_qty') || 0);
+      if (!item_code || qty <= 0) { frappe.msgprint('Item and positive qty required'); return; }
+      if (avail_qty > 0 && qty > avail_qty) { frappe.msgprint(`Qty cannot exceed available qty (${avail_qty})`); return; }
+      lines.push({ item_code, qty, batch_no: batch_no || undefined });
+      d.set_value('item_code', ''); d.set_value('item_desc', ''); d.set_value('batch_no', '');
+      d.set_value('available_qty', 0); d.set_value('qty', 0);
+      redraw();
+    }
+
+    const $add = $(`<button class="btn btn-sm btn-primary">Add</button>`);
+    d.$wrapper.find('.modal-body .form-column:first').append($('<div class="mt-2"></div>').append($add));
+    $add.on('click', addLine);
+
+    d.show(); redraw();
   });
 
   $('#btn-request',$root).on('click', () => {

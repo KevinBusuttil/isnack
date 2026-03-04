@@ -2804,6 +2804,198 @@ def parse_scan(code: str):
     return {"ok": True, "item_code": item_code, "batch_no": out.get("batch_no"), "uom": uom}
 
 @frappe.whitelist()
+def get_staging_batches(work_order: str, item_code: str):
+    """
+    Return batches with available stock in the Staging Warehouse for a given item and work order.
+
+    Returns a list of {"batch_no": str, "qty": float, "uom": str}.
+    """
+    line = _line_for_work_order(work_order)
+    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
+    if not staging_wh:
+        return []
+
+    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+
+    rows = frappe.db.sql("""
+        SELECT b.batch_id AS batch_no, bin.actual_qty AS qty
+        FROM `tabBatch` b
+        JOIN `tabBin` bin ON bin.item_code = b.item
+            AND bin.warehouse = %(staging_wh)s
+        WHERE b.item = %(item_code)s
+            AND bin.actual_qty > 0
+        ORDER BY b.batch_id
+    """, {"item_code": item_code, "staging_wh": staging_wh}, as_dict=True)
+
+    # Fallback: query Bin directly (handles items without batch tracking)
+    if not rows:
+        bin_qty = frappe.db.get_value(
+            "Bin",
+            {"warehouse": staging_wh, "item_code": item_code},
+            "actual_qty",
+        ) or 0
+        if float(bin_qty) > 0:
+            return [{"batch_no": None, "qty": float(bin_qty), "uom": uom}]
+        return []
+
+    return [{"batch_no": r.batch_no, "qty": float(r.qty or 0), "uom": uom} for r in rows]
+
+
+@frappe.whitelist()
+def get_batch_available_qty(work_order: str, item_code: str, batch_no: str):
+    """
+    Return available quantity for a given item/batch in the Staging Warehouse for
+    the work order's line.
+
+    Returns {"qty": float, "uom": str, "warehouse": str}.
+    """
+    line = _line_for_work_order(work_order)
+    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
+    if not staging_wh:
+        return {"qty": 0.0, "uom": "Nos", "warehouse": ""}
+
+    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+
+    if batch_no:
+        # Use Stock Ledger Entry aggregate to get batch-level qty in the warehouse
+        result = frappe.db.sql("""
+            SELECT SUM(actual_qty) AS qty
+            FROM `tabStock Ledger Entry`
+            WHERE warehouse = %(warehouse)s
+              AND item_code = %(item_code)s
+              AND batch_no = %(batch_no)s
+              AND docstatus = 1
+        """, {"warehouse": staging_wh, "item_code": item_code, "batch_no": batch_no}, as_dict=True)
+        qty = float((result[0].qty if result else None) or 0)
+    else:
+        qty = float(
+            frappe.db.get_value(
+                "Bin",
+                {"warehouse": staging_wh, "item_code": item_code},
+                "actual_qty",
+            ) or 0
+        )
+
+    return {"qty": qty, "uom": uom, "warehouse": staging_wh}
+
+
+@frappe.whitelist()
+def manual_load_materials(work_order: str, items: str):
+    """
+    Manually consume materials from WIP warehouse into a Work Order without barcode scanning.
+
+    items: JSON list of {"item_code": str, "batch_no": str|null, "qty": float}
+
+    Creates a single "Material Consumption for Manufacture" Stock Entry with one row per item.
+    Returns {"ok": True, "msg": str, "stock_entry": str}.
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    if not work_order:
+        frappe.throw(_("Missing work_order"))
+
+    try:
+        item_list = json.loads(items) if isinstance(items, str) else items
+    except Exception:
+        item_list = []
+    if not item_list:
+        frappe.throw(_("No items provided"))
+
+    wo = frappe.get_doc("Work Order", work_order)
+    # Consume from WIP warehouse (mirrors scan_material behaviour)
+    s_wh = _default_line_wip(work_order)
+    t_wh = s_wh
+
+    packaging_groups = _packaging_groups_global()
+
+    se = frappe.new_doc("Stock Entry")
+    se.purpose = "Material Consumption for Manufacture"
+    se.stock_entry_type = "Material Consumption for Manufacture"
+    se.company = wo.company
+    se.work_order = work_order
+    se.from_bom = 1
+    se.bom_no = wo.bom_no
+    se.fg_completed_qty = flt(wo.qty) - flt(wo.produced_qty)
+
+    for it in item_list:
+        item_code = (it.get("item_code") or "").strip()
+        qty = float(it.get("qty") or 0)
+        if not item_code or qty <= 0:
+            continue
+
+        # Validate item exists
+        if not frappe.db.exists("Item", item_code):
+            frappe.throw(_("Item {0} does not exist").format(item_code))
+
+        # Check BOM membership or packaging group
+        group = (_get_item_group(item_code) or "").strip().lower()
+        is_packaging = group in packaging_groups
+        if not is_packaging:
+            ok, msg = _validate_item_in_bom(work_order, item_code)
+            if not ok:
+                frappe.throw(msg)
+
+        # Check over-consumption threshold (non-packaging only)
+        if not is_packaging:
+            bom = frappe.db.get_value("Work Order", work_order, "bom_no")
+            wo_qty = float(frappe.db.get_value("Work Order", work_order, "qty") or 0)
+            bom_item_qty = frappe.db.sql("""
+                SELECT COALESCE(qty_consumed_per_unit, qty, 0) AS qty_per_unit
+                FROM `tabBOM Item`
+                WHERE parent = %s AND item_code = %s
+                LIMIT 1
+            """, (bom, item_code), as_dict=True)
+            if bom_item_qty:
+                bom_required = float(bom_item_qty[0].qty_per_unit) * wo_qty
+                already_consumed = frappe.db.sql("""
+                    SELECT COALESCE(SUM(sed.qty), 0) AS total
+                    FROM `tabStock Entry` se
+                    JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+                    WHERE se.docstatus = 1
+                      AND se.work_order = %s
+                      AND se.purpose = 'Material Consumption for Manufacture'
+                      AND sed.item_code = %s
+                      AND sed.is_finished_item = 0
+                """, (work_order, item_code))[0][0] or 0
+                total_after = float(already_consumed) + qty
+                fs = _fs()
+                threshold_pct = float(getattr(fs, "material_overconsumption_threshold", 150))
+                threshold_qty = bom_required * (threshold_pct / 100.0)
+                if total_after > threshold_qty:
+                    frappe.throw(
+                        _("Excessive quantity for {0}: {1:.2f} total (BOM requires {2:.2f}, threshold {3:.0f}%)").format(
+                            item_code, total_after, bom_required, threshold_pct
+                        )
+                    )
+
+        uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+        batch_no = (it.get("batch_no") or "").strip() or None
+
+        item_dict = {
+            "item_code": item_code,
+            "qty": qty,
+            "uom": uom,
+            "s_warehouse": s_wh,
+            "t_warehouse": t_wh if t_wh else None,
+        }
+        if batch_no:
+            item_dict["batch_no"] = batch_no
+            item_dict["use_serial_batch_fields"] = 1
+
+        se.append("items", item_dict)
+
+    if not se.items:
+        frappe.throw(_("No valid items to consume"))
+
+    se.flags.ignore_permissions = True
+    se.insert()
+    se.submit()
+
+    count = len(se.items)
+    return {"ok": True, "msg": _("Consumed {0} item(s)").format(count), "stock_entry": se.name}
+
+
+@frappe.whitelist()
 def return_materials(job_card: Optional[str] = None, work_order: Optional[str] = None, lines: Optional[str] = None):
     """
     Return leftover materials from line WIP back to staging/central.

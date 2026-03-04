@@ -67,6 +67,16 @@ From the toolbar:
 - Scan raw/semi-finished/packaging barcodes to log consumption.
 - The scan history panel shows recent scan results and updates the materials snapshot.
 
+### 4a. Manual Load materials
+- Click **Manual Load** to open the Manual Load Materials dialog (for operators without barcode scanners).
+- Select an **Item Code** from the dropdown. The item description auto-populates.
+- Select a **Batch No** filtered to batches available in the Staging Warehouse for the current line.
+- **Available Qty** automatically shows the quantity available in the Staging Warehouse for the selected batch.
+- Enter the **Qty** to consume (must not exceed Available Qty).
+- Click **Add** to add the item to the list. Repeat for additional items.
+- Click **Post Consumption** to create a Material Consumption for Manufacture Stock Entry for all added items.
+- The Materials snapshot refreshes automatically on success.
+
 ### 5. Request more material
 - **Request More Material** opens a form to request extra items (with reason).
 - Submitting this generates a material request for the Storekeeper.
