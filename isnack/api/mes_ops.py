@@ -2957,6 +2957,8 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Transfer"
     se.custom_factory_line = line
+    se.custom_is_end_shift_return = 1
+    se.remarks = "End Shift Return — WIP return for line {}".format(line)
     
     for it in items_list:
         item_code = (it.get("item_code") or "").strip()
