@@ -3042,6 +3042,7 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
 
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Transfer"
+    se.set_stock_entry_type()
     se.work_order = work_order
 
     for it in items:
@@ -3170,6 +3171,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     # Create Stock Entry for Material Transfer
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Transfer"
+    se.set_stock_entry_type()
     se.custom_factory_line = line
     se.custom_is_end_shift_return = 1
     se.remarks = "End Shift Return — WIP return for line {}".format(line)
