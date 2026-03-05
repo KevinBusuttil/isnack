@@ -1080,11 +1080,21 @@ function init_operator_hub($root) {
         primary_action: async () => {
           const itemsToReturn = [];
           const $tbody = d.$wrapper.find('#wip-items-tbody');
+          let validationError = null;
           
           $tbody.find('tr').each((idx, tr) => {
             const $tr = $(tr);
-            const returnQty = parseFloat($tr.find('.return-qty-input').val()) || 0;
+            const $input = $tr.find('.return-qty-input');
+            const returnQty = parseFloat($input.val()) || 0;
+            const availQty = parseFloat($input.data('avail')) || 0;
             if (returnQty > 0) {
+              if (returnQty > availQty) {
+                const itemCode = $tr.data('item-code');
+                const batchNo = $tr.data('batch-no');
+                const batchInfo = batchNo ? ` (batch: ${batchNo})` : '';
+                validationError = __('Return qty {0} exceeds available qty {1} for item {2}{3}', [returnQty, availQty, itemCode, batchInfo]);
+                return false; // break .each()
+              }
               const itemCode = $tr.data('item-code');
               const batchNo = $tr.data('batch-no') || null;
               itemsToReturn.push({
@@ -1094,6 +1104,11 @@ function init_operator_hub($root) {
               });
             }
           });
+
+          if (validationError) {
+            frappe.msgprint({ message: validationError, indicator: 'red' });
+            return;
+          }
           
           if (!itemsToReturn.length) {
             frappe.msgprint('No items to return (all quantities are 0)');
@@ -1147,7 +1162,7 @@ function init_operator_hub($root) {
             <td>${frappe.utils.escape_html(item.item_name || '')}</td>
             <td class="col-avail-qty">${item.qty}</td>
             <td style="white-space:nowrap;">
-              <input type="number" class="form-control form-control-sm return-qty-input" value="${item.qty}" min="0" max="${item.qty}" step="0.01">
+              <input type="number" class="form-control form-control-sm return-qty-input" value="0" min="0" max="${item.qty}" step="0.01" data-avail="${item.qty}">
               <button type="button" class="wip-row-clear-btn" title="Clear">✕</button>
             </td>
             <td>${batchBadge}</td>
