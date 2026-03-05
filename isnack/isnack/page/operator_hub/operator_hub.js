@@ -805,7 +805,7 @@ function init_operator_hub($root) {
     const d = new frappe.ui.Dialog({
       title: 'Manual Load Materials',
       fields: [
-        { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 1,
+        { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 0,
           get_query: () => ({
             query: 'isnack.api.mes_ops.get_staging_items_for_wo',
             filters: { work_order: state.current_wo }
@@ -814,7 +814,7 @@ function init_operator_hub($root) {
         { label: 'Description', fieldname: 'item_desc', fieldtype: 'Small Text', read_only: 1 },
         { label: 'Batch No', fieldname: 'batch_no', fieldtype: 'Link', options: 'Batch', reqd: 0 },
         { label: 'Available Qty', fieldname: 'available_qty', fieldtype: 'Float', read_only: 1 },
-        { label: 'Qty', fieldname: 'qty', fieldtype: 'Float', reqd: 1 },
+        { label: 'Qty', fieldname: 'qty', fieldtype: 'Float', reqd: 0 },
         { fieldname: 'list', fieldtype: 'HTML', options: listHTML },
       ],
       primary_action_label: 'Post Consumption',
@@ -877,12 +877,17 @@ function init_operator_hub($root) {
 
     function redraw() {
       const $box = d.$wrapper.find('#manual-load-list'); $box.empty();
-      if (!lines.length) { $box.append(`<div class="list-group-item text-muted">Nothing added yet.</div>`); return; }
+      if (!lines.length) {
+        $box.append(`<div class="list-group-item text-muted">Nothing added yet.</div>`);
+        d.$wrapper.removeClass('has-items');
+        return;
+      }
+      d.$wrapper.addClass('has-items');
       lines.forEach((r, idx) => {
         $box.append(`
-          <div class="list-group-item d-flex justify-content-between align-items-center">
+          <div class="list-group-item d-flex justify-content-between align-items-center${r.batch_no ? ' has-batch' : ''}">
             <span><b>${frappe.utils.escape_html(r.item_code)}</b>${r.batch_no ? `<span class="text-muted"> — Batch ${frappe.utils.escape_html(r.batch_no)}</span>` : ''}</span>
-            <span><span class="me-3">${r.qty}</span><button type="button" class="btn btn-sm btn-outline-danger" data-del="${idx}">Remove</button></span>
+            <span><span class="me-3">${r.qty}</span><button type="button" class="btn btn-sm btn-outline-danger ml-remove" data-del="${idx}">Remove</button></span>
           </div>`);
       });
       $box.find('[data-del]').on('click', (e) => { const i = +e.currentTarget.getAttribute('data-del'); lines.splice(i,1); redraw(); });
@@ -901,11 +906,13 @@ function init_operator_hub($root) {
       redraw();
     }
 
-    const $add = $(`<button class="btn btn-sm btn-primary">Add</button>`);
+    const $add = $(`<button class="btn btn-sm btn-primary ml-add-btn">Add</button>`);
     d.$wrapper.find('.modal-body .form-column:first').append($('<div class="mt-2"></div>').append($add));
     $add.on('click', addLine);
 
-    d.show(); redraw();
+    d.show();
+    d.$wrapper.addClass('manual-load-dialog');
+    redraw();
   });
 
   $('#btn-request',$root).on('click', () => {

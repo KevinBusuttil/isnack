@@ -543,3 +543,98 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
 .op-teal .badge.bg-dark {
   color: #fff !important;
 }
+
+/* =====================================
+   Manual Load Dialog Styles
+   ===================================== */
+
+/* Teal accent stripe at top of dialog header */
+.manual-load-dialog .modal-header{
+  border-top: 3px solid #15b79e;
+  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
+}
+
+/* Instruction text — slightly more prominent */
+.manual-load-dialog .modal-body .text-muted:first-child{
+  color: #3b6b66 !important;
+  font-style: italic;
+}
+
+/* Item Code field — subtle blue tint ("start here") */
+.manual-load-dialog [data-fieldname="item_code"] .form-control,
+.manual-load-dialog [data-fieldname="item_code"] .link-btn{
+  background: #e8f1ff !important;
+  border-color: #93c5fd !important;
+}
+
+/* Qty field — amber highlight (operator's key input) */
+.manual-load-dialog [data-fieldname="qty"] .form-control{
+  background: #fff3d6 !important;
+  border-color: #fbbf24 !important;
+}
+
+/* Available Qty field — green when > 0, muted red when 0 */
+.manual-load-dialog [data-fieldname="available_qty"] .form-control{
+  background: #f0fdf4 !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+}
+.manual-load-dialog [data-fieldname="available_qty"] .form-control[value="0"],
+.manual-load-dialog [data-fieldname="available_qty"] .form-control:not([value]){
+  background: #fff5f5 !important;
+  border-color: #fca5a5 !important;
+  color: #9f1239 !important;
+}
+
+/* Add button — teal accent matching theme */
+.manual-load-dialog .ml-add-btn{
+  background: #15b79e !important;
+  border-color: #109487 !important;
+  color: #053b37 !important;
+  font-weight: 600;
+}
+.manual-load-dialog .ml-add-btn:hover{
+  background: #109487 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(21,183,158,.3);
+}
+
+/* Added items list — left-border accent */
+.manual-load-dialog #manual-load-list .list-group-item{
+  border-left: 4px solid #3b82f6; /* blue for items without batch */
+  border-radius: 8px;
+  margin-bottom: 4px;
+  background: #f7f9fb;
+}
+.manual-load-dialog #manual-load-list .list-group-item.has-batch{
+  border-left-color: #15b79e; /* teal for items with batch */
+}
+
+/* Remove button — red-soft palette */
+.manual-load-dialog .ml-remove{
+  background: #fff5f5 !important;
+  border-color: #fca5a5 !important;
+  color: #7f1d1d !important;
+  font-size: .8rem;
+}
+.manual-load-dialog .ml-remove:hover{
+  background: #fee2e2 !important;
+}
+
+/* Post Consumption button — subtle pulse when items are present */
+.manual-load-dialog.has-items .btn-primary[data-fieldname="primary_action"],
+.manual-load-dialog.has-items .modal-footer .btn-primary{
+  animation: ml-glow 2s ease-in-out infinite;
+}
+@keyframes ml-glow{
+  0%,100%{ box-shadow: 0 0 0 0 rgba(21,183,158,.0); }
+  50%{ box-shadow: 0 0 0 5px rgba(21,183,158,.35); }
+}
+
+/* Suppress animation for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .manual-load-dialog.has-items .btn-primary[data-fieldname="primary_action"],
+  .manual-load-dialog.has-items .modal-footer .btn-primary{
+    animation: none;
+  }
+}
