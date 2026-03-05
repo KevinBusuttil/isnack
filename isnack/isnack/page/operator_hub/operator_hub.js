@@ -805,7 +805,12 @@ function init_operator_hub($root) {
     const d = new frappe.ui.Dialog({
       title: 'Manual Load Materials',
       fields: [
-        { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 1 },
+        { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 1,
+          get_query: () => ({
+            query: 'isnack.api.mes_ops.get_staging_items_for_wo',
+            filters: { work_order: state.current_wo }
+          })
+        },
         { label: 'Description', fieldname: 'item_desc', fieldtype: 'Small Text', read_only: 1 },
         { label: 'Batch No', fieldname: 'batch_no', fieldtype: 'Link', options: 'Batch', reqd: 0 },
         { label: 'Available Qty', fieldname: 'available_qty', fieldtype: 'Float', read_only: 1 },
