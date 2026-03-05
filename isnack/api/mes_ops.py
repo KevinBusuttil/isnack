@@ -3103,30 +3103,18 @@ def get_wip_inventory(line: Optional[str] = None):
         has_batch = frappe.db.get_value("Item", b.item_code, "has_batch_no")
         
         if has_batch:
-            # ERPNext 15: Get batch details via Serial and Batch Bundle
-            # Join Stock Ledger Entry -> Serial and Batch Bundle -> Serial and Batch Entry
-            batches = frappe.db.sql("""
-                SELECT 
-                    sbe.batch_no,
-                    SUM(sbe.qty) as qty
-                FROM `tabStock Ledger Entry` sle
-                INNER JOIN `tabSerial and Batch Entry` sbe 
-                    ON sle.serial_and_batch_bundle = sbe.parent
-                WHERE sle.warehouse = %(wip_wh)s
-                    AND sle.item_code = %(item_code)s
-                    AND sle.is_cancelled = 0
-                    AND sbe.batch_no IS NOT NULL
-                    AND sbe.batch_no != ''
-                GROUP BY sbe.batch_no
-                HAVING SUM(sbe.qty) > 0
-            """, {"wip_wh": wip_wh, "item_code": b.item_code}, as_dict=True)
-            
-            for batch in batches:
+            from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
+            # Use the authoritative ERPNext API to compute net batch quantities
+            batches = erpnext_get_batch_qty(item_code=b.item_code, warehouse=wip_wh)
+            for batch in (batches or []):
+                batch_qty = flt(batch.get("qty"))
+                if batch_qty <= 0:
+                    continue
                 result.append({
                     "item_code": b.item_code,
                     "item_name": item_name,
-                    "qty": batch.qty,
-                    "batch_no": batch.batch_no,
+                    "qty": batch_qty,
+                    "batch_no": batch.get("batch_no"),
                     "uom": uom
                 })
         else:
@@ -3192,6 +3180,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
         
         if it.get("batch_no"):
             row["batch_no"] = it["batch_no"]
+            row["use_serial_batch_fields"] = 1
         
         se.append("items", row)
     
