@@ -506,6 +506,42 @@ def _default_sfg_source(work_order: str) -> Optional[str]:
         pass
     return frappe.db.get_single_value("Stock Settings", "default_warehouse")
 
+@frappe.whitelist()
+def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters):
+    """Return items from the WO's BOM that have stock in the staging warehouse."""
+    if isinstance(filters, str):
+        filters = json.loads(filters)
+    work_order = filters.get("work_order") if isinstance(filters, dict) else None
+    if not work_order:
+        return []
+
+    line = _line_for_work_order(work_order)
+    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
+    if not staging_wh:
+        return []
+
+    bom_no = frappe.db.get_value("Work Order", work_order, "bom_no")
+    if not bom_no:
+        return []
+
+    return frappe.db.sql("""
+        SELECT DISTINCT bi.item_code, bi.item_name
+        FROM `tabBOM Item` bi
+        JOIN `tabBin` bin ON bin.item_code = bi.item_code
+            AND bin.warehouse = %(staging_wh)s
+            AND bin.actual_qty > 0
+        WHERE bi.parent = %(bom_no)s
+            AND (bi.item_code LIKE %(txt)s OR bi.item_name LIKE %(txt)s)
+        ORDER BY bi.item_code
+        LIMIT %(page_len)s OFFSET %(start)s
+    """, {
+        "staging_wh": staging_wh,
+        "bom_no": bom_no,
+        "txt": "%{}%".format(txt),
+        "start": int(start),
+        "page_len": int(page_len),
+    })
+
 def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     bom = frappe.db.get_value("Work Order", work_order, "bom_no")
     if not bom:
