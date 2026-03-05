@@ -1072,7 +1072,7 @@ function init_operator_hub($root) {
       
       const d = new frappe.ui.Dialog({
         title: `End Shift Return — ${line}`,
-        size: 'large',
+        size: 'extra-large',
         fields: [
           { fieldname: 'wip_table', fieldtype: 'HTML', options: tableHTML }
         ],
