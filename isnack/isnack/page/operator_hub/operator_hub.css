@@ -501,6 +501,194 @@
   width: calc(100% - 2rem);
 }
 
+/* Teal gradient accent on dialog header */
+.end-shift-return-dialog .modal-header{
+  border-top: 3px solid #15b79e;
+  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
+}
+
+/* Colour-coded table header — subtle teal-tinted background */
+.end-shift-return-dialog .wip-return-table thead tr{
+  background: #e7fbf7;
+  color: #0f766e;
+}
+.end-shift-return-dialog .wip-return-table thead th{
+  border-bottom: 2px solid #b8f1e6;
+  font-weight: 700;
+  font-size: .82rem;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  padding: .5rem .6rem;
+  white-space: nowrap;
+}
+
+/* Checkbox column — narrow */
+.end-shift-return-dialog .wip-return-table .col-check{
+  width: 40px;
+  text-align: center;
+}
+
+/* Item Code column — slightly bolder with teal tint */
+.end-shift-return-dialog .wip-return-table .col-item-code{
+  color: #0f766e;
+  font-weight: 600;
+}
+
+/* Available Qty column — green to indicate stock on hand */
+.end-shift-return-dialog .wip-return-table .col-avail-qty{
+  background: #f0fdf4;
+  color: #166534;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* Return Qty input — amber/gold to draw attention */
+.end-shift-return-dialog .wip-return-table .return-qty-input{
+  background: #fff3d6 !important;
+  border-color: #fbbf24 !important;
+  width: 90px;
+  min-width: 70px;
+}
+.end-shift-return-dialog .wip-return-table .return-qty-input:focus{
+  box-shadow: 0 0 0 3px rgba(251,191,36,.25) !important;
+  border-color: #f59e0b !important;
+}
+
+/* Per-row clear button */
+.end-shift-return-dialog .wip-row-clear-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #fca5a5;
+  background: #fff5f5;
+  color: #7f1d1d;
+  font-size: .75rem;
+  line-height: 1;
+  cursor: pointer;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity .15s ease, background .12s ease;
+  vertical-align: middle;
+  padding: 0;
+}
+.end-shift-return-dialog .wip-return-table tr:hover .wip-row-clear-btn,
+.end-shift-return-dialog .wip-return-table tr.has-nonzero-qty .wip-row-clear-btn{
+  opacity: 1;
+}
+.end-shift-return-dialog .wip-row-clear-btn:hover{
+  background: #fee2e2 !important;
+  opacity: 1;
+}
+
+/* Batch pill badges */
+.end-shift-return-dialog .batch-badge{
+  display: inline-block;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.end-shift-return-dialog .batch-badge-teal{
+  background: #e7fbf7;
+  border: 1px solid #b8f1e6;
+  color: #0f766e;
+}
+.end-shift-return-dialog .batch-badge-muted{
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+
+/* Row hover — subtle left-border teal accent + slight lift */
+.end-shift-return-dialog .wip-return-table tbody tr{
+  transition: background .1s ease, box-shadow .1s ease;
+  border-left: 3px solid transparent;
+}
+.end-shift-return-dialog .wip-return-table tbody tr:hover{
+  background: #f0fdf9 !important;
+  border-left-color: #15b79e;
+}
+
+/* Alternating row backgrounds (zebra) */
+.end-shift-return-dialog .wip-return-table tbody tr:nth-child(even){
+  background: #f7f9fb;
+}
+.end-shift-return-dialog .wip-return-table tbody tr:nth-child(odd){
+  background: #ffffff;
+}
+
+/* Toolbar above the table */
+.end-shift-return-dialog .wip-toolbar{
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+/* "Clear Selected" button — danger-outline style */
+.end-shift-return-dialog .wip-clear-selected-btn{
+  display: none;
+  background: #fff5f5 !important;
+  border-color: #fca5a5 !important;
+  color: #7f1d1d !important;
+  font-size: .82rem;
+  padding: .25rem .65rem;
+  border-radius: 8px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: opacity .2s ease, background .12s ease;
+}
+.end-shift-return-dialog .wip-clear-selected-btn.visible{
+  display: inline-block;
+}
+.end-shift-return-dialog .wip-clear-selected-btn:hover{
+  background: #fee2e2 !important;
+}
+
+/* Post Return button — teal accent */
+.end-shift-return-dialog .modal-footer .btn-primary{
+  background: #15b79e !important;
+  border-color: #109487 !important;
+  color: #053b37 !important;
+  font-weight: 600;
+}
+.end-shift-return-dialog .modal-footer .btn-primary:hover{
+  background: #109487 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(21,183,158,.3);
+}
+
+/* Summary footer */
+.end-shift-return-dialog .wip-summary-footer{
+  margin-top: .5rem;
+  padding: .45rem .75rem;
+  background: #f7f9fb;
+  border: 1px solid #e3e8ee;
+  border-radius: 8px;
+  font-size: .84rem;
+  color: #3b6b66;
+  display: flex;
+  gap: 1.2rem;
+}
+.end-shift-return-dialog .wip-summary-footer .wip-sum-item{
+  font-weight: 600;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce){
+  .end-shift-return-dialog .wip-return-table tbody tr,
+  .end-shift-return-dialog .wip-row-clear-btn,
+  .end-shift-return-dialog .wip-clear-selected-btn,
+  .end-shift-return-dialog .modal-footer .btn-primary{
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
 /* =====================================
    Kiosk mode: hide ERPNext chrome on Operator Hub only
    ===================================== */

@@ -1045,10 +1045,14 @@ function init_operator_hub($root) {
       
       // Build table HTML for WIP items
       const tableHTML = `
+        <div class="wip-toolbar">
+          <button type="button" class="wip-clear-selected-btn">✕ Clear Selected</button>
+        </div>
         <div class="table-responsive" style="max-height:400px; overflow:auto;">
-          <table class="table table-sm table-bordered">
-            <thead style="position:sticky; top:0; background:white; z-index:1;">
+          <table class="table table-sm table-bordered wip-return-table">
+            <thead style="position:sticky; top:0; z-index:1;">
               <tr>
+                <th class="col-check"><input type="checkbox" id="wip-select-all" title="Select all"></th>
                 <th>Item Code</th>
                 <th>Item Name</th>
                 <th>Available Qty</th>
@@ -1059,6 +1063,10 @@ function init_operator_hub($root) {
             </thead>
             <tbody id="wip-items-tbody"></tbody>
           </table>
+        </div>
+        <div class="wip-summary-footer">
+          <span>Items to return: <span class="wip-sum-item" id="wip-sum-count">0</span></span>
+          <span>Total qty: <span class="wip-sum-item" id="wip-sum-total">0</span></span>
         </div>
       `;
       
@@ -1128,18 +1136,91 @@ function init_operator_hub($root) {
       // Populate table with WIP items
       const $tbody = d.$wrapper.find('#wip-items-tbody');
       wipItems.forEach((item) => {
+        const batchVal = item.batch_no || '';
+        const batchBadge = batchVal
+          ? `<span class="batch-badge batch-badge-teal">${frappe.utils.escape_html(batchVal)}</span>`
+          : `<span class="batch-badge batch-badge-muted">—</span>`;
         const row = $(`
-          <tr data-item-code="${frappe.utils.escape_html(item.item_code)}" data-batch-no="${frappe.utils.escape_html(item.batch_no || '')}">
-            <td><strong>${frappe.utils.escape_html(item.item_code)}</strong></td>
+          <tr data-item-code="${frappe.utils.escape_html(item.item_code)}" data-batch-no="${frappe.utils.escape_html(batchVal)}">
+            <td class="col-check"><input type="checkbox" class="wip-row-check"></td>
+            <td class="col-item-code"><strong>${frappe.utils.escape_html(item.item_code)}</strong></td>
             <td>${frappe.utils.escape_html(item.item_name || '')}</td>
-            <td class="text-end">${item.qty}</td>
-            <td><input type="number" class="form-control form-control-sm return-qty-input" value="${item.qty}" min="0" max="${item.qty}" step="0.01" style="width:100px;"></td>
-            <td>${frappe.utils.escape_html(item.batch_no || '—')}</td>
+            <td class="col-avail-qty">${item.qty}</td>
+            <td style="white-space:nowrap;">
+              <input type="number" class="form-control form-control-sm return-qty-input" value="${item.qty}" min="0" max="${item.qty}" step="0.01">
+              <button type="button" class="wip-row-clear-btn" title="Clear">✕</button>
+            </td>
+            <td>${batchBadge}</td>
             <td>${frappe.utils.escape_html(item.uom)}</td>
           </tr>
         `);
         $tbody.append(row);
       });
+
+      // Helper: update summary footer
+      function updateWipSummary() {
+        let count = 0;
+        let total = 0;
+        $tbody.find('.return-qty-input').each((_, inp) => {
+          const v = parseFloat($(inp).val()) || 0;
+          const $row = $(inp).closest('tr');
+          // Toggle class so CSS can show/hide per-row clear button
+          $row.toggleClass('has-nonzero-qty', v > 0);
+          if (v > 0) { count++; total += v; }
+        });
+        d.$wrapper.find('#wip-sum-count').text(count);
+        d.$wrapper.find('#wip-sum-total').text(total.toFixed(2));
+      }
+
+      // Wire up event handlers
+      // Select-all checkbox
+      d.$wrapper.find('#wip-select-all').on('change', function () {
+        const checked = this.checked;
+        $tbody.find('.wip-row-check').prop('checked', checked);
+        const $btn = d.$wrapper.find('.wip-clear-selected-btn');
+        if (checked && $tbody.find('.wip-row-check').length) {
+          $btn.addClass('visible');
+        } else {
+          $btn.removeClass('visible');
+        }
+      });
+
+      // Row check → show/hide Clear Selected button
+      $tbody.on('change', '.wip-row-check', function () {
+        const anyChecked = $tbody.find('.wip-row-check:checked').length > 0;
+        const $btn = d.$wrapper.find('.wip-clear-selected-btn');
+        if (anyChecked) {
+          $btn.addClass('visible');
+        } else {
+          $btn.removeClass('visible');
+          d.$wrapper.find('#wip-select-all').prop('checked', false);
+        }
+      });
+
+      // Clear Selected button
+      d.$wrapper.find('.wip-clear-selected-btn').on('click', function () {
+        $tbody.find('.wip-row-check:checked').each((_, chk) => {
+          $(chk).closest('tr').find('.return-qty-input').val('0');
+          $(chk).prop('checked', false);
+        });
+        d.$wrapper.find('#wip-select-all').prop('checked', false);
+        $(this).removeClass('visible');
+        updateWipSummary();
+      });
+
+      // Per-row clear button
+      $tbody.on('click', '.wip-row-clear-btn', function () {
+        $(this).closest('tr').find('.return-qty-input').val('0');
+        updateWipSummary();
+      });
+
+      // Return qty change → update summary
+      $tbody.on('input change', '.return-qty-input', function () {
+        updateWipSummary();
+      });
+
+      // Initial summary
+      updateWipSummary();
       
       flashStatus('WIP inventory loaded', 'neutral');
       
