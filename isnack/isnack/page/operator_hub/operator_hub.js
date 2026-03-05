@@ -857,7 +857,7 @@ function init_operator_hub($root) {
       };
     };
 
-    // When batch_no changes: fetch available qty from staging
+    // When batch_no changes: fetch available qty from WIP
     d.fields_dict.batch_no.df.onchange = function() {
       const item_code = (d.get_value('item_code') || '').trim();
       const batch_no  = (d.get_value('batch_no')  || '').trim();
@@ -894,7 +894,7 @@ function init_operator_hub($root) {
       const qty       = parseFloat(d.get_value('qty') || 0);
       const avail_qty = parseFloat(d.get_value('available_qty') || 0);
       if (!item_code || qty <= 0) { frappe.msgprint('Item and positive qty required'); return; }
-      if (avail_qty > 0 && qty > avail_qty) { frappe.msgprint(`Qty cannot exceed available qty (${avail_qty})`); return; }
+      if (batch_no && qty > avail_qty) { frappe.msgprint(`Qty cannot exceed available qty (${avail_qty})`); return; }
       lines.push({ item_code, qty, batch_no: batch_no || undefined });
       d.set_value('item_code', ''); d.set_value('item_desc', ''); d.set_value('batch_no', '');
       d.set_value('available_qty', 0); d.set_value('qty', 0);

@@ -2842,77 +2842,63 @@ def parse_scan(code: str):
 @frappe.whitelist()
 def get_staging_batches(work_order: str, item_code: str):
     """
-    Return batches with available stock in the Staging Warehouse for a given item and work order.
+    Return batches with available stock in the WIP Warehouse for a given item and work order.
 
     Returns a list of {"batch_no": str, "qty": float, "uom": str}.
     """
+    from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
+
     line = _line_for_work_order(work_order)
-    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
-    if not staging_wh:
+    _staging_wh, wip_wh, _target, _return_wh = _warehouses_for_line(line)
+    if not wip_wh:
         return []
 
     uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
 
-    rows = frappe.db.sql("""
-        SELECT b.batch_id AS batch_no, bin.actual_qty AS qty
-        FROM `tabBatch` b
-        JOIN `tabBin` bin ON bin.item_code = b.item
-            AND bin.warehouse = %(staging_wh)s
-        WHERE b.item = %(item_code)s
-            AND bin.actual_qty > 0
-        ORDER BY b.batch_id
-    """, {"item_code": item_code, "staging_wh": staging_wh}, as_dict=True)
-
-    # Fallback: query Bin directly (handles items without batch tracking)
-    if not rows:
+    has_batch = frappe.db.get_value("Item", item_code, "has_batch_no")
+    if has_batch:
+        batches = erpnext_get_batch_qty(item_code=item_code, warehouse=wip_wh)
+        return [{"batch_no": b["batch_no"], "qty": flt(b["qty"]), "uom": uom} for b in batches if flt(b["qty"]) > 0]
+    else:
         bin_qty = frappe.db.get_value(
             "Bin",
-            {"warehouse": staging_wh, "item_code": item_code},
+            {"warehouse": wip_wh, "item_code": item_code},
             "actual_qty",
         ) or 0
         if float(bin_qty) > 0:
             return [{"batch_no": None, "qty": float(bin_qty), "uom": uom}]
         return []
 
-    return [{"batch_no": r.batch_no, "qty": float(r.qty or 0), "uom": uom} for r in rows]
-
 
 @frappe.whitelist()
 def get_batch_available_qty(work_order: str, item_code: str, batch_no: str):
     """
-    Return available quantity for a given item/batch in the Staging Warehouse for
+    Return available quantity for a given item/batch in the WIP Warehouse for
     the work order's line.
 
     Returns {"qty": float, "uom": str, "warehouse": str}.
     """
+    from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
+
     line = _line_for_work_order(work_order)
-    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
-    if not staging_wh:
+    _staging_wh, wip_wh, _target, _return_wh = _warehouses_for_line(line)
+    if not wip_wh:
         return {"qty": 0.0, "uom": "Nos", "warehouse": ""}
 
     uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
 
     if batch_no:
-        # Use Stock Ledger Entry aggregate to get batch-level qty in the warehouse
-        result = frappe.db.sql("""
-            SELECT SUM(actual_qty) AS qty
-            FROM `tabStock Ledger Entry`
-            WHERE warehouse = %(warehouse)s
-              AND item_code = %(item_code)s
-              AND batch_no = %(batch_no)s
-              AND docstatus = 1
-        """, {"warehouse": staging_wh, "item_code": item_code, "batch_no": batch_no}, as_dict=True)
-        qty = float((result[0].qty if result else None) or 0)
+        qty = flt(erpnext_get_batch_qty(batch_no=batch_no, warehouse=wip_wh, item_code=item_code))
     else:
         qty = float(
             frappe.db.get_value(
                 "Bin",
-                {"warehouse": staging_wh, "item_code": item_code},
+                {"warehouse": wip_wh, "item_code": item_code},
                 "actual_qty",
             ) or 0
         )
 
-    return {"qty": qty, "uom": uom, "warehouse": staging_wh}
+    return {"qty": qty, "uom": uom, "warehouse": wip_wh}
 
 
 @frappe.whitelist()
