@@ -4,7 +4,7 @@
 **ERPNext Compatibility:** v15  
 **License:** MIT  
 **Developer:** Busuttil Technologies Limited  
-**Contact:** kevin.busuttil@busuttil-technologies.com
+**Contact:** kevin@busuttil-technologies.com
 
 ---
 
