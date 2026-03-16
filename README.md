@@ -165,6 +165,25 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 - `validate()`: Applies exchange rate fix for multi-currency Service Invoice JEs
 - `set_amounts_in_company_currency()`: Prevents overwriting of company currency amounts
 
+#### Payment Reconciliation Override
+
+**Location:** `isnack/overrides/payment_reconciliation.py`
+
+**Purpose:** Extends ERPNext's standard Payment Reconciliation tool with two additional features for USD A/P account reconciliation.
+
+**Features Added:**
+
+1. **Suppress Exchange Gain/Loss** — When the `Suppress Exchange Gain/Loss` checkbox is ticked on the Payment Reconciliation form, all `difference_amount` values on the allocation rows are zeroed out and `difference_account` is cleared before reconciliation. This prevents the automatic creation of an Exchange Gain/Loss journal entry, allowing the user to reconcile supplier USD accounts without posting any exchange difference.
+
+2. **Reconciliation Date Audit Trail** — A `custom_reconciliation_date` field (type: Date) is automatically populated on every `Payment Reconciliation Allocation` row when entries are allocated. This provides a complete date audit trail for all reconciliations, not just those with an exchange difference.
+
+**Key Methods:**
+- `allocate_entries(args)`: Calls standard ERPNext logic first, then auto-sets `custom_reconciliation_date` on every row and, if `suppress_exchange_gain_loss` is checked, zeroes out `difference_amount` and clears `difference_account`.
+
+**Custom Fields (Fixtures):**
+- `Payment Reconciliation.suppress_exchange_gain_loss` — Check field, inserted after `cost_center`
+- `Payment Reconciliation Allocation.custom_reconciliation_date` — Date field (read-only), inserted after `gain_loss_posting_date`, shown in list view
+
 #### GL Currency Monkey Patch
 
 **Location:** `isnack/monkey_patches/gl_currency.py`

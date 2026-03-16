@@ -34,6 +34,7 @@ doctype_js = {
     "Customer": "public/js/customer.js",
     "Journal Entry": "public/js/journal_entry.js",
     "Production Plan": "public/js/production_plan.js",
+    "Payment Reconciliation": "public/js/payment_reconciliation.js",
 }
 doctype_list_js = {
     "Sales Invoice": "public/js/sales_invoice_list.js"
@@ -130,8 +131,9 @@ jinja = {
 # Override standard doctype classes
 
 override_doctype_class = {
-   "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
+    "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
     "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry",
+    "Payment Reconciliation": "isnack.overrides.payment_reconciliation.CustomPaymentReconciliation",
 }
 
 # Document Events
