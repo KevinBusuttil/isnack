@@ -6,6 +6,7 @@
 #      when the user opts to reconcile without exchange gain/loss posting.
 #   2. custom_reconciliation_date: auto-populated on every allocation row for audit trail.
 
+import frappe
 from frappe.utils import nowdate
 
 from erpnext.accounts.doctype.payment_reconciliation.payment_reconciliation import PaymentReconciliation
@@ -23,6 +24,7 @@ class CustomPaymentReconciliation(PaymentReconciliation):
       reconciliations (not just those with an exchange difference).
     """
 
+    @frappe.whitelist()
     def allocate_entries(self, args: dict):
         # Run standard ERPNext allocation logic first
         super().allocate_entries(args)
