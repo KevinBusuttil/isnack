@@ -32,6 +32,7 @@ doctype_js = {
     "Sales Order" : "public/js/sales_order_proforma.js",
     "Purchase Order": "public/js/purchase_order.js",
     "Customer": "public/js/customer.js",
+    "Supplier": "public/js/supplier.js",
     "Journal Entry": "public/js/journal_entry.js",
     "Production Plan": "public/js/production_plan.js",
     "Payment Reconciliation": "public/js/payment_reconciliation.js",
