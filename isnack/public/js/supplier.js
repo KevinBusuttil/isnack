@@ -64,7 +64,11 @@ function render_linked_landed_vouchers(wrapper, supplier, vouchers) {
 
     const rows = vouchers
         .map((voucher) => {
-            const landedVoucherLink = frappe.utils.get_form_link("Landed Cost Voucher", voucher.name);
+            const landedVoucherLink = frappe.utils.get_form_link(
+                "Landed Cost Voucher",
+                voucher.name,
+                true
+            );
             const postingDate = voucher.posting_date
                 ? frappe.datetime.str_to_user(voucher.posting_date)
                 : "";
@@ -73,7 +77,7 @@ function render_linked_landed_vouchers(wrapper, supplier, vouchers) {
             });
 
             const purchaseReceiptLinks = (voucher.supplier_purchase_receipts || [])
-                .map((receipt) => frappe.utils.get_form_link("Purchase Receipt", receipt))
+                .map((receipt) => frappe.utils.get_form_link("Purchase Receipt", receipt, true))
                 .join(", ");
 
             const mixedSupplierHtml = voucher.has_other_suppliers
