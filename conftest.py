@@ -83,8 +83,10 @@ if "erpnext" not in sys.modules:
             pass
 
     _je_stub.JournalEntry = _JournalEntry
-    _je_stub.JournalEntryTaxWithholding = _JETaxWithholding
     _je_stub.get_exchange_rate = MagicMock()
+
+    _twe_stub = MagicMock()
+    _twe_stub.JournalTaxWithholding = _JETaxWithholding
 
     _pe_stub = MagicMock()
 
@@ -118,6 +120,8 @@ if "erpnext" not in sys.modules:
         "erpnext.accounts.doctype.payment_entry.payment_entry": _pe_stub,
         "erpnext.accounts.doctype.journal_entry": MagicMock(),
         "erpnext.accounts.doctype.journal_entry.journal_entry": _je_stub,
+        "erpnext.accounts.doctype.tax_withholding_entry": MagicMock(),
+        "erpnext.accounts.doctype.tax_withholding_entry.tax_withholding_entry": _twe_stub,
         "erpnext.controllers": MagicMock(),
         "erpnext.controllers.accounts_controller": MagicMock(),
     }

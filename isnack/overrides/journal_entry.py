@@ -10,12 +10,14 @@ from frappe.utils import flt
 
 from erpnext.accounts.doctype.journal_entry.journal_entry import (
     JournalEntry,
-    JournalEntryTaxWithholding,
     get_exchange_rate,
+)
+from erpnext.accounts.doctype.tax_withholding_entry.tax_withholding_entry import (
+    JournalTaxWithholding,
 )
 
 
-class _GrossJournalEntryTaxWithholding(JournalEntryTaxWithholding):
+class _GrossJournalEntryTaxWithholding(JournalTaxWithholding):
     """Journal Entry withholding handler that computes the basis on gross (TTC) amounts.
 
     Overrides ``_calculate_net_total`` to include Tax and Chargeable account rows
