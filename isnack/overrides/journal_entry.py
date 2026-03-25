@@ -2,57 +2,24 @@
 # License: MIT
 # This file implements the fix from ERPNext PR #43331 for multi-currency Journal Entries
 # https://github.com/frappe/erpnext/pull/43331
-# Also adds Gross Total withholding basis support for Journal Entry.
 
 import erpnext
 import frappe
 from frappe.utils import flt
 
-from erpnext.accounts.doctype.journal_entry.journal_entry import (
-    JournalEntry,
-    get_exchange_rate,
-)
-from erpnext.accounts.doctype.tax_withholding_entry.tax_withholding_entry import (
-    JournalTaxWithholding,
-)
-
-
-class _GrossJournalEntryTaxWithholding(JournalTaxWithholding):
-    """Journal Entry withholding handler that computes the basis on gross (TTC) amounts.
-
-    Overrides ``_calculate_net_total`` to include Tax and Chargeable account rows
-    that the standard implementation deliberately excludes.
-    """
-
-    def _calculate_net_total(self):
-        from isnack.overrides.tax_withholding import compute_je_gross_total
-
-        return compute_je_gross_total(self)
+from erpnext.accounts.doctype.journal_entry.journal_entry import JournalEntry, get_exchange_rate
 
 
 class CustomJournalEntry(JournalEntry):
     """
-    Custom Journal Entry class that:
-
-    1. Fixes transaction exchange rate handling for multi-currency Journal Entries
-       (ERPNext PR #43331 backport).
-
-    2. Supports ``custom_deduct_tax_on_basis = "Gross Total"`` on Tax Withholding
-       Category for gross/TTC supplier withholding (e.g. Tunisia domestic B2B).
+    Custom Journal Entry class that fixes transaction exchange rate handling
+    for multi-currency Journal Entries.
+    
+    Issue: In standard ERPNext v15, GL entries for all rows in multi-currency 
+    Journal Entries incorrectly use the same exchange rate from the first row.
+    
+    Fix: Use the row-specific exchange rate for each Journal Entry line item.
     """
-
-    def apply_tax_withholding(self):
-        """Dispatch to gross or net withholding handler based on category configuration."""
-        from isnack.overrides.tax_withholding import is_gross_basis_enabled
-
-        if (
-            self.apply_tds
-            and self.tax_withholding_category
-            and is_gross_basis_enabled(self.tax_withholding_category)
-        ):
-            _GrossJournalEntryTaxWithholding(self).apply()
-        else:
-            super().apply_tax_withholding()
 
     def _is_from_service_invoice(self):
         """
