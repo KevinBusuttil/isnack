@@ -137,6 +137,7 @@ jinja = {
 override_doctype_class = {
     "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
     "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry",
+    "Payment Entry": "isnack.overrides.payment_entry.CustomPaymentEntry",
     "Payment Reconciliation": "isnack.overrides.payment_reconciliation.CustomPaymentReconciliation",
 }
 
@@ -260,5 +261,9 @@ doc_events = {
 # }
 fixtures = [
     {"dt": "Client Script"},
-    {"dt": "Property Setter"}
+    {"dt": "Property Setter"},
+    {
+        "dt": "Custom Field",
+        "filters": [["dt", "=", "Tax Withholding Category"]],
+    },
 ]

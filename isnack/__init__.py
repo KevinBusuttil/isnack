@@ -6,4 +6,12 @@ def override_convert_to_presentation_currency():
 
     gl_utils.convert_to_presentation_currency = custom_convert_to_presentation_currency
 
+
+def apply_tax_withholding_override():
+    from isnack.overrides.tax_withholding import apply
+
+    apply()
+
+
 override_convert_to_presentation_currency()
+apply_tax_withholding_override()
