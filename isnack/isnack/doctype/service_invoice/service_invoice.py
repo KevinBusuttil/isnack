@@ -577,8 +577,27 @@ class ServiceInvoice(Document):
             jv.save()
             jv.submit()
 
+            # Copy attachments from Service Invoice to Journal Entry
+            self.copy_attachments_to(jv)
+
             # Link back to the source row
             frappe.db.set_value("Service Invoice Items", inv.get("name"), "journal_entry", jv.name)
+
+    def copy_attachments_to(self, target_doc):
+        """Copy all attachments from this Service Invoice to the target document."""
+        from frappe.desk.form.load import get_attachments
+
+        for attach in get_attachments(self.doctype, self.name):
+            _file = frappe.get_doc({
+                "doctype": "File",
+                "file_url": attach.file_url,
+                "file_name": attach.file_name,
+                "attached_to_name": target_doc.name,
+                "attached_to_doctype": target_doc.doctype,
+                "folder": attach.folder or "Home/Attachments",
+                "is_private": attach.is_private,
+            })
+            _file.save(ignore_permissions=True)
 
     def on_cancel(self):
         for invoice in self.invoices:
