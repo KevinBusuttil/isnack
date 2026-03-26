@@ -56,3 +56,41 @@ def sync_attachment_to_journal_entries(doc, method=None):
             }
         )
         _file.save(ignore_permissions=True)
+
+
+def remove_attachment_from_journal_entries(doc, method=None):
+    """
+    When a File attached to a submitted Service Invoice is deleted/trashed,
+    delete the corresponding copies from all linked Journal Entries.
+
+    Re-entrancy is safe: when this hook deletes a File attached to a Journal Entry,
+    the hook fires again but exits immediately because attached_to_doctype is not
+    "Service Invoice".
+    """
+    if doc.attached_to_doctype != "Service Invoice":
+        return
+
+    docstatus = frappe.db.get_value("Service Invoice", doc.attached_to_name, "docstatus")
+    if docstatus != 1:
+        return
+
+    journal_entries = frappe.get_all(
+        "Service Invoice Items",
+        filters={"parent": doc.attached_to_name},
+        pluck="journal_entry",
+    )
+
+    for je_name in journal_entries:
+        if not je_name:
+            continue
+
+        je_file = frappe.db.exists(
+            "File",
+            {
+                "attached_to_doctype": "Journal Entry",
+                "attached_to_name": je_name,
+                "file_url": doc.file_url,
+            },
+        )
+        if je_file:
+            frappe.delete_doc("File", je_file, ignore_permissions=True)
