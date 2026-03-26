@@ -147,6 +147,7 @@ override_doctype_class = {
 doc_events = {
     "File": {
         "after_insert": "isnack.overrides.file_hooks.sync_attachment_to_journal_entries",
+        "on_trash": "isnack.overrides.file_hooks.remove_attachment_from_journal_entries",
     },
     "Work Order": {
         "before_insert": "isnack.api.mes_ops.apply_line_warehouses_to_work_order",

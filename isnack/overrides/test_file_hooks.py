@@ -5,7 +5,10 @@
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from isnack.overrides.file_hooks import sync_attachment_to_journal_entries
+from isnack.overrides.file_hooks import (
+    remove_attachment_from_journal_entries,
+    sync_attachment_to_journal_entries,
+)
 
 
 class TestSyncAttachmentToJournalEntries(unittest.TestCase):
@@ -156,6 +159,80 @@ class TestSyncAttachmentToJournalEntries(unittest.TestCase):
 
         call_args = mock_frappe.get_doc.call_args_list[0][0][0]
         self.assertEqual(call_args["folder"], "Home/Attachments")
+
+
+class TestRemoveAttachmentFromJournalEntries(unittest.TestCase):
+    """Tests for remove_attachment_from_journal_entries hook."""
+
+    def _make_file_doc(self, attached_to_doctype="Service Invoice", attached_to_name="SINV-001"):
+        doc = MagicMock()
+        doc.attached_to_doctype = attached_to_doctype
+        doc.attached_to_name = attached_to_name
+        doc.file_url = "/files/invoice.pdf"
+        return doc
+
+    # ------------------------------------------------------------------
+    # Early-return guards
+    # ------------------------------------------------------------------
+
+    @patch("isnack.overrides.file_hooks.frappe")
+    def test_non_service_invoice_doctype_is_ignored(self, mock_frappe):
+        """Files attached to other doctypes must not trigger any DB queries."""
+        doc = self._make_file_doc(attached_to_doctype="Journal Entry")
+        remove_attachment_from_journal_entries(doc)
+        mock_frappe.db.get_value.assert_not_called()
+
+    @patch("isnack.overrides.file_hooks.frappe")
+    def test_non_submitted_service_invoice_is_ignored(self, mock_frappe):
+        """Files attached to a non-submitted (docstatus != 1) Service Invoice must be skipped."""
+        mock_frappe.db.get_value.return_value = 0  # draft
+        doc = self._make_file_doc()
+        remove_attachment_from_journal_entries(doc)
+        mock_frappe.get_all.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Happy path
+    # ------------------------------------------------------------------
+
+    @patch("isnack.overrides.file_hooks.frappe")
+    def test_attachment_deleted_from_linked_journal_entries(self, mock_frappe):
+        """Deleting a file on a submitted SI must delete it from each linked Journal Entry."""
+        mock_frappe.db.get_value.return_value = 1  # submitted
+        mock_frappe.get_all.return_value = ["JV-001", "JV-002"]
+        mock_frappe.db.exists.side_effect = ["FILE-001", "FILE-002"]
+
+        doc = self._make_file_doc()
+        remove_attachment_from_journal_entries(doc)
+
+        self.assertEqual(mock_frappe.delete_doc.call_count, 2)
+        mock_frappe.delete_doc.assert_any_call("File", "FILE-001", ignore_permissions=True)
+        mock_frappe.delete_doc.assert_any_call("File", "FILE-002", ignore_permissions=True)
+
+    @patch("isnack.overrides.file_hooks.frappe")
+    def test_empty_journal_entry_values_are_skipped(self, mock_frappe):
+        """Rows with a blank journal_entry value must be skipped gracefully."""
+        mock_frappe.db.get_value.return_value = 1  # submitted
+        mock_frappe.get_all.return_value = [None, "", "JV-001"]
+        mock_frappe.db.exists.return_value = "FILE-001"
+
+        doc = self._make_file_doc()
+        remove_attachment_from_journal_entries(doc)
+
+        # Only the valid JE should trigger a delete
+        self.assertEqual(mock_frappe.delete_doc.call_count, 1)
+        mock_frappe.delete_doc.assert_called_once_with("File", "FILE-001", ignore_permissions=True)
+
+    @patch("isnack.overrides.file_hooks.frappe")
+    def test_no_matching_file_on_journal_entry_is_safe(self, mock_frappe):
+        """If the corresponding file does not exist on a JE, no deletion should occur."""
+        mock_frappe.db.get_value.return_value = 1  # submitted
+        mock_frappe.get_all.return_value = ["JV-001"]
+        mock_frappe.db.exists.return_value = None  # file not present on JE
+
+        doc = self._make_file_doc()
+        remove_attachment_from_journal_entries(doc)
+
+        mock_frappe.delete_doc.assert_not_called()
 
 
 if __name__ == "__main__":
