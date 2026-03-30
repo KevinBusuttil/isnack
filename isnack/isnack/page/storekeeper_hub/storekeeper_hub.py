@@ -1599,7 +1599,31 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None):
     if not item_map:
         frappe.throw(_("No quantities to receive."))
 
-    # 3) Let ERPNext create a standard PR from the PO
+    # 3) Delete any previous draft Purchase Receipts created from Storekeeper Hub for the same PO
+    existing_drafts = frappe.get_all(
+        "Purchase Receipt",
+        filters={
+            "docstatus": 0,
+            "custom_from_storekeeper_hub": 1,
+        },
+        fields=["name"],
+    )
+
+    if existing_drafts:
+        draft_names = [d.name for d in existing_drafts]
+        drafts_for_this_po = frappe.get_all(
+            "Purchase Receipt Item",
+            filters={
+                "parent": ["in", draft_names],
+                "purchase_order": purchase_order,
+            },
+            fields=["parent"],
+            distinct=True,
+        )
+        for draft in drafts_for_this_po:
+            frappe.delete_doc("Purchase Receipt", draft.parent, force=True, ignore_permissions=True)
+
+    # 4) Let ERPNext create a standard PR from the PO
     # This ensures rate, taxes, currency, etc. all match the PO.
     pr = make_purchase_receipt(purchase_order)
 
@@ -1611,7 +1635,7 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None):
             frappe.throw(_("Invalid Date of Receipt: {0}").format(receipt_date))
         pr.set_posting_time = 1
 
-    # 4) Filter & override PR items based on our dialog rows
+    # 5) Filter & override PR items based on our dialog rows
     new_items = []
     for pr_item in pr.items:
         data = item_map.get(pr_item.purchase_order_item)
@@ -1646,7 +1670,8 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None):
     # Replace items child table with our filtered/edited rows
     pr.set("items", new_items)
 
-    # 5) Save (and optionally submit)
+    # 6) Save (and optionally submit)
+    pr.custom_from_storekeeper_hub = 1
     pr.flags.ignore_permissions = True
     pr.save()
     # pr.submit()  # enable if you want automatic submission

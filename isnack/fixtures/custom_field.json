@@ -916,5 +916,17 @@
   "translatable": 0,
   "unique": 0,
   "width": null
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "Purchase Receipt",
+  "fieldname": "custom_from_storekeeper_hub",
+  "fieldtype": "Check",
+  "label": "From Storekeeper Hub",
+  "insert_after": "amended_from",
+  "default": "0",
+  "hidden": 1,
+  "read_only": 1,
+  "description": "Indicates this Purchase Receipt was created via the Storekeeper Hub PO Receipt dialog"
  }
 ]
