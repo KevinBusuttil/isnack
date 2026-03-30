@@ -1661,6 +1661,10 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
         batch_no = (row.get("batch_no") or "").strip()
         expiry_date = row.get("expiry_date")
         if batch_no:
+            if not expiry_date:
+                frappe.throw(_("Row {0}: Expiry Date is required when a Batch No is provided for item {1}.").format(
+                    pr_item.idx, pr_item.item_code
+                ))
             _ensure_batch(pr_item.item_code, batch_no, expiry_date)
             pr_item.batch_no = batch_no
 

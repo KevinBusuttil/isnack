@@ -2236,6 +2236,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       if (row.requires_batch && !row.batch_no) {
         frappe.throw(__('Row {0}: Batch No is required for item {1}.', [row.idx || '', row.item_code]));
       }
+
+      if (row.batch_no && !row.expiry_date) {
+        frappe.throw(__('Row {0}: Expiry Date is required when a Batch No is provided for item {1}.', [row.idx || '', row.item_code]));
+      }
     }
 
     // Validate rejection_warehouse is provided if any item has rejected_qty > 0
