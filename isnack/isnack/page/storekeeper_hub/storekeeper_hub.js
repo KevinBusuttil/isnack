@@ -1796,8 +1796,23 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   let po_receipt_dialog = null;
 
+  function reset_po_receipt_dialog() {
+    if (!po_receipt_dialog) return;
+    const d = po_receipt_dialog;
+    d.set_value('purchase_order', '');
+    d.set_value('company', '');
+    d.set_value('supplier', '');
+    d.set_value('receipt_date', '');
+    const items_field = d.get_field('items');
+    if (items_field && items_field.grid) {
+      items_field.grid.df.data = [];
+      items_field.grid.refresh();
+    }
+  }
+
   function show_po_receipt_dialog() {
     if (po_receipt_dialog) {
+      reset_po_receipt_dialog();
       po_receipt_dialog.show();
       return;
     }
@@ -1857,6 +1872,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           options: 'Supplier',
           onchange: () => {
             const d = po_receipt_dialog;
+            if (d._loading_po) return;
             d.set_value('purchase_order', '');
             d.set_value('items', []);
           },
@@ -1990,12 +2006,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       secondary_action_label: __('Cancel'),
       secondary_action: () => {
         if (po_receipt_dialog) {
-            po_receipt_dialog.hide();
+          reset_po_receipt_dialog();
+          po_receipt_dialog.hide();
         }
-    },
+      },
 
     });
 
+    po_receipt_dialog._loading_po = false;
     po_receipt_dialog.show();
   }
 
@@ -2012,7 +2030,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         if (!r.message) return;
 
         d.set_value('company', r.message.company || '');
+        d._loading_po = true;
         d.set_value('supplier', r.message.supplier || '');
+        d._loading_po = false;
 
         const rows = (r.message.items || []).map((row) => {
           return {
