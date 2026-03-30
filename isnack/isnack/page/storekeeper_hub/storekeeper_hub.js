@@ -1799,6 +1799,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   function reset_po_receipt_dialog() {
     if (!po_receipt_dialog) return;
     const d = po_receipt_dialog;
+    d._suppressing_onchange = true;
     d.set_value('purchase_order', '');
     d.set_value('company', '');
     d.set_value('supplier', '');
@@ -1809,6 +1810,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       items_field.grid.df.data = [];
       items_field.grid.refresh();
     }
+    d._suppressing_onchange = false;
   }
 
   function show_po_receipt_dialog() {
@@ -1829,6 +1831,30 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           label: __('Purchase Order'),
         },
         {
+          fieldname: 'supplier',
+          fieldtype: 'Link',
+          label: __('Supplier'),
+          options: 'Supplier',
+          reqd: 1,
+          onchange: () => {
+            const d = po_receipt_dialog;
+            if (d._suppressing_onchange) return;
+            const po = d.get_value('purchase_order');
+            if (po) {
+              d._suppressing_onchange = true;
+              d.set_value('purchase_order', '');
+              d.set_value('company', '');
+              d.set_value('supplier_name', '');
+              d._suppressing_onchange = false;
+            }
+            const items_field = d.get_field('items');
+            if (items_field && items_field.grid && items_field.grid.df) {
+              items_field.grid.df.data = [];
+              items_field.grid.refresh();
+            }
+          },
+        },
+        {
           fieldname: 'purchase_order',
           fieldtype: 'Link',
           label: __('Purchase Order'),
@@ -1847,32 +1873,18 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           },
           onchange: () => {
             const d = po_receipt_dialog;
+            if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
             if (po) {
               load_po_items_into_dialog(po);
             } else {
+              d.set_value('company', '');
+              d.set_value('supplier_name', '');
               const items_field = d.get_field('items');
               if (items_field && items_field.grid && items_field.grid.df) {
                 items_field.grid.df.data = [];
                 items_field.grid.refresh();
               }
-            }
-          },
-        },
-        {
-          fieldname: 'supplier',
-          fieldtype: 'Link',
-          label: __('Supplier'),
-          options: 'Supplier',
-          onchange: () => {
-            const d = po_receipt_dialog;
-            if (d.get_value('purchase_order')) {
-              d.set_value('purchase_order', '');
-            }
-            const items_field = d.get_field('items');
-            if (items_field && items_field.grid && items_field.grid.df) {
-              items_field.grid.df.data = [];
-              items_field.grid.refresh();
             }
           },
         },
