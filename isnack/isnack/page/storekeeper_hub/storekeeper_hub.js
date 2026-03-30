@@ -1800,11 +1800,13 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (!po_receipt_dialog) return;
     const d = po_receipt_dialog;
     d._loading_po = true;
+    d._clearing_supplier = true;
     d.set_value('purchase_order', '');
     d.set_value('company', '');
     d.set_value('supplier', '');
     d.set_value('receipt_date', '');
     d._loading_po = false;
+    d._clearing_supplier = false;
     const items_field = d.get_field('items');
     if (items_field && items_field.grid) {
       items_field.grid.df.data = [];
@@ -1848,11 +1850,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           },
           onchange: () => {
             const d = po_receipt_dialog;
+            if (d._clearing_supplier) return;
             const po = d.get_value('purchase_order');
             if (po) {
               load_po_items_into_dialog(po);
             } else {
-              d.set_value('items', []);
+              const items_field = d.get_field('items');
+              if (items_field && items_field.grid && items_field.grid.df) {
+                items_field.grid.df.data = [];
+                items_field.grid.refresh();
+              }
             }
           },
         },
@@ -1875,11 +1882,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           onchange: () => {
             const d = po_receipt_dialog;
             if (d._loading_po) return;
-            // Only clear if there is actually a value to clear, to avoid
-            // redundant set_value calls that stack Bootstrap modal layers
+            d._clearing_supplier = true;
             if (d.get_value('purchase_order')) {
               d.set_value('purchase_order', '');
             }
+            d._clearing_supplier = false;
             const items_field = d.get_field('items');
             if (items_field && items_field.grid && items_field.grid.df) {
               items_field.grid.df.data = [];
@@ -2016,8 +2023,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       secondary_action_label: __('Cancel'),
       secondary_action: () => {
         if (po_receipt_dialog) {
-          // Force-close to handle any stacked Bootstrap modal state
-          po_receipt_dialog.$wrapper.modal('hide');
+          po_receipt_dialog.hide();
         }
       },
 
