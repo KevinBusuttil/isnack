@@ -1536,9 +1536,12 @@ def get_po_items(purchase_order: str):
             }
         )
 
+    supplier_name = po.supplier_name or po.supplier
+
     return {
         "company": po.company,
         "supplier": po.supplier,
+        "supplier_name": supplier_name,
         "items": items,
     }
 
