@@ -1797,6 +1797,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   async function reset_po_receipt_dialog() {
     if (!po_receipt_dialog) return;
     const d = po_receipt_dialog;
+    if (d._resetting) return;
+    d._resetting = true;
     d._suppressing_onchange = true;
     await d.set_value('purchase_order', '');
     await d.set_value('company', '');
@@ -1809,6 +1811,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       items_field.grid.refresh();
     }
     d._suppressing_onchange = false;
+    d._last_supplier = undefined;
+    d._last_po = undefined;
+    d._resetting = false;
   }
 
   function show_po_receipt_dialog() {
@@ -1837,8 +1842,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           onchange: async () => {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
+            const supplier = d.get_value('supplier');
+            if (supplier === d._last_supplier) return;
+            d._last_supplier = supplier;
             const po = d.get_value('purchase_order');
-            console.log('Selected Supplier:', d.get_value('supplier'));
+            console.log('Selected Supplier:', supplier);
             if (po) {
               d._suppressing_onchange = true;
               await d.set_value('purchase_order', '');
@@ -1874,6 +1882,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
+            if (po === d._last_po) return;
+            d._last_po = po;
             console.log('Selected PO:', po);
             if (po) {
               load_po_items_into_dialog(po);
@@ -2043,7 +2053,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     });
 
     po_receipt_dialog.$wrapper.on('hide.bs.modal', () => {
-      reset_po_receipt_dialog();
+      if (!po_receipt_dialog._resetting) {
+        reset_po_receipt_dialog();
+      }
     });
     po_receipt_dialog.$wrapper.on('hidden.bs.modal', () => {
       // Remove any stacked backdrops left behind
@@ -2068,8 +2080,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       callback: function (r) {
         if (!r.message) return;
         console.log('PO Items:', r.message);
+        d._suppressing_onchange = true;
         d.set_value('company', r.message.company || '');
         d.set_value('supplier_name', r.message.supplier_name || '');
+        d._suppressing_onchange = false;
 
         const rows = (r.message.items || []).map((row) => {
           return {
