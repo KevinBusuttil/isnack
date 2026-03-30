@@ -1838,6 +1838,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
+            console.log('Selected Supplier:', d.get_value('supplier'));
             if (po) {
               d._suppressing_onchange = true;
               await d.set_value('purchase_order', '');
@@ -1873,6 +1874,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
+            console.log('Selected PO:', po);
             if (po) {
               load_po_items_into_dialog(po);
             } else {
