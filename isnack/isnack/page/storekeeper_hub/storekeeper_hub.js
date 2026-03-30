@@ -1804,7 +1804,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     await d.set_value('company', '');
     await d.set_value('supplier', '');
     await d.set_value('supplier_name', '');
-    await d.set_value('receipt_date', '');
+    await d.set_value('receipt_date', frappe.datetime.get_today());
     const items_field = d.get_field('items');
     if (items_field && items_field.grid) {
       items_field.grid.df.data = [];
@@ -1921,6 +1921,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           fieldname: 'receipt_date',
           fieldtype: 'Date',
           label: __('Date of Receipt'),
+          reqd: 1,
+          default: frappe.datetime.get_today(),
         },
         {
           fieldname: 'items_section',
@@ -2123,6 +2125,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       frappe.msgprint({
         title: __('Missing Data'),
         message: __('Please select a Purchase Order.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
+    const receipt_date = d.get_value('receipt_date');
+    if (!receipt_date) {
+      frappe.msgprint({
+        title: __('Missing Data'),
+        message: __('Please enter the Date of Receipt.'),
         indicator: 'red',
       });
       return;

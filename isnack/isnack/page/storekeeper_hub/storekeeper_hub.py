@@ -1562,9 +1562,12 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None):
             - batch_no
             - expiry_date
             plus some read-only helpers (item_code, etc.)
-        receipt_date: Optional date string to override the posting date on the
+        receipt_date: Required date string for the posting date on the
             Purchase Receipt (e.g. '2025-01-15').
     """
+
+    if not receipt_date:
+        frappe.throw(_("Date of Receipt is mandatory."))
 
     # 1) Normalise items (JS sends JSON string)
     if isinstance(items, str):
