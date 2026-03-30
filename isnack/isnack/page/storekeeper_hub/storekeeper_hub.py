@@ -1473,6 +1473,14 @@ def get_open_purchase_orders(doctype, txt, searchfield, start, page_len, filters
         params["txt"] = f"%{txt}%"
         conditions.append("(po.name like %(txt)s or po.supplier like %(txt)s)")
 
+    if filters and isinstance(filters, (dict, str)):
+        if isinstance(filters, str):
+            filters = json.loads(filters)
+        supplier = filters.get("supplier")
+        if supplier:
+            conditions.append("po.supplier = %(supplier)s")
+            params["supplier"] = supplier
+
     where_clause = " and ".join(conditions)
 
     data = frappe.db.sql(
@@ -1537,7 +1545,7 @@ def get_po_items(purchase_order: str):
 
 
 @frappe.whitelist()
-def post_po_receipt(purchase_order, items=None):
+def post_po_receipt(purchase_order, items=None, receipt_date=None):
     """Create a Purchase Receipt for the given Purchase Order
     using ERPNext's standard PO -> PR mapper, while overriding
     qty / rejected_qty / batch from the dialog.
@@ -1551,6 +1559,8 @@ def post_po_receipt(purchase_order, items=None):
             - batch_no
             - expiry_date
             plus some read-only helpers (item_code, etc.)
+        receipt_date: Optional date string to override the posting date on the
+            Purchase Receipt (e.g. '2025-01-15').
     """
 
     # 1) Normalise items (JS sends JSON string)
@@ -1586,6 +1596,14 @@ def post_po_receipt(purchase_order, items=None):
     # 3) Let ERPNext create a standard PR from the PO
     # This ensures rate, taxes, currency, etc. all match the PO.
     pr = make_purchase_receipt(purchase_order)
+
+    # Override posting date if receipt_date is provided
+    if receipt_date:
+        try:
+            pr.posting_date = getdate(receipt_date)
+        except Exception:
+            frappe.throw(_("Invalid Date of Receipt: {0}").format(receipt_date))
+        pr.set_posting_time = 1
 
     # 4) Filter & override PR items based on our dialog rows
     new_items = []
