@@ -2065,7 +2065,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       freeze_message: __('Loading PO Items...'),
       callback: function (r) {
         if (!r.message) return;
-
+        console.log('PO Items:', r.message);
         d.set_value('company', r.message.company || '');
         d.set_value('supplier_name', r.message.supplier_name || '');
 
