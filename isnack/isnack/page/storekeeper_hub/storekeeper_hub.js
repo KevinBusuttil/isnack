@@ -2040,7 +2040,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           d.set_value('supplier', po_supplier);
         }
         d._loading_po = false;
-        d.set_value('purchase_order', po_name);
 
         const rows = (r.message.items || []).map((row) => {
           return {
