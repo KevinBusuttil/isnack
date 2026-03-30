@@ -1846,7 +1846,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             if (supplier === d._last_supplier) return;
             d._last_supplier = supplier;
             const po = d.get_value('purchase_order');
-            console.log('Selected Supplier:', supplier);
+            //console.log('Selected Supplier:', supplier);
             if (po) {
               d._suppressing_onchange = true;
               await d.set_value('purchase_order', '');
@@ -1884,7 +1884,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             const po = d.get_value('purchase_order');
             if (po === d._last_po) return;
             d._last_po = po;
-            console.log('Selected PO:', po);
+            //console.log('Selected PO:', po);
             if (po) {
               load_po_items_into_dialog(po);
             } else {
