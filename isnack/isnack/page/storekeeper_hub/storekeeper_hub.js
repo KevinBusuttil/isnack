@@ -298,7 +298,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   // Default Source Warehouse from Stock Settings
   frappe.db.get_single_value('Stock Settings', 'default_warehouse').then(val => {
-    console.log('Default Source Warehouse value to', val);
 
     const current = src_wh.get_value();
     if (val && !current) {
@@ -309,7 +308,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       state.src_warehouse = current || val || '';
 
     state.src_warehouse = src_wh.get_value() || '';
-    console.log('Default Source Warehouse set to', state.src_warehouse);
     }
   });
   src_wh.$input && src_wh.$input.on('change', () => {
@@ -1796,15 +1794,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   let po_receipt_dialog = null;
 
-  function reset_po_receipt_dialog() {
+  async function reset_po_receipt_dialog() {
     if (!po_receipt_dialog) return;
     const d = po_receipt_dialog;
     d._suppressing_onchange = true;
-    d.set_value('purchase_order', '');
-    d.set_value('company', '');
-    d.set_value('supplier', '');
-    d.set_value('supplier_name', '');
-    d.set_value('receipt_date', '');
+    await d.set_value('purchase_order', '');
+    await d.set_value('company', '');
+    await d.set_value('supplier', '');
+    await d.set_value('supplier_name', '');
+    await d.set_value('receipt_date', '');
     const items_field = d.get_field('items');
     if (items_field && items_field.grid) {
       items_field.grid.df.data = [];
@@ -1836,15 +1834,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           label: __('Supplier'),
           options: 'Supplier',
           reqd: 1,
-          onchange: () => {
+          onchange: async () => {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
             if (po) {
               d._suppressing_onchange = true;
-              d.set_value('purchase_order', '');
-              d.set_value('company', '');
-              d.set_value('supplier_name', '');
+              await d.set_value('purchase_order', '');
+              await d.set_value('company', '');
+              await d.set_value('supplier_name', '');
               d._suppressing_onchange = false;
             }
             const items_field = d.get_field('items');
@@ -1871,15 +1869,17 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               filters: filters,
             };
           },
-          onchange: () => {
+          onchange: async () => {
             const d = po_receipt_dialog;
             if (d._suppressing_onchange) return;
             const po = d.get_value('purchase_order');
             if (po) {
               load_po_items_into_dialog(po);
             } else {
-              d.set_value('company', '');
-              d.set_value('supplier_name', '');
+              d._suppressing_onchange = true;
+              await d.set_value('company', '');
+              await d.set_value('supplier_name', '');
+              d._suppressing_onchange = false;
               const items_field = d.get_field('items');
               if (items_field && items_field.grid && items_field.grid.df) {
                 items_field.grid.df.data = [];
@@ -2140,8 +2140,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         return doc;
       })
       .filter(row => row && row.item_code);      // ignore any empty/template rows
-
-    console.log('PO Receipt Items (from DOM):', rows);  // optional debug
 
     const items = rows.filter((row) => {
       const accepted = flt(row.accepted_qty || 0);
