@@ -1799,14 +1799,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   function reset_po_receipt_dialog() {
     if (!po_receipt_dialog) return;
     const d = po_receipt_dialog;
-    d._loading_po = true;
-    d._clearing_supplier = true;
     d.set_value('purchase_order', '');
     d.set_value('company', '');
     d.set_value('supplier', '');
+    d.set_value('supplier_name', '');
     d.set_value('receipt_date', '');
-    d._loading_po = false;
-    d._clearing_supplier = false;
     const items_field = d.get_field('items');
     if (items_field && items_field.grid) {
       items_field.grid.df.data = [];
@@ -1850,7 +1847,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           },
           onchange: () => {
             const d = po_receipt_dialog;
-            if (d._clearing_supplier) return;
             const po = d.get_value('purchase_order');
             if (po) {
               load_po_items_into_dialog(po);
@@ -1860,6 +1856,23 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
                 items_field.grid.df.data = [];
                 items_field.grid.refresh();
               }
+            }
+          },
+        },
+        {
+          fieldname: 'supplier',
+          fieldtype: 'Link',
+          label: __('Supplier'),
+          options: 'Supplier',
+          onchange: () => {
+            const d = po_receipt_dialog;
+            if (d.get_value('purchase_order')) {
+              d.set_value('purchase_order', '');
+            }
+            const items_field = d.get_field('items');
+            if (items_field && items_field.grid && items_field.grid.df) {
+              items_field.grid.df.data = [];
+              items_field.grid.refresh();
             }
           },
         },
@@ -1875,24 +1888,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           read_only: 1,
         },
         {
-          fieldname: 'supplier',
-          fieldtype: 'Link',
-          label: __('Supplier'),
-          options: 'Supplier',
-          onchange: () => {
-            const d = po_receipt_dialog;
-            if (d._loading_po) return;
-            d._clearing_supplier = true;
-            if (d.get_value('purchase_order')) {
-              d.set_value('purchase_order', '');
-            }
-            d._clearing_supplier = false;
-            const items_field = d.get_field('items');
-            if (items_field && items_field.grid && items_field.grid.df) {
-              items_field.grid.df.data = [];
-              items_field.grid.refresh();
-            }
-          },
+          fieldname: 'supplier_name',
+          fieldtype: 'Data',
+          label: __('Supplier Name'),
+          read_only: 1,
         },
         {
           fieldname: 'receipt_date',
@@ -2029,7 +2028,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     });
 
-    po_receipt_dialog._loading_po = false;
     po_receipt_dialog.$wrapper.on('hide.bs.modal', () => {
       reset_po_receipt_dialog();
     });
@@ -2057,12 +2055,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         if (!r.message) return;
 
         d.set_value('company', r.message.company || '');
-        d._loading_po = true;
-        const po_supplier = r.message.supplier || '';
-        if (d.get_value('supplier') !== po_supplier) {
-          d.set_value('supplier', po_supplier);
-        }
-        d._loading_po = false;
+        d.set_value('supplier_name', r.message.supplier_name || '');
 
         const rows = (r.message.items || []).map((row) => {
           return {
