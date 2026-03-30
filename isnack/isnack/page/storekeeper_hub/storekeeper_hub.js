@@ -1819,9 +1819,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           options: 'Purchase Order',
           reqd: 1,
           get_query: () => {
+            const filters = {};
+            const supplier = po_receipt_dialog.get_value('supplier');
+            if (supplier) {
+              filters.supplier = supplier;
+            }
             return {
-              // use page-level Python module as query
               query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_open_purchase_orders',
+              filters: filters,
             };
           },
           onchange: () => {
@@ -1850,7 +1855,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           fieldtype: 'Link',
           label: __('Supplier'),
           options: 'Supplier',
-          read_only: 1,
+          onchange: () => {
+            const d = po_receipt_dialog;
+            d.set_value('purchase_order', '');
+            d.set_value('items', []);
+          },
+        },
+        {
+          fieldname: 'receipt_date',
+          fieldtype: 'Date',
+          label: __('Date of Receipt'),
         },
         {
           fieldname: 'items_section',
@@ -2114,6 +2128,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       args: {
         purchase_order: values.purchase_order,
         items: items,
+        receipt_date: d.get_value('receipt_date') || null,
       },
       freeze: true,
       freeze_message: __('Posting Purchase Receipt...'),
