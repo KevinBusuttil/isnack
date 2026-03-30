@@ -713,3 +713,46 @@
 .ppl-grouped-table tbody tr:last-child td {
   border-bottom: none;
 }
+
+/* ---- PO Receipt Dialog — colour-coded sections ---- */
+
+/* Filter section (Supplier + Purchase Order) — cerulean tint */
+.po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-body {
+  background: #e8f4fa;
+  border-left: 4px solid var(--cerulean-500);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 4px;
+}
+
+.po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-head {
+  color: var(--cerulean-700);
+  font-weight: 700;
+}
+
+/* Date of Receipt field — warm amber tint */
+.po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] {
+  background: #fef9c3;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 4px;
+}
+
+.po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] .control-label {
+  color: #92400e;
+  font-weight: 700;
+}
+
+/* Items section (Items to Receive table) — green tint */
+.po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-body {
+  background: #f0fdf4;
+  border-left: 4px solid #22c55e;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-head {
+  color: #166534;
+  font-weight: 700;
+}
