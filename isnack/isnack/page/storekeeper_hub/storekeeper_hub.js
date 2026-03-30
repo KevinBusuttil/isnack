@@ -1875,8 +1875,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           onchange: () => {
             const d = po_receipt_dialog;
             if (d._loading_po) return;
-            d.set_value('purchase_order', '');
-            d.set_value('items', []);
+            // Only clear if there is actually a value to clear, to avoid
+            // redundant set_value calls that stack Bootstrap modal layers
+            if (d.get_value('purchase_order')) {
+              d.set_value('purchase_order', '');
+            }
+            const items_field = d.get_field('items');
+            if (items_field && items_field.grid && items_field.grid.df) {
+              items_field.grid.df.data = [];
+              items_field.grid.refresh();
+            }
           },
         },
         {
@@ -2008,7 +2016,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       secondary_action_label: __('Cancel'),
       secondary_action: () => {
         if (po_receipt_dialog) {
-          po_receipt_dialog.hide();
+          // Force-close to handle any stacked Bootstrap modal state
+          po_receipt_dialog.$wrapper.modal('hide');
         }
       },
 
@@ -2017,6 +2026,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     po_receipt_dialog._loading_po = false;
     po_receipt_dialog.$wrapper.on('hide.bs.modal', () => {
       reset_po_receipt_dialog();
+    });
+    po_receipt_dialog.$wrapper.on('hidden.bs.modal', () => {
+      // Remove any stacked backdrops left behind
+      const $backdrops = $('.modal-backdrop');
+      if ($backdrops.length > 0 && !$('.modal.show').length) {
+        $backdrops.remove();
+        $('body').removeClass('modal-open').css('overflow', '');
+      }
     });
     po_receipt_dialog.show();
   }
