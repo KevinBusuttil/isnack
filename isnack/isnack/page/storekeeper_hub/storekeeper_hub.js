@@ -1801,6 +1801,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     d._resetting = true;
     d._suppressing_onchange = true;
     await d.set_value('purchase_order', '');
+    await d.set_value('rejection_warehouse', '');
     await d.set_value('company', '');
     await d.set_value('supplier', '');
     await d.set_value('supplier_name', '');
@@ -1899,6 +1900,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               }
             }
           },
+        },
+        {
+          fieldname: 'rejection_warehouse',
+          fieldtype: 'Link',
+          label: __('Rejection Warehouse'),
+          options: 'Warehouse',
         },
         {
           fieldname: 'col_break_1',
@@ -2113,6 +2120,31 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         grid.df.data = rows;
         grid.refresh();
 
+        // Wire event delegation so editable field changes are immediately
+        // written back to the underlying row.doc, preventing value loss on
+        // up/down arrow navigation (which re-renders from row.doc).
+        // Remove both 'change' and 'input' handlers with the namespace to
+        // avoid duplicate listeners if load_po_items_into_dialog is called again.
+        const $grid_wrapper = $(grid.wrapper);
+        $grid_wrapper.off('change.po_receipt input.po_receipt');
+        $grid_wrapper.on('change.po_receipt input.po_receipt', 'input[data-fieldname]', function () {
+          const $input = $(this);
+          const fieldname = $input.attr('data-fieldname');
+          if (!['accepted_qty', 'rejected_qty', 'batch_no', 'expiry_date'].includes(fieldname)) return;
+          const $row_el = $input.closest('.grid-row');
+          const row_name = $row_el.attr('data-name');
+          const grid_row = (grid.grid_rows || []).find(r => r.doc && r.doc.name === row_name);
+          if (!grid_row) return;
+          const raw = $input.val();
+          if (fieldname === 'accepted_qty' || fieldname === 'rejected_qty') {
+            grid_row.doc[fieldname] = flt(raw || 0);
+          } else if (fieldname === 'expiry_date') {
+            grid_row.doc[fieldname] = raw || null;
+          } else {
+            grid_row.doc[fieldname] = raw || '';
+          }
+        });
+
       },
     });
   }
@@ -2206,12 +2238,25 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       }
     }
 
+    // Validate rejection_warehouse is provided if any item has rejected_qty > 0
+    const has_rejections = items.some(row => flt(row.rejected_qty || 0) > 0);
+    const rejection_warehouse = d.get_value('rejection_warehouse');
+    if (has_rejections && !rejection_warehouse) {
+      frappe.msgprint({
+        title: __('Missing Data'),
+        message: __('Rejection Warehouse is required when items have a Rejected Quantity.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
     frappe.call({
       method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.post_po_receipt',
       args: {
         purchase_order: values.purchase_order,
         items: items,
         receipt_date: d.get_value('receipt_date') || null,
+        rejection_warehouse: rejection_warehouse || null,
       },
       freeze: true,
       freeze_message: __('Posting Purchase Receipt...'),
