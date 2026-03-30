@@ -264,5 +264,6 @@ doc_events = {
 # }
 fixtures = [
     {"dt": "Client Script"},
+    {"dt": "Custom Field"},
     {"dt": "Property Setter"}
 ]
