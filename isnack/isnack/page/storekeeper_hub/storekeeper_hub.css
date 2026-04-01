@@ -714,13 +714,34 @@
   border-bottom: none;
 }
 
-/* ---- PO Receipt Dialog — colour-coded sections ---- */
+/* ---- PO Receipt Dialog — Professional unified theme ---- */
 
-/* Filter section (Supplier + Purchase Order) — cerulean tint */
+/* Dialog title bar */
+.po-receipt-dialog .modal-header {
+  background: var(--cerulean-600);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+
+.po-receipt-dialog .modal-header .modal-title {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.po-receipt-dialog .modal-header .btn-modal-close {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.po-receipt-dialog .modal-header .btn-modal-close:hover {
+  color: #ffffff;
+}
+
+/* Purchase Order section — subtle slate-blue tint */
 .po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-body {
-  background: #e8f4fa;
+  background: #f0f5fa;
   border-left: 4px solid var(--cerulean-500);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 12px 16px;
   margin-bottom: 4px;
 }
@@ -728,31 +749,65 @@
 .po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-head {
   color: var(--cerulean-700);
   font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-/* Date of Receipt field — warm amber tint */
+/* Date of Receipt field — same slate-blue family, no amber */
 .po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] {
-  background: #fef9c3;
-  border-left: 4px solid #f59e0b;
-  border-radius: 8px;
+  background: #f0f5fa;
+  border-left: 4px solid var(--cerulean-700);
+  border-radius: 6px;
   padding: 8px 12px;
   margin-top: 4px;
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] .control-label {
-  color: #92400e;
+  color: var(--cerulean-700);
   font-weight: 700;
 }
 
-/* Items section (Items to Receive table) — green tint */
+/* Items to Receive section — same slate-blue family, no green */
 .po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-body {
-  background: #f0fdf4;
-  border-left: 4px solid #22c55e;
-  border-radius: 8px;
+  background: #f0f5fa;
+  border-left: 4px solid var(--cerulean-500);
+  border-radius: 6px;
   padding: 12px 16px;
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-head {
-  color: #166534;
+  color: var(--cerulean-700);
   font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Grid header row — cerulean tinted for cohesion */
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-heading-row {
+  background: var(--cerulean-100);
+}
+
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-heading-row .static-area {
+  color: var(--cerulean-700);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* Alternating row tint for readability */
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .rows .grid-row:nth-child(even) {
+  background: #fafcfe;
+}
+
+/* Modal footer — light separator */
+.po-receipt-dialog .modal-footer {
+  border-top: 1px solid var(--border-200);
+}
+
+/* Hide row checkboxes in the PO Receipt items grid */
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-row .row-check,
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-heading-row .row-check,
+.po-receipt-dialog .frappe-control[data-fieldname="items"] .row-index {
+  display: none !important;
 }
