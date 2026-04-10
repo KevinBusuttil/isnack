@@ -3,7 +3,7 @@
 
 import frappe
 from frappe import _
-from frappe.utils import getdate, nowdate
+from frappe.utils import getdate, nowdate, now_datetime
 
 
 def execute(filters=None):
@@ -577,6 +577,76 @@ def _fetch_pr_details(pr_names):
 
 
 # ---------------------------------------------------------------------------
+# Print HTML helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_si_header_details(si_names):
+	"""Bulk-fetch additional Sales Invoice fields not present in the report columns."""
+	if not si_names:
+		return {}
+	placeholders = ", ".join(["%s"] * len(si_names))
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			name,
+			po_no,
+			territory,
+			remarks,
+			customer_address,
+			shipping_address_name,
+			address_display,
+			company_address
+		FROM `tabSales Invoice`
+		WHERE name IN ({placeholders})
+		""",
+		tuple(si_names),
+		as_dict=True,
+	)
+	result = {}
+	for r in rows:
+		# Attempt to get company address display
+		company_addr = ""
+		if r.get("company_address"):
+			try:
+				addr_doc = frappe.get_cached_doc("Address", r.company_address)
+				company_addr = addr_doc.get("address_line1") or ""
+				if addr_doc.get("city"):
+					company_addr += f", {addr_doc.city}"
+				if addr_doc.get("country"):
+					company_addr += f", {addr_doc.country}"
+			except Exception:
+				pass
+		r["company_address_display"] = company_addr
+		result[r.name] = r
+	return result
+
+
+def _build_filter_summary(filters):
+	"""Return a concise human-readable summary of non-empty filters applied."""
+	parts = []
+	label_map = [
+		("sales_invoice", "Sales Invoice"),
+		("customer", "Customer"),
+		("item_code", "FG Item"),
+		("item_group", "Item Group"),
+		("batch_no", "FG Batch"),
+		("work_order", "Work Order"),
+		("raw_material_item", "RM Item"),
+		("purchase_receipt", "Purchase Receipt"),
+		("customs_document_no", "Customs Doc No"),
+	]
+	from_date = filters.get("from_date", "")
+	to_date = filters.get("to_date", "")
+	if from_date or to_date:
+		parts.append(f"Period: {from_date} to {to_date}")
+	for key, label in label_map:
+		val = filters.get(key)
+		if val:
+			parts.append(f"{label}: {val}")
+	return " \u2502 ".join(parts) if parts else "No additional filters applied"
+
+
+# ---------------------------------------------------------------------------
 # Print HTML (whitelisted method)
 # ---------------------------------------------------------------------------
 
@@ -592,143 +662,246 @@ def get_print_html(filters):
 	except frappe.ValidationError as e:
 		frappe.throw(str(e))
 
-	columns = get_columns()
 	data = get_data(filters)
 
-	company = filters.get("company", "")
-	from_date = filters.get("from_date", "")
-	to_date = filters.get("to_date", "")
-	generated = nowdate()
+	company = frappe.utils.escape_html(filters.get("company", ""))
+	print_datetime = frappe.utils.escape_html(str(now_datetime()))
+	try:
+		printed_by = frappe.utils.escape_html(
+			frappe.utils.get_fullname(frappe.session.user) or frappe.session.user
+		)
+	except Exception:
+		printed_by = frappe.utils.escape_html(frappe.session.user or "")
+	filter_summary = frappe.utils.escape_html(_build_filter_summary(filters))
 
-	# Group rows by sales invoice
+	# Group rows by sales invoice, preserving insertion order
 	invoices = {}
 	for row in data:
-		si = row.get("sales_invoice") or "—"
+		si = row.get("sales_invoice") or "\u2014"
 		invoices.setdefault(si, []).append(row)
 
-	period_label = f"{from_date} to {to_date}"
+	# Fetch additional SI header details
+	real_si_names = [k for k in invoices if k != "\u2014"]
+	si_details = _fetch_si_header_details(real_si_names)
+
+	def _v(val):
+		if val is None:
+			return ""
+		return frappe.utils.escape_html(str(val))
+
+	# Two-row column group header
+	table_headers = """<thead>
+<tr class="col-group-header">
+  <th colspan="8" class="col-group-fg">Finished Good</th>
+  <th colspan="4" class="col-group-rm">Raw Material</th>
+  <th colspan="5" class="col-group-pc">Purchase / Customs</th>
+</tr>
+<tr>
+  <th>#</th>
+  <th>FG Item Code</th>
+  <th>FG Item Name</th>
+  <th class="num-col">Sold Qty</th>
+  <th>UOM</th>
+  <th>FG Batch No</th>
+  <th>Work Order</th>
+  <th>Mfg Date</th>
+  <th>RM Item Code</th>
+  <th>RM Item Name</th>
+  <th class="num-col">Consumed Qty</th>
+  <th>RM Batch No</th>
+  <th>Purchase Receipt</th>
+  <th>PR Date</th>
+  <th>Supplier</th>
+  <th>Supplier Name</th>
+  <th>Customs Doc No</th>
+</tr>
+</thead>"""
+
+	css = """
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10px;
+    color: #222;
+    margin: 0;
+    padding: 0;
+  }
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 8px;
+      color: #555;
+    }
+  }
+  .report-header {
+    text-align: center;
+    margin-bottom: 14px;
+    border-bottom: 2px solid #2c5f8a;
+    padding-bottom: 8px;
+  }
+  .report-header h1 {
+    font-size: 17px;
+    font-weight: bold;
+    margin: 0 0 4px 0;
+    color: #1a3d5c;
+  }
+  .report-header .company-name {
+    font-size: 12px;
+    font-weight: bold;
+    margin: 2px 0;
+  }
+  .report-header .meta {
+    font-size: 9px;
+    color: #555;
+    margin: 2px 0;
+  }
+  .filter-summary {
+    font-size: 9px;
+    color: #444;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    padding: 4px 8px;
+    margin-bottom: 14px;
+    border-radius: 2px;
+  }
+  .invoice-block {
+    margin-bottom: 28px;
+    page-break-inside: avoid;
+  }
+  .invoice-header-block {
+    background: #eef3f8;
+    border: 1px solid #b0c4d8;
+    border-left: 4px solid #2c5f8a;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+  }
+  .invoice-header-block .si-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #1a3d5c;
+    margin: 0 0 5px 0;
+  }
+  .invoice-header-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px 16px;
+    font-size: 9px;
+  }
+  .invoice-header-grid .field-pair {
+    display: flex;
+    flex-direction: column;
+  }
+  .invoice-header-grid .field-label {
+    font-weight: bold;
+    color: #555;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .invoice-header-grid .field-value {
+    color: #222;
+  }
+  .invoice-header-remarks {
+    margin-top: 5px;
+    font-size: 9px;
+    color: #555;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9px;
+  }
+  thead {
+    display: table-header-group;
+  }
+  .col-group-header th {
+    text-align: center;
+    font-size: 9px;
+    padding: 3px 4px;
+    border: 1px solid #1e4468;
+  }
+  .col-group-fg {
+    background: #2c5f8a;
+    color: #fff;
+  }
+  .col-group-rm {
+    background: #3a7a4a;
+    color: #fff;
+  }
+  .col-group-pc {
+    background: #7a5a2a;
+    color: #fff;
+  }
+  thead tr:last-child th {
+    background: #3a6b96;
+    color: #fff;
+    padding: 4px 5px;
+    text-align: left;
+    white-space: nowrap;
+    border: 1px solid #2c5070;
+  }
+  thead tr:last-child th.num-col {
+    text-align: right;
+  }
+  td {
+    border: 1px solid #ddd;
+    padding: 3px 5px;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td {
+    background: #f7f9fb;
+  }
+  tr:nth-child(odd) td {
+    background: #ffffff;
+  }
+  td.num-col {
+    text-align: right;
+  }
+  .customs-doc {
+    background: #fffbe6 !important;
+    font-weight: bold;
+    color: #5d3a00;
+  }
+  .fg-group-start td {
+    border-top: 2px solid #2c5f8a;
+  }
+  .footer-end {
+    margin-top: 20px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: bold;
+    color: #555;
+    border-top: 1px solid #ccc;
+    padding-top: 8px;
+  }
+  .footer-note {
+    margin-top: 6px;
+    font-size: 8px;
+    color: #888;
+    text-align: center;
+  }
+  @media print {
+    .invoice-block { page-break-inside: avoid; }
+  }
+"""
 
 	html_parts = [f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
 <title>Customs Export Traceability Report</title>
-<style>
-  body {{
-    font-family: Arial, sans-serif;
-    font-size: 10px;
-    color: #222;
-    margin: 0;
-    padding: 0;
-  }}
-  @page {{
-    size: A4 landscape;
-    margin: 15mm 10mm 15mm 10mm;
-  }}
-  .report-header {{
-    text-align: center;
-    margin-bottom: 12px;
-  }}
-  .report-header h1 {{
-    font-size: 16px;
-    margin: 0 0 4px 0;
-  }}
-  .report-header p {{
-    font-size: 10px;
-    margin: 2px 0;
-    color: #555;
-  }}
-  .invoice-block {{
-    page-break-inside: avoid;
-    margin-bottom: 24px;
-  }}
-  .invoice-header {{
-    background: #f0f0f0;
-    border: 1px solid #ccc;
-    padding: 6px 10px;
-    margin-bottom: 4px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-  }}
-  .invoice-header span {{
-    font-size: 10px;
-  }}
-  .invoice-header strong {{
-    font-size: 11px;
-  }}
-  table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 9px;
-  }}
-  thead {{
-    display: table-header-group;
-  }}
-  th {{
-    background: #2c5f8a;
-    color: #fff;
-    padding: 4px 6px;
-    text-align: left;
-    white-space: nowrap;
-  }}
-  td {{
-    border: 1px solid #ddd;
-    padding: 3px 5px;
-    vertical-align: top;
-  }}
-  tr:nth-child(even) td {{
-    background: #f9f9f9;
-  }}
-  .customs-doc {{
-    background: #fffbe6;
-    font-weight: bold;
-    color: #5d3a00;
-  }}
-  .footer-note {{
-    margin-top: 16px;
-    font-size: 9px;
-    color: #777;
-    border-top: 1px solid #ddd;
-    padding-top: 6px;
-  }}
-  @media print {{
-    .invoice-block {{ page-break-inside: avoid; }}
-  }}
-</style>
+<style>{css}</style>
 </head>
 <body>
 <div class="report-header">
   <h1>Customs Export Traceability Report</h1>
-  <p><strong>{company}</strong></p>
-  <p>Period: {period_label} &nbsp;|&nbsp; Generated: {generated}</p>
+  <p class="company-name">{company}</p>
+  <p class="meta">Printed: {print_datetime} &nbsp;&nbsp;|&nbsp;&nbsp; Printed by: {printed_by}</p>
 </div>
+<div class="filter-summary"><strong>Filters applied:</strong> {filter_summary}</div>
 """]
-
-	table_headers = """<thead><tr>
-	  <th>#</th>
-	  <th>FG Item</th>
-	  <th>FG Item Name</th>
-	  <th>FG Batch</th>
-	  <th>Sales Qty</th>
-	  <th>UOM</th>
-	  <th>Work Order</th>
-	  <th>Mfg Date</th>
-	  <th>RM Item</th>
-	  <th>RM Item Name</th>
-	  <th>RM Batch</th>
-	  <th>Consumed Qty</th>
-	  <th>Purchase Receipt</th>
-	  <th>PR Date</th>
-	  <th>Supplier</th>
-	  <th>Supplier Name</th>
-	  <th>Customs Doc No</th>
-	</tr></thead>"""
-
-	def _v(val):
-		if val is None:
-			return ""
-		return frappe.utils.escape_html(str(val))
 
 	for si_name, rows in invoices.items():
 		first = rows[0]
@@ -736,34 +909,80 @@ def get_print_html(filters):
 		customer = _v(first.get("customer"))
 		customer_name = _v(first.get("customer_name"))
 		currency = _v(first.get("currency"))
+		si_company = _v(first.get("company"))
+
+		# Additional header fields from SI
+		si_extra = si_details.get(si_name, {})
+		po_no = _v(si_extra.get("po_no"))
+		territory = _v(si_extra.get("territory"))
+		remarks = _v(si_extra.get("remarks"))
+		customer_address = _v(si_extra.get("address_display") or si_extra.get("customer_address"))
+		company_address = _v(si_extra.get("company_address_display"))
+
+		# Build header grid fields
+		header_fields = [
+			("Sales Invoice", _v(si_name)),
+			("Posting Date", posting_date),
+			("Company", si_company),
+			("Currency", currency),
+			("Customer", customer),
+			("Customer Name", customer_name),
+		]
+		if po_no:
+			header_fields.append(("PO Reference", po_no))
+		if territory:
+			header_fields.append(("Territory", territory))
+		if company_address:
+			header_fields.append(("Company Address", company_address))
+		if customer_address:
+			header_fields.append(("Customer Address", customer_address))
+
+		grid_cells = "".join(
+			f'<div class="field-pair"><span class="field-label">{lbl}</span>'
+			f'<span class="field-value">{val if val else "&mdash;"}</span></div>'
+			for lbl, val in header_fields
+		)
+
+		remarks_row = (
+			f'<div class="invoice-header-remarks"><strong>Remarks:</strong> {remarks}</div>'
+			if remarks else ""
+		)
 
 		html_parts.append(f"""<div class="invoice-block">
-<div class="invoice-header">
-  <strong>{_v(si_name)}</strong>
-  <span>Date: {posting_date}</span>
-  <span>Customer: {customer} &mdash; {customer_name}</span>
-  <span>Currency: {currency}</span>
+<div class="invoice-header-block">
+  <div class="si-title">{_v(si_name)}</div>
+  <div class="invoice-header-grid">{grid_cells}</div>
+  {remarks_row}
 </div>
 <table>
 {table_headers}
 <tbody>
 """)
+
+		# Track FG grouping for visual separators
+		prev_fg_key = None
 		for row in rows:
+			fg_key = (row.get("si_item_idx"), row.get("fg_item_code"))
+			is_new_fg = fg_key != prev_fg_key
+			prev_fg_key = fg_key
+			row_class = ' class="fg-group-start"' if is_new_fg else ""
+
 			cdn = _v(row.get("customs_document_no"))
-			cdn_cell = f'<td class="customs-doc">{cdn}</td>' if cdn else '<td></td>'
-			html_parts.append(f"""<tr>
+			cdn_cell = f'<td class="customs-doc num-col">{cdn}</td>' if cdn else '<td class="num-col"></td>'
+
+			html_parts.append(f"""<tr{row_class}>
   <td>{_v(row.get("si_item_idx"))}</td>
   <td>{_v(row.get("fg_item_code"))}</td>
   <td>{_v(row.get("fg_item_name"))}</td>
-  <td>{_v(row.get("fg_batch_no"))}</td>
-  <td>{_v(row.get("sales_qty"))}</td>
+  <td class="num-col">{_v(row.get("sales_qty"))}</td>
   <td>{_v(row.get("sales_uom"))}</td>
+  <td>{_v(row.get("fg_batch_no"))}</td>
   <td>{_v(row.get("work_order"))}</td>
   <td>{_v(row.get("manufacturing_date"))}</td>
   <td>{_v(row.get("rm_item_code"))}</td>
   <td>{_v(row.get("rm_item_name"))}</td>
+  <td class="num-col">{_v(row.get("consumed_qty"))}</td>
   <td>{_v(row.get("rm_batch_no"))}</td>
-  <td>{_v(row.get("consumed_qty"))}</td>
   <td>{_v(row.get("purchase_receipt"))}</td>
   <td>{_v(row.get("purchase_receipt_date"))}</td>
   <td>{_v(row.get("supplier"))}</td>
@@ -776,7 +995,8 @@ def get_print_html(filters):
 </div>
 """)
 
-	html_parts.append("""<div class="footer-note">
+	html_parts.append("""<div class="footer-end">&mdash; End of Report &mdash;</div>
+<div class="footer-note">
   Blank fields indicate that traceability could not be established from available ERPNext data.
   Only submitted documents (Sales Invoice, Stock Entry, Purchase Receipt) are included.
   Raw material consumption is based on actual Stock Entry records, not BOM explosion.
