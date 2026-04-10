@@ -1548,7 +1548,7 @@ def get_po_items(purchase_order: str):
 
 
 @frappe.whitelist()
-def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_warehouse=None):
+def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_warehouse=None, customs_document_no=None):
     """Create a Purchase Receipt for the given Purchase Order
     using ERPNext's standard PO -> PR mapper, while overriding
     qty / rejected_qty / batch from the dialog.
@@ -1566,6 +1566,8 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
             Purchase Receipt (e.g. '2025-01-15').
         rejection_warehouse: Optional warehouse name for rejected items.
             When provided, sets pr.rejected_warehouse on the Purchase Receipt.
+        customs_document_no: Optional customs declaration reference number.
+            When provided, sets pr.custom_customs_document_no on the Purchase Receipt.
     """
 
     if not receipt_date:
@@ -1680,6 +1682,8 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
     pr.custom_from_storekeeper_hub = 1
     if rejection_warehouse:
         pr.rejected_warehouse = rejection_warehouse
+    if customs_document_no:
+        pr.custom_customs_document_no = customs_document_no
     pr.flags.ignore_permissions = True
     pr.save()
     # pr.submit()  # enable if you want automatic submission

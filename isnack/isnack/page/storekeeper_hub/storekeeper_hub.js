@@ -1801,6 +1801,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     d._resetting = true;
     d._suppressing_onchange = true;
     await d.set_value('purchase_order', '');
+    await d.set_value('customs_document_no', '');
     await d.set_value('rejection_warehouse', '');
     await d.set_value('company', '');
     await d.set_value('supplier', '');
@@ -1900,6 +1901,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               }
             }
           },
+        },
+        {
+          fieldname: 'customs_document_no',
+          fieldtype: 'Data',
+          label: __('Customs Document No'),
+          description: __('Tunisia customs declaration reference (DDM)'),
         },
         {
           fieldname: 'rejection_warehouse',
@@ -2261,6 +2268,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         items: items,
         receipt_date: d.get_value('receipt_date') || null,
         rejection_warehouse: rejection_warehouse || null,
+        customs_document_no: d.get_value('customs_document_no') || null,
       },
       freeze: true,
       freeze_message: __('Posting Purchase Receipt...'),
