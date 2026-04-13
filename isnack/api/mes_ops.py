@@ -508,7 +508,13 @@ def _default_sfg_source(work_order: str) -> Optional[str]:
 
 @frappe.whitelist()
 def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters):
-    """Return items from the WO's BOM that have stock in the staging warehouse."""
+    """Return items from the WO's BOM that have stock in the WIP warehouse.
+
+    This is used by the Manual Load dialog item picker. Manual Load is intended
+    to be used after the operator clicks Start, which runs transfer_staged_to_wip
+    and moves all materials from the Staging warehouse into the WIP warehouse.
+    We therefore query the WIP warehouse so the picker is populated post-Start.
+    """
     if isinstance(filters, str):
         filters = json.loads(filters)
     work_order = filters.get("work_order") if isinstance(filters, dict) else None
@@ -516,8 +522,8 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         return []
 
     line = _line_for_work_order(work_order)
-    staging_wh, _wip, _target, _return_wh = _warehouses_for_line(line)
-    if not staging_wh:
+    _staging_wh, wip_wh, _target, _return_wh = _warehouses_for_line(line)
+    if not wip_wh:
         return []
 
     bom_no = frappe.db.get_value("Work Order", work_order, "bom_no")
@@ -528,14 +534,14 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         SELECT DISTINCT bi.item_code, bi.item_name
         FROM `tabBOM Item` bi
         JOIN `tabBin` bin ON bin.item_code = bi.item_code
-            AND bin.warehouse = %(staging_wh)s
+            AND bin.warehouse = %(wip_wh)s
             AND bin.actual_qty > 0
         WHERE bi.parent = %(bom_no)s
             AND (bi.item_code LIKE %(txt)s OR bi.item_name LIKE %(txt)s)
         ORDER BY bi.item_code
         LIMIT %(page_len)s OFFSET %(start)s
     """, {
-        "staging_wh": staging_wh,
+        "wip_wh": wip_wh,
         "bom_no": bom_no,
         "txt": "%{}%".format(txt),
         "start": int(start),
