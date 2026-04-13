@@ -1836,12 +1836,14 @@ function init_operator_hub($root) {
       });
 
       packagingItems.forEach((item, idx) => {
+        const batchLabel = item.batch_no ? ` [Batch: ${item.batch_no}]` : '';
+        const availLabel = item.available_qty != null ? ` (Available: ${item.available_qty})` : '';
         fields.push({
-          label: `${item.item_code} — ${item.item_name || ''}`,
+          label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
           fieldname: `pkg_${idx}`,
           fieldtype: 'Float',
           default: 0,
-          description: item.stock_uom ? `UOM: ${item.stock_uom}` : '',
+          description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${availLabel}`,
         });
       });
     }
@@ -1885,7 +1887,7 @@ function init_operator_hub($root) {
           const rawVal = v[key];
           const qty = parseFloat(rawVal || 0);
           if (qty > 0) {
-            packagingUsage.push({ item_code: item.item_code, qty: qty });
+            packagingUsage.push({ item_code: item.item_code, qty: qty, batch_no: item.batch_no || null });
           }
         });
 

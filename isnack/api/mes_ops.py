@@ -2092,11 +2092,20 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
     if not unique_item_codes:
         return {"items": []}
     
+    # Get WIP warehouses for these work orders (used for batch availability lookup)
+    wip_warehouses = set()
+    for wo_name in wo_list:
+        line = _line_for_work_order(wo_name)
+        if line:
+            _, wip_wh, _, _ = _warehouses_for_line(line)
+            if wip_wh:
+                wip_warehouses.add(wip_wh)
+
     # Get item groups for all items in a single query
     item_group_data = frappe.db.get_all(
         "Item",
         filters={"name": ["in", unique_item_codes]},
-        fields=["name", "item_group", "item_name", "stock_uom"]
+        fields=["name", "item_group", "item_name", "stock_uom", "has_batch_no"]
     )
     
     # Filter items that belong to packaging groups
@@ -2106,14 +2115,52 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
         group = ig.strip().lower()
         
         if group in packaging_groups:
-            packaging_items.append({
-                "item_code": item_data["name"],
-                "item_name": item_data.get("item_name") or item_data["name"],
-                "stock_uom": item_data.get("stock_uom") or "Nos"
-            })
+            has_batch = item_data.get("has_batch_no")
+
+            if has_batch and wip_warehouses:
+                from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
+                # Aggregate qty per batch across all WIP warehouses
+                batch_map = {}
+                for wh in wip_warehouses:
+                    batches = erpnext_get_batch_qty(item_code=item_data["name"], warehouse=wh) or []
+                    for b in batches:
+                        bno = b.get("batch_no")
+                        qty = flt(b.get("qty", 0))
+                        if bno and qty > 0:
+                            batch_map[bno] = batch_map.get(bno, 0) + qty
+
+                if batch_map:
+                    for bno in sorted(batch_map):
+                        packaging_items.append({
+                            "item_code": item_data["name"],
+                            "item_name": item_data.get("item_name") or item_data["name"],
+                            "stock_uom": item_data.get("stock_uom") or "Nos",
+                            "has_batch_no": 1,
+                            "batch_no": bno,
+                            "available_qty": batch_map[bno],
+                        })
+                else:
+                    # Batch-tracked item but no batches found in WIP — still expose it
+                    packaging_items.append({
+                        "item_code": item_data["name"],
+                        "item_name": item_data.get("item_name") or item_data["name"],
+                        "stock_uom": item_data.get("stock_uom") or "Nos",
+                        "has_batch_no": 1,
+                        "batch_no": None,
+                        "available_qty": None,
+                    })
+            else:
+                packaging_items.append({
+                    "item_code": item_data["name"],
+                    "item_name": item_data.get("item_name") or item_data["name"],
+                    "stock_uom": item_data.get("stock_uom") or "Nos",
+                    "has_batch_no": 0,
+                    "batch_no": None,
+                    "available_qty": None,
+                })
     
-    # Sort by item_code for consistency
-    packaging_items.sort(key=lambda x: x["item_code"])
+    # Sort by item_code then batch_no for consistency
+    packaging_items.sort(key=lambda x: (x["item_code"], x.get("batch_no") or ""))
     
     return {"items": packaging_items}
 
@@ -2177,10 +2224,10 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
         ended_wos: List of work order dicts with 'name' and 'qty'
         total_good: Total good quantity to split
         total_reject: Total reject quantity to split
-        packaging_items: List of packaging item dicts with 'item_code' and 'qty'
+        packaging_items: List of packaging item dicts with 'item_code', 'qty', and optional 'batch_no'
     
     Returns:
-        dict: {wo_name: {"good": X, "reject": Y, "packaging": {item_code: qty}}}
+        dict: {wo_name: {"good": X, "reject": Y, "packaging": [{"item_code": ..., "qty": ..., "batch_no": ...}]}}
     """
     total_wo_qty = sum(float(wo.get("qty", 0)) for wo in ended_wos)
     
@@ -2194,10 +2241,14 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
         result[wo["name"]] = {
             "good": total_good * proportion,
             "reject": total_reject * proportion,
-            "packaging": {
-                item["item_code"]: float(item.get("qty", 0)) * proportion
+            "packaging": [
+                {
+                    "item_code": item["item_code"],
+                    "qty": float(item.get("qty", 0)) * proportion,
+                    "batch_no": item.get("batch_no"),
+                }
                 for item in packaging_items
-            }
+            ]
         }
     
     return result
@@ -2212,7 +2263,7 @@ def close_production(good_qty: float, reject_qty: float = 0,
         good_qty: Total good quantity produced (to be split)
         reject_qty: Total reject quantity (to be split)
         batch_no: Batch number for finished goods (ISNACK format: 3 letters + dash + 3 digits (e.g., CGB-151))
-        packaging_usage: JSON array of {"item_code": "...", "qty": ...} for packaging materials
+        packaging_usage: JSON array of {"item_code": "...", "qty": ..., "batch_no": "..."} for packaging materials
         lines: JSON array of line names to filter WOs
     
     Process:
@@ -2374,16 +2425,23 @@ def close_production(good_qty: float, reject_qty: float = 0,
             
             # Add packaging materials
             if split["packaging"]:
-                for item_code, qty in split["packaging"].items():
+                for pkg_item in split["packaging"]:
+                    item_code = pkg_item["item_code"]
+                    qty = pkg_item["qty"]
+                    batch_no = pkg_item.get("batch_no")
                     if qty > 0:
                         item_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-                        se.append("items", {
+                        row = {
                             "item_code": item_code,
                             "qty": qty,
                             "uom": item_uom,
                             "s_warehouse": wip_wh,
                             "is_finished_item": 0,
-                        })
+                        }
+                        if batch_no:
+                            row["batch_no"] = batch_no
+                            row["use_serial_batch_fields"] = 1
+                        se.append("items", row)
             
             # Add scrap/rejects if applicable
             if split["reject"] > 0:
