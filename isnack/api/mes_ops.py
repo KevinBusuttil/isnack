@@ -2118,16 +2118,62 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
             has_batch = item_data.get("has_batch_no")
 
             if has_batch and wip_warehouses:
-                from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
-                # Aggregate qty per batch across all WIP warehouses
+                item_code = item_data["name"]
+                wh_list = list(wip_warehouses)
+                wh_placeholders = ", ".join(["%s"] * len(wh_list))
+                wo_placeholders = ", ".join(["%s"] * len(wo_list))
+                params_wo = tuple([item_code] + wh_list + wo_list)
+
+                # Strategy 1: find batches via direct batch_no on SLE linked to these work orders
+                direct_rows = frappe.db.sql(f"""
+                    SELECT DISTINCT sle.batch_no
+                    FROM `tabStock Ledger Entry` sle
+                    JOIN `tabStock Entry` se ON se.name = sle.voucher_no
+                    WHERE sle.item_code = %s
+                      AND sle.warehouse IN ({wh_placeholders})
+                      AND se.work_order IN ({wo_placeholders})
+                      AND se.docstatus = 1
+                      AND sle.batch_no IS NOT NULL AND sle.batch_no != ''
+                """, params_wo, as_dict=True)
+
+                # Strategy 2: find batches via serial_and_batch_bundle (ERPNext v15 bundle approach)
+                bundle_rows = frappe.db.sql(f"""
+                    SELECT DISTINCT sbe.batch_no
+                    FROM `tabStock Ledger Entry` sle
+                    JOIN `tabStock Entry` se ON se.name = sle.voucher_no
+                    JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = sle.serial_and_batch_bundle
+                    WHERE sle.item_code = %s
+                      AND sle.warehouse IN ({wh_placeholders})
+                      AND se.work_order IN ({wo_placeholders})
+                      AND se.docstatus = 1
+                      AND sle.serial_and_batch_bundle IS NOT NULL
+                      AND sle.serial_and_batch_bundle != ''
+                      AND sbe.batch_no IS NOT NULL AND sbe.batch_no != ''
+                """, params_wo, as_dict=True)
+
+                found_batches = list(
+                    {r.batch_no for r in direct_rows} | {r.batch_no for r in bundle_rows}
+                )
+
+                # Compute net qty (sum of actual_qty) per batch across all WIP warehouses.
+                # This reflects current stock level; batches fully consumed will show 0.
                 batch_map = {}
-                for wh in wip_warehouses:
-                    batches = erpnext_get_batch_qty(item_code=item_data["name"], warehouse=wh) or []
-                    for b in batches:
-                        bno = b.get("batch_no")
-                        qty = flt(b.get("qty", 0))
-                        if bno and qty > 0:
-                            batch_map[bno] = batch_map.get(bno, 0) + qty
+                if found_batches:
+                    b_placeholders = ", ".join(["%s"] * len(found_batches))
+                    net_rows = frappe.db.sql(f"""
+                        SELECT batch_no, SUM(actual_qty) AS net_qty
+                        FROM `tabStock Ledger Entry`
+                        WHERE item_code = %s
+                          AND warehouse IN ({wh_placeholders})
+                          AND batch_no IN ({b_placeholders})
+                        GROUP BY batch_no
+                    """, tuple([item_code] + wh_list + found_batches), as_dict=True)
+                    for row in net_rows:
+                        if row.batch_no:
+                            batch_map[row.batch_no] = flt(row.net_qty)
+                    # Ensure every found batch appears in the map (default to 0 for bundle-only batches)
+                    for bno in found_batches:
+                        batch_map.setdefault(bno, 0)
 
                 if batch_map:
                     for bno in sorted(batch_map):
