@@ -4,7 +4,7 @@
 import json
 import unittest
 from datetime import date
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from isnack.api.mes_ops import (
