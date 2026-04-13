@@ -160,6 +160,91 @@ def _get_consumed_materials_from_load(work_order: str) -> dict:
     
     return {row.item_code: row.total_qty for row in consumed}
 
+
+def _get_total_consumed_cost(work_order: str) -> float:
+    """
+    Get the total cost of materials already consumed via "Material Consumption for Manufacture"
+    Stock Entries for a given Work Order.
+
+    This is used to ensure that when a Manufacture Stock Entry is created after pre-consumption
+    via the LOAD button, the finished item's basic_rate reflects all consumed materials costs,
+    not just the cost of any remaining materials in the current Manufacture entry.
+
+    Args:
+        work_order: Work Order name
+
+    Returns:
+        float: Sum of (valuation_rate * qty) for all outgoing items in prior
+               "Material Consumption for Manufacture" entries for this WO.
+    """
+    result = frappe.db.sql("""
+        SELECT COALESCE(SUM(sed.amount), 0) AS total_cost
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+            AND se.work_order = %(work_order)s
+            AND se.purpose = 'Material Consumption for Manufacture'
+            AND sed.s_warehouse IS NOT NULL
+            AND sed.is_finished_item = 0
+            AND sed.is_scrap_item = 0
+    """, {"work_order": work_order})
+    return flt(result[0][0]) if result else 0.0
+
+
+def _apply_pre_consumed_cost_to_finished_item(se, work_order: str, finished_qty: float) -> None:
+    """
+    Set basic_rate and set_basic_rate_manually on the finished item row of a Manufacture
+    Stock Entry so that ERPNext includes the cost of materials consumed in prior
+    "Material Consumption for Manufacture" entries (via the LOAD button).
+
+    Without this, when all raw materials have already been pre-consumed, ERPNext computes
+    a zero outgoing_items_cost for the current entry and assigns a zero basic_rate to the
+    finished good, which causes a "Valuation Rate required" error on submit.
+
+    Args:
+        se: Stock Entry document (not yet inserted)
+        work_order: Work Order name
+        finished_qty: Finished good quantity
+    """
+    pre_consumed_cost = _get_total_consumed_cost(work_order)
+    if not (pre_consumed_cost > 0 and finished_qty > 0):
+        return
+
+    # Collect outgoing (non-finished) rows once for reuse
+    outgoing_rows = [
+        row for row in se.items
+        if row.get("s_warehouse") and not row.get("is_finished_item")
+    ]
+
+    remaining_materials_cost = 0.0
+    if outgoing_rows:
+        placeholders = ", ".join(
+            ["(%s, %s)"] * len(outgoing_rows)
+        )
+        flat_values = [v for row in outgoing_rows for v in (row.item_code, row.s_warehouse)]
+        bin_rates = frappe.db.sql(
+            f"""
+            SELECT item_code, warehouse, valuation_rate
+            FROM `tabBin`
+            WHERE (item_code, warehouse) IN ({placeholders})
+            """,
+            flat_values,
+            as_dict=True,
+        )
+        rate_map = {(r.item_code, r.warehouse): flt(r.valuation_rate) for r in bin_rates}
+        remaining_materials_cost = sum(
+            rate_map.get((row.item_code, row.s_warehouse), 0.0) * flt(row.qty)
+            for row in outgoing_rows
+        )
+
+    total_cost = pre_consumed_cost + remaining_materials_cost
+    for row in se.items:
+        if row.get("is_finished_item"):
+            row.basic_rate = total_cost / finished_qty
+            row.set_basic_rate_manually = 1
+            break
+
+
 def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
     """
     Get BOM items scaled for the production quantity.
@@ -1569,6 +1654,12 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
                 "t_warehouse": scrap_wh,
             })
 
+    # Set basic_rate on the finished item to account for costs from prior
+    # "Material Consumption for Manufacture" entries (consumed via LOAD button).
+    # Without this, ERPNext only sees the current entry's outgoing items and may
+    # calculate a zero rate for the finished good, causing a valuation error.
+    _apply_pre_consumed_cost_to_finished_item(se, work_order, good)
+
     se.flags.ignore_permissions = True
     se.insert()
     se.submit()
@@ -2306,6 +2397,12 @@ def close_production(good_qty: float, reject_qty: float = 0,
                         "t_warehouse": scrap_wh,
                     })
             
+            # Set basic_rate on the finished item to account for costs from prior
+            # "Material Consumption for Manufacture" entries (consumed via LOAD button).
+            # Without this, ERPNext only sees the current entry's outgoing items and may
+            # calculate a zero rate for the finished good, causing a valuation error.
+            _apply_pre_consumed_cost_to_finished_item(se, wo_name, split["good"])
+
             se.flags.ignore_permissions = True
             se.insert()
             se.submit()
