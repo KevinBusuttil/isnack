@@ -95,9 +95,8 @@ frappe.query_reports["Customs Export Traceability Report"] = {
 	},
 
 	onload: function(report) {
-		report.page.add_inner_button(__("Print Traceability Report"), function() {
+		const btn = report.page.add_inner_button(__("Print Traceability Report"), function() {
 			const filters = report.get_values();
-			const btn = report.page.get_inner_btn(__("Print Traceability Report"));
 			if (btn) btn.prop("disabled", true).text(__("Generating…"));
 			frappe.call({
 				method: "isnack.isnack.report.customs_export_traceability_report.customs_export_traceability_report.get_print_html",
