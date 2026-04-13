@@ -1837,13 +1837,13 @@ function init_operator_hub($root) {
 
       packagingItems.forEach((item, idx) => {
         const batchLabel = item.batch_no ? ` [Batch: ${item.batch_no}]` : '';
-        const availLabel = item.available_qty != null ? ` (Available: ${item.available_qty})` : '';
+        const consumedLabel = item.consumed_qty != null ? ` (Consumed: ${item.consumed_qty})` : '';
         fields.push({
           label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
           fieldname: `pkg_${idx}`,
           fieldtype: 'Float',
           default: 0,
-          description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${availLabel}`,
+          description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${consumedLabel}`,
         });
       });
     }
