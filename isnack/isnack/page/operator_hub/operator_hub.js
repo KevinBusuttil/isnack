@@ -1908,6 +1908,7 @@ function init_operator_hub($root) {
     });
 
     d.show();
+    d.$wrapper.addClass('close-production-dialog');
     
     // Auto-insert dash after 3rd letter
     const batchInput = d.fields_dict.batch_no.$input;

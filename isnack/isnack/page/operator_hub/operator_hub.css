@@ -826,3 +826,71 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
     animation: none;
   }
 }
+
+/* =====================================
+   Close Production Dialog Styles
+   ===================================== */
+
+/* Teal accent stripe at top of dialog header */
+.close-production-dialog .modal-header{
+  border-top: 3px solid #15b79e;
+  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
+}
+
+/* Ended WO list items — teal left-border accent + subtle teal-tinted background */
+.close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded{
+  border-left: 4px solid #15b79e !important;
+  background: #f0fdf9;
+  transition: background .1s ease;
+}
+.close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded:hover{
+  background: #e0faf4;
+}
+
+/* Good Qty — green tint (positive output) */
+.close-production-dialog [data-fieldname="good_qty"] .form-control{
+  background: #f0fdf4 !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+}
+
+/* Reject Qty — red/amber tint (waste) */
+.close-production-dialog [data-fieldname="reject_qty"] .form-control{
+  background: #fff5f5 !important;
+  border-color: #fca5a5 !important;
+  color: #9f1239 !important;
+}
+
+/* Batch No — amber highlight (key operator input) */
+.close-production-dialog [data-fieldname="batch_no"] .form-control{
+  background: #fff3d6 !important;
+  border-color: #fbbf24 !important;
+}
+
+/* Packaging qty fields — subtle blue tint */
+.close-production-dialog [data-fieldname^="pkg_"] .form-control{
+  background: #e8f1ff !important;
+  border-color: #93c5fd !important;
+}
+
+/* Close Production primary button — teal accent */
+.close-production-dialog .modal-footer .btn-primary{
+  background: #15b79e !important;
+  border-color: #109487 !important;
+  color: #053b37 !important;
+  font-weight: 600;
+}
+.close-production-dialog .modal-footer .btn-primary:hover{
+  background: #109487 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(21,183,158,.3);
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce){
+  .close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded,
+  .close-production-dialog .modal-footer .btn-primary{
+    transition: none !important;
+    animation: none !important;
+  }
+}
