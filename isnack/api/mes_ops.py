@@ -2155,23 +2155,28 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                     {r.batch_no for r in direct_rows} | {r.batch_no for r in bundle_rows}
                 )
 
-                # Compute net qty (sum of actual_qty) per batch across all WIP warehouses.
-                # This reflects current stock level; batches fully consumed will show 0.
+                # Compute consumed qty per batch from Material Consumption for Manufacture
+                # Stock Entries for the ended work orders. This shows how much was already
+                # consumed via the LOAD button during production.
                 batch_map = {}
                 if found_batches:
                     b_placeholders = ", ".join(["%s"] * len(found_batches))
-                    net_rows = frappe.db.sql(f"""
-                        SELECT batch_no, SUM(actual_qty) AS net_qty
-                        FROM `tabStock Ledger Entry`
-                        WHERE item_code = %s
-                          AND warehouse IN ({wh_placeholders})
-                          AND batch_no IN ({b_placeholders})
-                        GROUP BY batch_no
-                    """, tuple([item_code] + wh_list + found_batches), as_dict=True)
-                    for row in net_rows:
+                    consumed_rows = frappe.db.sql(f"""
+                        SELECT sed.batch_no, COALESCE(SUM(sed.qty), 0) AS consumed_qty
+                        FROM `tabStock Entry` se
+                        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+                        WHERE se.docstatus = 1
+                          AND se.work_order IN ({wo_placeholders})
+                          AND se.purpose = 'Material Consumption for Manufacture'
+                          AND sed.item_code = %s
+                          AND sed.batch_no IN ({b_placeholders})
+                          AND sed.is_finished_item = 0
+                        GROUP BY sed.batch_no
+                    """, tuple(wo_list + [item_code] + found_batches), as_dict=True)
+                    for row in consumed_rows:
                         if row.batch_no:
-                            batch_map[row.batch_no] = flt(row.net_qty)
-                    # Ensure every found batch appears in the map (default to 0 for bundle-only batches)
+                            batch_map[row.batch_no] = flt(row.consumed_qty)
+                    # Ensure every found batch appears in the map (default to 0)
                     for bno in found_batches:
                         batch_map.setdefault(bno, 0)
 
@@ -2183,17 +2188,17 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                             "stock_uom": item_data.get("stock_uom") or "Nos",
                             "has_batch_no": 1,
                             "batch_no": bno,
-                            "available_qty": batch_map[bno],
+                            "consumed_qty": batch_map[bno],
                         })
                 else:
-                    # Batch-tracked item but no batches found in WIP — still expose it
+                    # Batch-tracked item but no batches found — still expose it
                     packaging_items.append({
                         "item_code": item_data["name"],
                         "item_name": item_data.get("item_name") or item_data["name"],
                         "stock_uom": item_data.get("stock_uom") or "Nos",
                         "has_batch_no": 1,
                         "batch_no": None,
-                        "available_qty": None,
+                        "consumed_qty": None,
                     })
             else:
                 packaging_items.append({
@@ -2202,7 +2207,7 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                     "stock_uom": item_data.get("stock_uom") or "Nos",
                     "has_batch_no": 0,
                     "batch_no": None,
-                    "available_qty": None,
+                    "consumed_qty": None,
                 })
     
     # Sort by item_code then batch_no for consistency
@@ -2469,17 +2474,38 @@ def close_production(good_qty: float, reject_qty: float = 0,
                                 "Material Over-Consumption"
                             )
             
-            # Add packaging materials
+            # Add packaging materials (only the portion not already consumed via LOAD)
             if split["packaging"]:
+                QTY_EPSILON = 0.0001
                 for pkg_item in split["packaging"]:
                     item_code = pkg_item["item_code"]
                     qty = pkg_item["qty"]
                     batch_no = pkg_item.get("batch_no")
-                    if qty > 0:
+                    if qty <= 0:
+                        continue
+
+                    # Check how much was already consumed for this item (and batch) via LOAD
+                    already_consumed_pkg = frappe.db.sql("""
+                        SELECT COALESCE(SUM(sed.qty), 0) AS total_qty
+                        FROM `tabStock Entry` se
+                        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+                        WHERE se.docstatus = 1
+                          AND se.work_order = %s
+                          AND se.purpose = 'Material Consumption for Manufacture'
+                          AND sed.item_code = %s
+                          AND sed.is_finished_item = 0
+                    """ + (" AND sed.batch_no = %s" if batch_no else ""),
+                        (wo_name, item_code, batch_no) if batch_no else (wo_name, item_code),
+                        as_dict=True
+                    )
+                    already_consumed_pkg_qty = flt(already_consumed_pkg[0].total_qty) if already_consumed_pkg else 0
+                    remaining_pkg_qty = qty - already_consumed_pkg_qty
+
+                    if remaining_pkg_qty > QTY_EPSILON:
                         item_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
                         row = {
                             "item_code": item_code,
-                            "qty": qty,
+                            "qty": remaining_pkg_qty,
                             "uom": item_uom,
                             "s_warehouse": wip_wh,
                             "is_finished_item": 0,
@@ -2488,6 +2514,14 @@ def close_production(good_qty: float, reject_qty: float = 0,
                             row["batch_no"] = batch_no
                             row["use_serial_batch_fields"] = 1
                         se.append("items", row)
+                    elif remaining_pkg_qty < -QTY_EPSILON:
+                        frappe.log_error(
+                            f"Packaging item over-consumed for WO {wo_name}\n"
+                            f"Item: {item_code}" + (f" Batch: {batch_no}" if batch_no else "") + "\n"
+                            f"Entered: {qty:.4f}\n"
+                            f"Already consumed: {already_consumed_pkg_qty:.4f}",
+                            "Packaging Over-Consumption"
+                        )
             
             # Add scrap/rejects if applicable
             if split["reject"] > 0:
