@@ -116,5 +116,40 @@ frappe.query_reports["Customs Export Traceability Report"] = {
 				}
 			});
 		});
+
+		const exportBtn = report.page.add_inner_button(__("Export Traceability Report"), function() {
+			const filters = report.get_values();
+			if (exportBtn) exportBtn.prop("disabled", true).text(__("Exporting…"));
+			frappe.call({
+				method: "isnack.isnack.report.customs_export_traceability_report.customs_export_traceability_report.get_export_excel",
+				args: { filters: filters },
+				callback: function(r) {
+					if (exportBtn) exportBtn.prop("disabled", false).text(__("Export Traceability Report"));
+					if (r.message) {
+						const { file_content, file_name } = r.message;
+						const byteChars = atob(file_content);
+						const byteNumbers = new Array(byteChars.length);
+						for (let i = 0; i < byteChars.length; i++) {
+							byteNumbers[i] = byteChars.charCodeAt(i);
+						}
+						const byteArray = new Uint8Array(byteNumbers);
+						const blob = new Blob([byteArray], {
+							type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+						});
+						const url = URL.createObjectURL(blob);
+						const a = document.createElement("a");
+						a.href = url;
+						a.download = file_name;
+						document.body.appendChild(a);
+						a.click();
+						document.body.removeChild(a);
+						URL.revokeObjectURL(url);
+					}
+				},
+				error: function() {
+					if (exportBtn) exportBtn.prop("disabled", false).text(__("Export Traceability Report"));
+				}
+			});
+		});
 	}
 };

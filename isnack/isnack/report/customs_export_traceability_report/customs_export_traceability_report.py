@@ -1,8 +1,10 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
+import base64
 import json
 import os
+from io import BytesIO
 
 import frappe
 from frappe import _
@@ -875,3 +877,326 @@ def get_print_html(filters):
 		frappe.throw(f"Could not load print template: {e}")
 
 	return frappe.render_template(template, context)
+
+
+# ---------------------------------------------------------------------------
+# Excel Export (whitelisted method)
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_export_excel(filters):
+	try:
+		from openpyxl import Workbook
+		from openpyxl.styles import Alignment, Font, PatternFill
+		from openpyxl.utils import get_column_letter
+	except ImportError:
+		frappe.throw("openpyxl is required to export Excel files. Please install it.")
+
+	if isinstance(filters, str):
+		filters = json.loads(filters)
+	filters = frappe._dict(filters or {})
+
+	try:
+		validate_filters(filters)
+	except frappe.ValidationError as e:
+		frappe.throw(str(e))
+
+	data = get_data(filters)
+
+	company = filters.get("company", "")
+	export_datetime = str(now_datetime())
+	try:
+		exported_by = frappe.utils.get_fullname(frappe.session.user) or frappe.session.user
+	except Exception:
+		exported_by = frappe.session.user or ""
+	filter_summary = _build_filter_summary(filters)
+
+	# Group rows by sales invoice, preserving insertion order
+	invoices_grouped = {}
+	for row in data:
+		si = row.get("sales_invoice") or "\u2014"
+		invoices_grouped.setdefault(si, []).append(row)
+
+	# Fetch additional SI header details
+	real_si_names = [k for k in invoices_grouped if k != "\u2014"]
+	si_details = _fetch_si_header_details(real_si_names)
+
+	# ---------------------------------------------------------------------------
+	# Style helpers
+	# ---------------------------------------------------------------------------
+	def _make_fill(hex_color):
+		return PatternFill(fill_type="solid", fgColor=hex_color)
+
+	def _bold_font(color="000000", size=10):
+		return Font(bold=True, color=color, size=size)
+
+	def _normal_font(size=10):
+		return Font(size=size)
+
+	ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
+
+	# Total columns used (11 RM/Purchase columns; we use 11 as the sheet width)
+	# FG table: 8 cols; RM table: 11 cols → use 11 as total width
+	TOTAL_COLS = 11
+
+	wb = Workbook()
+	ws = wb.active
+	ws.title = "Traceability Report"
+
+	# ---------------------------------------------------------------------------
+	# Helper: write a merged row spanning all columns
+	# ---------------------------------------------------------------------------
+	def _write_merged_row(text, font=None, fill=None, align=None):
+		row_idx = ws.max_row + 1
+		ws.append([""] * TOTAL_COLS)
+		cell = ws.cell(row=row_idx, column=1)
+		cell.value = text
+		if font:
+			cell.font = font
+		if fill:
+			cell.fill = fill
+		cell.alignment = align or ALIGN_LEFT
+		ws.merge_cells(
+			start_row=row_idx, start_column=1,
+			end_row=row_idx, end_column=TOTAL_COLS,
+		)
+		return row_idx
+
+	def _write_blank_row():
+		ws.append([""] * TOTAL_COLS)
+
+	# ---------------------------------------------------------------------------
+	# A) Report header (written once)
+	# ---------------------------------------------------------------------------
+	_write_merged_row(
+		"Customs Export Traceability Report",
+		font=_bold_font(size=14),
+		align=ALIGN_CENTER,
+	)
+	_write_merged_row(company, font=_bold_font(size=11), align=ALIGN_CENTER)
+	_write_merged_row(
+		f"Exported: {export_datetime} | Exported by: {exported_by}",
+		font=_normal_font(size=9),
+		align=ALIGN_CENTER,
+	)
+	_write_merged_row(
+		f"Filters applied: {filter_summary}",
+		font=_normal_font(size=9),
+		align=ALIGN_CENTER,
+	)
+	_write_blank_row()
+
+	# ---------------------------------------------------------------------------
+	# B) Per-invoice sections
+	# ---------------------------------------------------------------------------
+	FILL_INV_HEADER = _make_fill("EEF3F8")
+	FILL_FG_HEADER = _make_fill("2C5F8A")
+	FILL_RM_GROUP = _make_fill("3A7A4A")
+	FILL_PR_GROUP = _make_fill("7A5A2A")
+	FILL_COL_HEADER = _make_fill("3A6B96")
+	WHITE_BOLD = _bold_font(color="FFFFFF")
+
+	FG_HEADERS = ["#", "FG Item Code", "FG Item Name", "Sold Qty", "UOM", "FG Batch No", "Work Order", "Mfg Date"]
+	RM_HEADERS = [
+		"RM Item Code", "RM Item Name", "Consumed Qty", "RM Batch No",
+		"Purchase Receipt", "PR Date", "Supplier", "Supplier Name",
+		"PR Qty", "Balance Stock", "Customs Doc No",
+	]
+
+	for si_name, rows in invoices_grouped.items():
+		first = rows[0]
+		si_extra = si_details.get(si_name, {})
+
+		# — Invoice header row —
+		posting_date = first.get("posting_date") or ""
+		customer_name = first.get("customer_name") or ""
+		currency = first.get("currency") or ""
+		inv_header_text = (
+			f"Sales Invoice: {si_name} | Posting Date: {posting_date} | "
+			f"Customer: {customer_name} | Currency: {currency}"
+		)
+		_write_merged_row(
+			inv_header_text,
+			font=_bold_font(size=10),
+			fill=FILL_INV_HEADER,
+		)
+
+		# Optional extra detail rows
+		po_no = si_extra.get("po_no") or ""
+		territory = si_extra.get("territory") or ""
+		remarks = si_extra.get("remarks") or ""
+		if po_no or territory:
+			extra_parts = []
+			if po_no:
+				extra_parts.append(f"PO Ref: {po_no}")
+			if territory:
+				extra_parts.append(f"Territory: {territory}")
+			_write_merged_row(
+				" | ".join(extra_parts),
+				font=_normal_font(size=9),
+				fill=FILL_INV_HEADER,
+			)
+		if remarks:
+			_write_merged_row(
+				f"Remarks: {remarks}",
+				font=_normal_font(size=9),
+				fill=FILL_INV_HEADER,
+			)
+
+		# — FG sub-header row —
+		fg_header_row_idx = ws.max_row + 1
+		ws.append(FG_HEADERS + [""] * (TOTAL_COLS - len(FG_HEADERS)))
+		for col_idx in range(1, len(FG_HEADERS) + 1):
+			cell = ws.cell(row=fg_header_row_idx, column=col_idx)
+			cell.font = WHITE_BOLD
+			cell.fill = FILL_FG_HEADER
+			cell.alignment = ALIGN_CENTER
+
+		# — FG data rows —
+		seen_fg_keys = set()
+		for row in rows:
+			fg_key = (
+				row.get("si_item_idx"),
+				row.get("fg_item_code"),
+				row.get("fg_batch_no"),
+				row.get("work_order"),
+			)
+			if fg_key in seen_fg_keys:
+				continue
+			seen_fg_keys.add(fg_key)
+
+			mfg_date = row.get("manufacturing_date")
+			sales_qty = row.get("sales_qty")
+			try:
+				sales_qty = float(sales_qty) if sales_qty is not None else ""
+			except (TypeError, ValueError):
+				sales_qty = str(sales_qty) if sales_qty is not None else ""
+
+			fg_row = [
+				row.get("si_item_idx") or "",
+				row.get("fg_item_code") or "",
+				row.get("fg_item_name") or "",
+				sales_qty,
+				row.get("sales_uom") or "",
+				row.get("fg_batch_no") or "",
+				row.get("work_order") or "",
+				mfg_date if mfg_date else "",
+			]
+			data_row_idx = ws.max_row + 1
+			ws.append(fg_row + [""] * (TOTAL_COLS - len(fg_row)))
+			# Format date cell
+			if mfg_date:
+				date_cell = ws.cell(row=data_row_idx, column=8)
+				date_cell.number_format = "YYYY-MM-DD"
+
+		_write_blank_row()
+
+		# — RM/Purchase/Customs group header row —
+		grp_row_idx = ws.max_row + 1
+		ws.append([""] * TOTAL_COLS)
+		# "Raw Material" spans cols 1-4
+		rm_group_cell = ws.cell(row=grp_row_idx, column=1)
+		rm_group_cell.value = "Raw Material"
+		rm_group_cell.font = WHITE_BOLD
+		rm_group_cell.fill = FILL_RM_GROUP
+		rm_group_cell.alignment = ALIGN_CENTER
+		ws.merge_cells(start_row=grp_row_idx, start_column=1, end_row=grp_row_idx, end_column=4)
+		# "Purchase / Customs" spans cols 5-11
+		pr_group_cell = ws.cell(row=grp_row_idx, column=5)
+		pr_group_cell.value = "Purchase / Customs"
+		pr_group_cell.font = WHITE_BOLD
+		pr_group_cell.fill = FILL_PR_GROUP
+		pr_group_cell.alignment = ALIGN_CENTER
+		ws.merge_cells(start_row=grp_row_idx, start_column=5, end_row=grp_row_idx, end_column=11)
+
+		# — RM column header row —
+		rm_col_row_idx = ws.max_row + 1
+		ws.append(RM_HEADERS)
+		for col_idx in range(1, len(RM_HEADERS) + 1):
+			cell = ws.cell(row=rm_col_row_idx, column=col_idx)
+			cell.font = WHITE_BOLD
+			cell.fill = FILL_COL_HEADER
+			cell.alignment = ALIGN_CENTER
+
+		# — RM data rows —
+		for row in rows:
+			pr_date = row.get("purchase_receipt_date")
+			consumed_qty = row.get("consumed_qty")
+			pr_qty = row.get("pr_qty")
+			balance_stock = row.get("balance_stock")
+
+			try:
+				consumed_qty = float(consumed_qty) if consumed_qty is not None else ""
+			except (TypeError, ValueError):
+				consumed_qty = str(consumed_qty) if consumed_qty is not None else ""
+			try:
+				pr_qty = float(pr_qty) if pr_qty is not None else ""
+			except (TypeError, ValueError):
+				pr_qty = str(pr_qty) if pr_qty is not None else ""
+			try:
+				balance_stock = float(balance_stock) if balance_stock is not None else ""
+			except (TypeError, ValueError):
+				balance_stock = str(balance_stock) if balance_stock is not None else ""
+
+			rm_row = [
+				row.get("rm_item_code") or "",
+				row.get("rm_item_name") or "",
+				consumed_qty,
+				row.get("rm_batch_no") or "",
+				row.get("purchase_receipt") or "",
+				pr_date if pr_date else "",
+				row.get("supplier") or "",
+				row.get("supplier_name") or "",
+				pr_qty,
+				balance_stock,
+				row.get("customs_document_no") or "",
+			]
+			data_row_idx = ws.max_row + 1
+			ws.append(rm_row)
+			# Format date cell (column 6)
+			if pr_date:
+				date_cell = ws.cell(row=data_row_idx, column=6)
+				date_cell.number_format = "YYYY-MM-DD"
+
+		_write_blank_row()
+
+	# ---------------------------------------------------------------------------
+	# C) Footer
+	# ---------------------------------------------------------------------------
+	_write_merged_row(
+		"\u2014 End of Report \u2014",
+		font=_bold_font(size=10),
+		align=ALIGN_CENTER,
+	)
+	_write_merged_row(
+		"Blank fields indicate that traceability could not be established from available ERPNext data. "
+		"Only submitted documents (Sales Invoice, Stock Entry, Purchase Receipt) are included. "
+		"Raw material consumption is based on actual Stock Entry records, not BOM explosion.",
+		font=_normal_font(size=8),
+		align=ALIGN_CENTER,
+	)
+
+	# ---------------------------------------------------------------------------
+	# Column widths (reasonable fixed widths)
+	# ---------------------------------------------------------------------------
+	col_widths = [20, 30, 35, 12, 12, 22, 18, 12, 20, 22, 25]
+	for i, width in enumerate(col_widths, start=1):
+		ws.column_dimensions[get_column_letter(i)].width = width
+
+	# Freeze first 5 header rows
+	ws.freeze_panes = "A6"
+
+	# ---------------------------------------------------------------------------
+	# Serialize to base64
+	# ---------------------------------------------------------------------------
+	buf = BytesIO()
+	wb.save(buf)
+	buf.seek(0)
+	file_content = base64.b64encode(buf.read()).decode("utf-8")
+
+	timestamp = now_datetime().strftime("%Y%m%d_%H%M%S")
+	file_name = f"Customs_Export_Traceability_Report_{timestamp}.xlsx"
+
+	return {"file_content": file_content, "file_name": file_name}
