@@ -308,7 +308,7 @@
 <thead>
 <tr class="col-group-header">
   <th colspan="4" class="col-group-rm">Raw Material</th>
-  <th colspan="5" class="col-group-pc">Purchase / Customs</th>
+  <th colspan="7" class="col-group-pc">Purchase / Customs</th>
 </tr>
 <tr>
   <th>RM Item Code</th>
@@ -319,6 +319,8 @@
   <th>PR Date</th>
   <th>Supplier</th>
   <th>Supplier Name</th>
+  <th class="num-col">PR Qty</th>
+  <th class="num-col">Balance Stock</th>
   <th>Customs Doc No</th>
 </tr>
 </thead>
@@ -333,6 +335,8 @@
   <td>{{ row.purchase_receipt_date }}</td>
   <td>{{ row.supplier }}</td>
   <td>{{ row.supplier_name }}</td>
+  <td class="num-col">{{ row.pr_qty }}</td>
+  <td class="num-col">{{ row.balance_stock }}</td>
   {% if row.customs_document_no %}<td class="customs-doc num-col">{{ row.customs_document_no }}</td>{% else %}<td class="num-col"></td>{% endif %}
 </tr>
 {% endfor %}

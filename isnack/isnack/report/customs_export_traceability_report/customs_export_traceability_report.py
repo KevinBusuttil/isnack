@@ -69,6 +69,8 @@ def get_columns():
 		{"label": _("PR Date"), "fieldname": "purchase_receipt_date", "fieldtype": "Date", "width": 100},
 		{"label": _("Supplier"), "fieldname": "supplier", "fieldtype": "Link", "options": "Supplier", "width": 120},
 		{"label": _("Supplier Name"), "fieldname": "supplier_name", "fieldtype": "Data", "width": 160},
+		{"label": _("PR Qty"), "fieldname": "pr_qty", "fieldtype": "Float", "width": 100},
+		{"label": _("Balance Stock"), "fieldname": "balance_stock", "fieldtype": "Float", "width": 110},
 		{"label": _("Customs Document No"), "fieldname": "customs_document_no", "fieldtype": "Data", "width": 180},
 	]
 
@@ -116,6 +118,22 @@ def get_data(filters):
 			if rm.get("purchase_receipt"):
 				pr_names.add(rm["purchase_receipt"])
 	pr_details = _fetch_pr_details(pr_names)  # {pr_name: {...}}
+
+	# Step 6b: Fetch PR item quantities for (pr_name, item_code, batch_no) combos
+	pr_batch_keys = set()
+	for rm_list in rm_map.values():
+		for rm in rm_list:
+			if rm.get("purchase_receipt") and rm.get("item_code") and rm.get("batch_no"):
+				pr_batch_keys.add((rm["purchase_receipt"], rm["item_code"], rm["batch_no"]))
+	pr_item_qty_map = _fetch_pr_item_qty(pr_batch_keys)  # {(pr_name, item_code, batch_no): qty}
+
+	# Step 6c: Fetch balance stock for (item_code, batch_no) pairs
+	batch_item_pairs = set()
+	for rm_list in rm_map.values():
+		for rm in rm_list:
+			if rm.get("item_code") and rm.get("batch_no"):
+				batch_item_pairs.add((rm["item_code"], rm["batch_no"]))
+	batch_balance_map = _fetch_batch_balance(batch_item_pairs)  # {(item_code, batch_no): qty}
 
 	# Step 7: Assemble output rows
 	rows = []
@@ -167,6 +185,8 @@ def get_data(filters):
 						purchase_receipt_date=pr.get("posting_date"),
 						supplier=pr.get("supplier"),
 						supplier_name=pr.get("supplier_name"),
+						pr_qty=pr_item_qty_map.get((pr_name, rm.get("item_code"), rm.get("batch_no")), 0) or None,
+						balance_stock=batch_balance_map.get((rm.get("item_code"), rm.get("batch_no")), 0) or None,
 						customs_document_no=pr.get("custom_customs_document_no"),
 					)
 
@@ -580,6 +600,89 @@ def _fetch_pr_details(pr_names):
 
 
 # ---------------------------------------------------------------------------
+# Step 6b: Fetch Purchase Receipt Item qty for (pr_name, item_code, batch_no)
+# ---------------------------------------------------------------------------
+
+def _fetch_pr_item_qty(pr_batch_keys):
+	"""Return {(pr_name, item_code, batch_no): received_qty}"""
+	if not pr_batch_keys:
+		return {}
+
+	result = {}
+	for pr_name, item_code, batch_no in pr_batch_keys:
+		if not (pr_name and item_code and batch_no):
+			continue
+
+		# Strategy a: direct batch_no on Purchase Receipt Item
+		direct_qty = frappe.db.sql(
+			"""
+			SELECT IFNULL(SUM(pri.qty), 0)
+			FROM `tabPurchase Receipt Item` pri
+			WHERE pri.parent = %s
+			  AND pri.item_code = %s
+			  AND pri.batch_no = %s
+			  AND pri.docstatus = 1
+			""",
+			(pr_name, item_code, batch_no),
+		)
+		qty = direct_qty[0][0] if direct_qty else 0
+
+		# Strategy b: via serial_and_batch_bundle
+		if not qty:
+			bundle_qty = frappe.db.sql(
+				"""
+				SELECT IFNULL(SUM(ABS(sbe.qty)), 0)
+				FROM `tabPurchase Receipt Item` pri
+				JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = pri.serial_and_batch_bundle
+				WHERE pri.parent = %s
+				  AND pri.item_code = %s
+				  AND sbe.batch_no = %s
+				  AND pri.docstatus = 1
+				  AND pri.serial_and_batch_bundle IS NOT NULL
+				""",
+				(pr_name, item_code, batch_no),
+			)
+			qty = bundle_qty[0][0] if bundle_qty else 0
+
+		if qty:
+			result[(pr_name, item_code, batch_no)] = qty
+
+	return result
+
+
+# ---------------------------------------------------------------------------
+# Step 6c: Fetch current batch balance stock across all warehouses
+# ---------------------------------------------------------------------------
+
+def _fetch_batch_balance(batch_item_pairs):
+	"""Return {(item_code, batch_no): total_balance_qty} across all warehouses."""
+	if not batch_item_pairs:
+		return {}
+
+	from erpnext.stock.doctype.batch.batch import get_batch_qty
+
+	result = {}
+	for item_code, batch_no in batch_item_pairs:
+		if not batch_no:
+			continue
+		try:
+			batches = get_batch_qty(
+				batch_no=batch_no,
+				item_code=item_code,
+				for_stock_levels=True,
+				consider_negative_batches=True,
+				ignore_reserved_stock=True,
+			)
+			total = sum(b.get("qty", 0) for b in (batches or []))
+			result[(item_code, batch_no)] = total
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"_fetch_batch_balance failed for item {item_code}, batch {batch_no}")
+			result[(item_code, batch_no)] = 0
+
+	return result
+
+
+# ---------------------------------------------------------------------------
 # Print HTML helpers
 # ---------------------------------------------------------------------------
 
@@ -732,6 +835,8 @@ def get_print_html(filters):
 				"purchase_receipt_date": _v(row.get("purchase_receipt_date")),
 				"supplier": _v(row.get("supplier")),
 				"supplier_name": _v(row.get("supplier_name")),
+				"pr_qty": _v(row.get("pr_qty")),
+				"balance_stock": _v(row.get("balance_stock")),
 				"customs_document_no": _v(row.get("customs_document_no")),
 			})
 
