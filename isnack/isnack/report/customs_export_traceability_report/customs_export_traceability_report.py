@@ -676,6 +676,7 @@ def _fetch_batch_balance(batch_item_pairs):
 			total = sum(b.get("qty", 0) for b in (batches or []))
 			result[(item_code, batch_no)] = total
 		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"_fetch_batch_balance failed for item {item_code}, batch {batch_no}")
 			result[(item_code, batch_no)] = 0
 
 	return result
