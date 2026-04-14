@@ -234,6 +234,12 @@
       <span class="field-label">Currency</span>
       <span class="field-value">{{ invoice.currency if invoice.currency else "&mdash;" }}</span>
     </div>
+    {% if invoice.total_amount %}
+    <div class="field-pair">
+      <span class="field-label">Total Amount</span>
+      <span class="field-value">{{ invoice.total_amount }}</span>
+    </div>
+    {% endif %}
     <div class="field-pair">
       <span class="field-label">Customer</span>
       <span class="field-value">{{ invoice.customer if invoice.customer else "&mdash;" }}</span>
@@ -308,7 +314,7 @@
 <thead>
 <tr class="col-group-header">
   <th colspan="4" class="col-group-rm">Raw Material</th>
-  <th colspan="7" class="col-group-pc">Purchase / Customs</th>
+  <th colspan="6" class="col-group-pc">Purchase / Customs</th>
 </tr>
 <tr>
   <th>RM Item Code</th>
@@ -317,7 +323,6 @@
   <th>RM Batch No</th>
   <th>Purchase Receipt</th>
   <th>PR Date</th>
-  <th>Supplier</th>
   <th>Supplier Name</th>
   <th class="num-col">PR Qty</th>
   <th class="num-col">Balance Stock</th>
@@ -333,7 +338,6 @@
   <td>{{ row.rm_batch_no }}</td>
   <td>{{ row.purchase_receipt }}</td>
   <td>{{ row.purchase_receipt_date }}</td>
-  <td>{{ row.supplier }}</td>
   <td>{{ row.supplier_name }}</td>
   <td class="num-col">{{ row.pr_qty }}</td>
   <td class="num-col">{{ row.balance_stock }}</td>

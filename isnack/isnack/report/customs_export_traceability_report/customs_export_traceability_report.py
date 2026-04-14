@@ -69,7 +69,6 @@ def get_columns():
 		# D. Purchase / customs traceability
 		{"label": _("Purchase Receipt"), "fieldname": "purchase_receipt", "fieldtype": "Link", "options": "Purchase Receipt", "width": 150},
 		{"label": _("PR Date"), "fieldname": "purchase_receipt_date", "fieldtype": "Date", "width": 100},
-		{"label": _("Supplier"), "fieldname": "supplier", "fieldtype": "Link", "options": "Supplier", "width": 120},
 		{"label": _("Supplier Name"), "fieldname": "supplier_name", "fieldtype": "Data", "width": 160},
 		{"label": _("PR Qty"), "fieldname": "pr_qty", "fieldtype": "Float", "width": 100},
 		{"label": _("Balance Stock"), "fieldname": "balance_stock", "fieldtype": "Float", "width": 110},
@@ -703,7 +702,9 @@ def _fetch_si_header_details(si_names):
 			customer_address,
 			shipping_address_name,
 			address_display,
-			company_address
+			company_address,
+			grand_total,
+			rounded_total
 		FROM `tabSales Invoice`
 		WHERE name IN ({placeholders})
 		""",
@@ -835,7 +836,6 @@ def get_print_html(filters):
 				"rm_batch_no": _v(row.get("rm_batch_no")),
 				"purchase_receipt": _v(row.get("purchase_receipt")),
 				"purchase_receipt_date": _v(row.get("purchase_receipt_date")),
-				"supplier": _v(row.get("supplier")),
 				"supplier_name": _v(row.get("supplier_name")),
 				"pr_qty": _v(row.get("pr_qty")),
 				"balance_stock": _v(row.get("balance_stock")),
@@ -854,6 +854,7 @@ def get_print_html(filters):
 			"remarks": _v(si_extra.get("remarks")),
 			"customer_address": _v(si_extra.get("address_display") or si_extra.get("customer_address")),
 			"company_address": _v(si_extra.get("company_address_display")),
+			"total_amount": _v(si_extra.get("rounded_total") or si_extra.get("grand_total")),
 			"fg_items": fg_items,
 			"rows": row_list,
 		})
@@ -937,9 +938,8 @@ def get_export_excel(filters):
 	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 
-	# Total columns used (11 RM/Purchase columns; we use 11 as the sheet width)
-	# FG table: 8 cols; RM table: 11 cols → use 11 as total width
-	TOTAL_COLS = 11
+	# FG table: 8 cols; RM table: 10 cols → use 10 as total width
+	TOTAL_COLS = 10
 
 	wb = Workbook()
 	ws = wb.active
@@ -1001,7 +1001,7 @@ def get_export_excel(filters):
 	FG_HEADERS = ["#", "FG Item Code", "FG Item Name", "Sold Qty", "UOM", "FG Batch No", "Work Order", "Mfg Date"]
 	RM_HEADERS = [
 		"RM Item Code", "RM Item Name", "Consumed Qty", "RM Batch No",
-		"Purchase Receipt", "PR Date", "Supplier", "Supplier Name",
+		"Purchase Receipt", "PR Date", "Supplier Name",
 		"PR Qty", "Balance Stock", "Customs Doc No",
 	]
 
@@ -1013,9 +1013,10 @@ def get_export_excel(filters):
 		posting_date = first.get("posting_date") or ""
 		customer_name = first.get("customer_name") or ""
 		currency = first.get("currency") or ""
+		total_amount = si_extra.get("rounded_total") or si_extra.get("grand_total") or ""
 		inv_header_text = (
 			f"Sales Invoice: {si_name} | Posting Date: {posting_date} | "
-			f"Customer: {customer_name} | Currency: {currency}"
+			f"Customer: {customer_name} | Currency: {currency} | Total: {total_amount}"
 		)
 		_write_merged_row(
 			inv_header_text,
@@ -1103,13 +1104,13 @@ def get_export_excel(filters):
 		rm_group_cell.fill = FILL_RM_GROUP
 		rm_group_cell.alignment = ALIGN_CENTER
 		ws.merge_cells(start_row=grp_row_idx, start_column=1, end_row=grp_row_idx, end_column=4)
-		# "Purchase / Customs" spans cols 5-11
+		# "Purchase / Customs" spans cols 5-10
 		pr_group_cell = ws.cell(row=grp_row_idx, column=5)
 		pr_group_cell.value = "Purchase / Customs"
 		pr_group_cell.font = WHITE_BOLD
 		pr_group_cell.fill = FILL_PR_GROUP
 		pr_group_cell.alignment = ALIGN_CENTER
-		ws.merge_cells(start_row=grp_row_idx, start_column=5, end_row=grp_row_idx, end_column=11)
+		ws.merge_cells(start_row=grp_row_idx, start_column=5, end_row=grp_row_idx, end_column=10)
 
 		# — RM column header row —
 		rm_col_row_idx = ws.max_row + 1
@@ -1147,7 +1148,6 @@ def get_export_excel(filters):
 				row.get("rm_batch_no") or "",
 				row.get("purchase_receipt") or "",
 				pr_date if pr_date else "",
-				row.get("supplier") or "",
 				row.get("supplier_name") or "",
 				pr_qty,
 				balance_stock,
@@ -1181,7 +1181,7 @@ def get_export_excel(filters):
 	# ---------------------------------------------------------------------------
 	# Column widths (reasonable fixed widths)
 	# ---------------------------------------------------------------------------
-	col_widths = [20, 30, 35, 12, 12, 22, 18, 12, 20, 22, 25]
+	col_widths = [20, 30, 35, 12, 12, 22, 12, 20, 22, 25]
 	for i, width in enumerate(col_widths, start=1):
 		ws.column_dimensions[get_column_letter(i)].width = width
 
