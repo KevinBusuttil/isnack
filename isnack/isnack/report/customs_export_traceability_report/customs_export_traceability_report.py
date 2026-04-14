@@ -697,22 +697,33 @@ def get_print_html(filters):
 		first = rows[0]
 		si_extra = si_details.get(si_name, {})
 
-		# Build rows with is_fg_group_start flag for visual FG separators
-		prev_fg_key = None
+		# Build deduplicated FG items list for the header sub-table
+		seen_fg_keys = set()
+		fg_items = []
+		for row in rows:
+			fg_key = (
+				row.get("si_item_idx"),
+				row.get("fg_item_code"),
+				row.get("fg_batch_no"),
+				row.get("work_order"),
+			)
+			if fg_key not in seen_fg_keys:
+				seen_fg_keys.add(fg_key)
+				fg_items.append({
+					"si_item_idx": _v(row.get("si_item_idx")),
+					"fg_item_code": _v(row.get("fg_item_code")),
+					"fg_item_name": _v(row.get("fg_item_name")),
+					"sales_qty": _v(row.get("sales_qty")),
+					"sales_uom": _v(row.get("sales_uom")),
+					"fg_batch_no": _v(row.get("fg_batch_no")),
+					"work_order": _v(row.get("work_order")),
+					"manufacturing_date": _v(row.get("manufacturing_date")),
+				})
+
+		# Build rows (RM / Purchase / Customs only — FG data moved to header)
 		row_list = []
 		for row in rows:
-			fg_key = (row.get("si_item_idx"), row.get("fg_item_code"))
-			is_new_fg = fg_key != prev_fg_key
-			prev_fg_key = fg_key
 			row_list.append({
-				"si_item_idx": _v(row.get("si_item_idx")),
-				"fg_item_code": _v(row.get("fg_item_code")),
-				"fg_item_name": _v(row.get("fg_item_name")),
-				"sales_qty": _v(row.get("sales_qty")),
-				"sales_uom": _v(row.get("sales_uom")),
-				"fg_batch_no": _v(row.get("fg_batch_no")),
-				"work_order": _v(row.get("work_order")),
-				"manufacturing_date": _v(row.get("manufacturing_date")),
 				"rm_item_code": _v(row.get("rm_item_code")),
 				"rm_item_name": _v(row.get("rm_item_name")),
 				"consumed_qty": _v(row.get("consumed_qty")),
@@ -722,7 +733,6 @@ def get_print_html(filters):
 				"supplier": _v(row.get("supplier")),
 				"supplier_name": _v(row.get("supplier_name")),
 				"customs_document_no": _v(row.get("customs_document_no")),
-				"is_fg_group_start": is_new_fg,
 			})
 
 		invoices_list.append({
@@ -737,6 +747,7 @@ def get_print_html(filters):
 			"remarks": _v(si_extra.get("remarks")),
 			"customer_address": _v(si_extra.get("address_display") or si_extra.get("customer_address")),
 			"company_address": _v(si_extra.get("company_address_display")),
+			"fg_items": fg_items,
 			"rows": row_list,
 		})
 

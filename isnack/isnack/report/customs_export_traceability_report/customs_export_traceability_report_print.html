@@ -108,10 +108,6 @@
     padding: 3px 4px;
     border: 1px solid #1e4468;
   }
-  .col-group-fg {
-    background: #2c5f8a;
-    color: #fff;
-  }
   .col-group-rm {
     background: #3a7a4a;
     color: #fff;
@@ -150,8 +146,44 @@
     font-weight: bold;
     color: #5d3a00;
   }
-  .fg-group-start td {
-    border-top: 2px solid #2c5f8a;
+  .fg-items-section {
+    margin-top: 6px;
+  }
+  .fg-items-section .fg-section-label {
+    font-size: 8px;
+    font-weight: bold;
+    color: #2c5f8a;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 3px;
+  }
+  .fg-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9px;
+  }
+  .fg-items-table thead th {
+    background: #2c5f8a;
+    color: #fff;
+    padding: 3px 5px;
+    text-align: left;
+    white-space: nowrap;
+    border: 1px solid #1e4468;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .fg-items-table thead th.num-col {
+    text-align: right;
+  }
+  .fg-items-table tbody td {
+    border: 1px solid #b0c4d8;
+    padding: 2px 5px;
+    background: #fff;
+    vertical-align: top;
+  }
+  .fg-items-table tbody tr:nth-child(even) td {
+    background: #dce9f5;
   }
   .footer-end {
     margin-top: 20px;
@@ -238,23 +270,47 @@
   {% if invoice.remarks %}
   <div class="invoice-header-remarks"><strong>Remarks:</strong> {{ invoice.remarks }}</div>
   {% endif %}
+  {% if invoice.fg_items %}
+  <div class="fg-items-section">
+    <div class="fg-section-label">Finished Goods</div>
+    <table class="fg-items-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>FG Item Code</th>
+          <th>FG Item Name</th>
+          <th class="num-col">Sold Qty</th>
+          <th>UOM</th>
+          <th>FG Batch No</th>
+          <th>Work Order</th>
+          <th>Mfg Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fg in invoice.fg_items %}
+        <tr>
+          <td>{{ fg.si_item_idx }}</td>
+          <td>{{ fg.fg_item_code }}</td>
+          <td>{{ fg.fg_item_name }}</td>
+          <td class="num-col">{{ fg.sales_qty }}</td>
+          <td>{{ fg.sales_uom }}</td>
+          <td>{{ fg.fg_batch_no }}</td>
+          <td>{{ fg.work_order }}</td>
+          <td>{{ fg.manufacturing_date }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 </div>
 <table>
 <thead>
 <tr class="col-group-header">
-  <th colspan="8" class="col-group-fg">Finished Good</th>
   <th colspan="4" class="col-group-rm">Raw Material</th>
   <th colspan="5" class="col-group-pc">Purchase / Customs</th>
 </tr>
 <tr>
-  <th>#</th>
-  <th>FG Item Code</th>
-  <th>FG Item Name</th>
-  <th class="num-col">Sold Qty</th>
-  <th>UOM</th>
-  <th>FG Batch No</th>
-  <th>Work Order</th>
-  <th>Mfg Date</th>
   <th>RM Item Code</th>
   <th>RM Item Name</th>
   <th class="num-col">Consumed Qty</th>
@@ -268,15 +324,7 @@
 </thead>
 <tbody>
 {% for row in invoice.rows %}
-<tr{% if row.is_fg_group_start %} class="fg-group-start"{% endif %}>
-  <td>{{ row.si_item_idx }}</td>
-  <td>{{ row.fg_item_code }}</td>
-  <td>{{ row.fg_item_name }}</td>
-  <td class="num-col">{{ row.sales_qty }}</td>
-  <td>{{ row.sales_uom }}</td>
-  <td>{{ row.fg_batch_no }}</td>
-  <td>{{ row.work_order }}</td>
-  <td>{{ row.manufacturing_date }}</td>
+<tr>
   <td>{{ row.rm_item_code }}</td>
   <td>{{ row.rm_item_name }}</td>
   <td class="num-col">{{ row.consumed_qty }}</td>
