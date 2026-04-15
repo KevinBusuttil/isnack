@@ -1,0 +1,68 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "test_time",
+  "test_piece_type",
+  "test_piece_size_mm",
+  "detected",
+  "sensitivity_setting",
+  "test_remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "test_time",
+   "fieldtype": "Time",
+   "in_list_view": 1,
+   "label": "Test Time"
+  },
+  {
+   "fieldname": "test_piece_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Test Piece Type",
+   "options": "Fe\nNon-Fe\nStainless"
+  },
+  {
+   "fieldname": "test_piece_size_mm",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Test Piece Size (mm)"
+  },
+  {
+   "fieldname": "detected",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Detected (Pass)"
+  },
+  {
+   "fieldname": "sensitivity_setting",
+   "fieldtype": "Data",
+   "label": "Sensitivity Setting"
+  },
+  {
+   "fieldname": "test_remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Metal Detector Test",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

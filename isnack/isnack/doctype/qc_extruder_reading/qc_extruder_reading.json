@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "time_slot",
+  "screw_speed_rpm",
+  "barrel_temp_zone_1",
+  "barrel_temp_zone_2",
+  "barrel_temp_zone_3",
+  "die_pressure",
+  "moisture_content",
+  "product_density",
+  "reading_remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "time_slot",
+   "fieldtype": "Time",
+   "in_list_view": 1,
+   "label": "Time Slot"
+  },
+  {
+   "fieldname": "screw_speed_rpm",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Screw Speed (RPM)"
+  },
+  {
+   "fieldname": "barrel_temp_zone_1",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Barrel Temp Zone 1 (\u00b0C)"
+  },
+  {
+   "fieldname": "barrel_temp_zone_2",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Barrel Temp Zone 2 (\u00b0C)"
+  },
+  {
+   "fieldname": "barrel_temp_zone_3",
+   "fieldtype": "Float",
+   "label": "Barrel Temp Zone 3 (\u00b0C)"
+  },
+  {
+   "fieldname": "die_pressure",
+   "fieldtype": "Float",
+   "label": "Die Pressure (bar)"
+  },
+  {
+   "fieldname": "moisture_content",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Moisture Content (%)"
+  },
+  {
+   "fieldname": "product_density",
+   "fieldtype": "Float",
+   "label": "Product Density"
+  },
+  {
+   "fieldname": "reading_remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Extruder Reading",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
