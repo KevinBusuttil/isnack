@@ -30,14 +30,13 @@ def _get_completed_last_hour(now):
 
 
 def _get_open_non_conformances():
-    """Example: count open non-conformances, adjust doctype/field names to your setup."""
-    if not frappe.db.table_exists("Quality Feedback"):
+    """Count open Non Conformance records."""
+    if not frappe.db.table_exists("Non Conformance"):
         return 0
 
-    # Or use Non Conformance / Quality Action depending on how you use the module
     return frappe.db.count(
-        "Quality Feedback",
-        filters={"status": ("!=", "Closed")},
+        "Non Conformance",
+        filters={"status": "Open"},
     )
 
 

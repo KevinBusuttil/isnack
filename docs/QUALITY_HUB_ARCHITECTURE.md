@@ -645,7 +645,7 @@ All endpoints are defined in `isnack/isnack/page/quality_hub/quality_hub.py` and
 
 **Helper functions:**
 - `_get_completed_last_hour(now)` — counts submitted Quality Inspections modified in the last hour
-- `_get_open_non_conformances()` — counts open Quality Feedback records (returns 0 if the table does not exist)
+- `_get_open_non_conformances()` — counts open Non Conformance records (returns 0 if the table does not exist)
 - `_get_recent_out_of_range_readings(limit=10, hours=4)` — fetches rejected Quality Inspection Readings from the last 4 hours (returns `[]` if the table does not exist)
 
 ---
