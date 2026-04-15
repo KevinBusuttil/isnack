@@ -72,15 +72,6 @@ isnack.quality_hub.QualityHub = class {
                     <div class="qh-layout">
                         <div class="qh-panel">
                             <div class="qh-panel-header">
-                                <div class="qh-panel-title qh-panel-title-checkpoints">${__("QC Checkpoints")}</div>
-                                <span class="qh-badge" data-role="badge-due">
-                                    0 ${__("checkpoints")}
-                                </span>
-                            </div>
-                            <div data-role="table-due"></div>
-                        </div>
-                        <div class="qh-panel">
-                            <div class="qh-panel-header">
                                 <div class="qh-panel-title qh-panel-title-out-of-range">${__("Recent Out-of-Range Readings")}</div>
                                 <span class="qh-badge qh-badge-amber" data-role="badge-out-of-range">
                                     0 ${__("events")}
@@ -573,7 +564,6 @@ isnack.quality_hub.QualityHub = class {
 
     update_ui(data, from_timer) {
         const stats = data.stats || {};
-        const all_checkpoints = data.all_checkpoints || [];
         const out_of_range = data.recent_out_of_range || [];
 
         // stats
@@ -585,78 +575,10 @@ isnack.quality_hub.QualityHub = class {
             .text(stats.open_non_conformances || 0);
 
         this.$container
-            .find("[data-role='badge-due']")
-            .text(`${all_checkpoints.length} ${__("checkpoints")}`);
-        this.$container
             .find("[data-role='badge-out-of-range']")
             .text(`${out_of_range.length} ${__("events")}`);
 
-        this.render_due_table(all_checkpoints);
         this.render_out_of_range_table(out_of_range);
-    }
-
-    render_due_table(checkpoints) {
-        const $target = this.$container.find("[data-role='table-due']");
-        if (!checkpoints.length) {
-            $target.html(
-                `<div class="text-muted small">${__(
-                    "No active checkpoints."
-                )}</div>`
-            );
-            return;
-        }
-
-        const html = `
-            <table class="qh-table">
-                <thead>
-                    <tr>
-                        <th>${__("Checkpoint")}</th>
-                        <th>${__("Equipment")}</th>
-                        <th>${__("Responsible")}</th>
-                        <th style="width: 1%"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${checkpoints
-                        .map((r) => {
-                            return `
-                                <tr>
-                                    <td>
-                                        <div>${frappe.utils.escape_html(
-                                            r.checkpoint_name
-                                        )}</div>
-                                        <div class="text-muted small">
-                                            ${frappe.utils.escape_html(r.name)}
-                                        </div>
-                                    </td>
-                                    <td>${frappe.utils.escape_html(
-                                        r.equipment || "-"
-                                    )}</td>
-                                    <td>${frappe.utils.escape_html(
-                                        r.responsible_user || "-"
-                                    )}</td>
-                                    <td class="text-right">
-                                        <button class="btn btn-xs btn-primary qh-take-reading"
-                                            data-checkpoint="${frappe.utils.escape_html(
-                                                r.name
-                                            )}">
-                                            ${__("Start")}
-                                        </button>
-                                    </td>
-                                </tr>`;
-                        })
-                        .join("")}
-                </tbody>
-            </table>
-        `;
-
-        $target.html(html);
-
-        // bind click
-        $target.find(".qh-take-reading").on("click", (e) => {
-            const checkpoint = $(e.currentTarget).data("checkpoint");
-            this.start_inspection(checkpoint);
-        });
     }
 
     render_out_of_range_table(rows) {
@@ -723,15 +645,4 @@ isnack.quality_hub.QualityHub = class {
         $target.html(html);
     }
 
-    start_inspection(checkpoint) {
-        frappe.call({
-            method:
-                "isnack.isnack.page.quality_hub.quality_hub.create_quality_inspection_from_checkpoint",
-            args: { checkpoint },
-            callback: (r) => {
-                if (!r.message) return;
-                frappe.set_route("Form", "Quality Inspection", r.message.name);
-            },
-        });
-    }
 };

@@ -7,32 +7,6 @@ def get_quality_hub_data():
     """Return all info the Quality Hub page needs."""
     now = now_datetime()
 
-    checkpoints = frappe.get_all(
-        "Lab Checkpoint",
-        filters={"disabled": 0},
-        fields=[
-            "name",
-            "checkpoint_name",
-            "quality_inspection_template",
-            "equipment",
-            "frequency_mins",
-            "last_inspection",
-            "responsible_user",
-        ],
-    )
-
-    all_checkpoints = [
-        {
-            "name": cp.name,
-            "checkpoint_name": cp.checkpoint_name,
-            "equipment": cp.equipment,
-            "frequency_mins": cp.frequency_mins or 0,
-            "last_inspection": cp.last_inspection,
-            "responsible_user": cp.responsible_user,
-        }
-        for cp in checkpoints
-    ]
-
     stats = {
         "completed_last_hour": _get_completed_last_hour(now),
         "open_non_conformances": _get_open_non_conformances(),
@@ -42,7 +16,6 @@ def get_quality_hub_data():
 
     return {
         "stats": stats,
-        "all_checkpoints": all_checkpoints,
         "recent_out_of_range": recent_out_of_range,
     }
 
@@ -105,65 +78,6 @@ def _get_recent_out_of_range_readings(limit=10, hours=4):
     )
 
     return rows
-
-
-@frappe.whitelist()
-def create_quality_inspection_from_checkpoint(checkpoint):
-    """
-    Create a draft Quality Inspection from a Lab Checkpoint
-    and return its name so the UI can route to it.
-    """
-    cp = frappe.get_doc("Lab Checkpoint", checkpoint)
-
-    qi = frappe.new_doc("Quality Inspection")
-    qi.inspection_type = "In Process"  # or Incoming/Outgoing if needed
-    qi.quality_inspection_template = cp.quality_inspection_template
-    qi.lab_checkpoint = cp.name
-    qi.reference_type = getattr(cp, "reference_type", None)
-    qi.reference_name = getattr(cp, "reference_name", None)
-    qi.item_code = None  # set if you have a fixed item per checkpoint
-
-    qi.insert(ignore_permissions=True)
-    return {"name": qi.name}
-
-
-def on_quality_inspection_submit(doc, method):
-    """Update last_inspection when a lab-linked Quality Inspection is submitted."""
-    if not getattr(doc, "lab_checkpoint", None):
-        return
-
-    frappe.db.set_value(
-        "Lab Checkpoint",
-        doc.lab_checkpoint,
-        "last_inspection",
-        now_datetime(),
-        update_modified=False,
-    )
-
-
-def on_qc_record_submit(doc, method):
-    """Update last_inspection on Lab Checkpoint when a QC record is submitted."""
-    factory_line = getattr(doc, "factory_line", None)
-    if not factory_line:
-        return
-
-    if not frappe.db.table_exists("Lab Checkpoint"):
-        return
-
-    checkpoints = frappe.get_all(
-        "Lab Checkpoint",
-        filters={"disabled": 0, "factory_line": factory_line},
-        fields=["name"],
-    )
-
-    for cp in checkpoints:
-        frappe.db.set_value(
-            "Lab Checkpoint",
-            cp.name,
-            "last_inspection",
-            now_datetime(),
-            update_modified=False,
-        )
 
 
 # ─────────────────────────────────────────────────────────────

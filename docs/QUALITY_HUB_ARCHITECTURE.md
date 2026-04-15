@@ -52,7 +52,7 @@ The **Quality Hub** is isnack's third specialist interface, sitting alongside th
 
 > *Paper QC sheets → digital ERP records*
 
-Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces all nine DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations and Lab Checkpoint updates on submission.
+Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces all nine DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations on submission.
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -615,59 +615,7 @@ validate():
 
 ## 9. Hooks & Doc Events
 
-### `on_qc_record_submit`
-
-**Location:** `isnack/isnack/page/quality_hub/quality_hub.py`
-
-This function fires on submission of any of the 9 QC parent DocTypes. It updates the `last_inspection` timestamp on all active Lab Checkpoints that share the same `factory_line`:
-
-```python
-def on_qc_record_submit(doc, method):
-    factory_line = doc.factory_line   # read from the submitted document
-    if not factory_line:
-        return                        # no-op if no line linked
-
-    if not frappe.db.table_exists("Lab Checkpoint"):
-        return                        # graceful degradation if table missing
-
-    checkpoints = frappe.get_all(
-        "Lab Checkpoint",
-        filters={"disabled": 0, "factory_line": factory_line},
-        fields=["name"],
-    )
-    for cp in checkpoints:
-        frappe.db.set_value(
-            "Lab Checkpoint", cp.name,
-            "last_inspection", now_datetime(),
-            update_modified=False,
-        )
-```
-
-### `hooks.py` Wiring
-
-All 9 DocTypes are wired in `isnack/hooks.py` under `doc_events`:
-
-```python
-doc_events = {
-    "QC Receiving Record":       {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Puffs Extruder Record":  {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Rice Extruder Record":   {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Frying Line Record":     {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Oven Record":            {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Tasting Record":         {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Packaging Check":        {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Metal Detector Log":     {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-    "QC Weight Check":           {"on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit"},
-}
-```
-
-There is also a separate `on_quality_inspection_submit(doc, method)` function in `quality_hub.py` that updates `Lab Checkpoint.last_inspection` when a native ERPNext **Quality Inspection** (linked via `lab_checkpoint` field) is submitted. This function is **not currently wired** in `hooks.py` — it is reserved for a future phase where native ERPNext Quality Inspections (created via `create_quality_inspection_from_checkpoint`) are fully integrated into the submission workflow. To activate it, add the following to `doc_events` in `hooks.py`:
-
-```python
-"Quality Inspection": {
-    "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_quality_inspection_submit",
-},
-```
+The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. The `doc_events` block in `hooks.py` no longer contains any QC record entries.
 
 ---
 
@@ -686,26 +634,14 @@ All endpoints are defined in `isnack/isnack/page/quality_hub/quality_hub.py` and
 ```json
 {
   "stats": {
-    "overdue_count": <int>,
-    "due_now_count": <int>,
     "completed_last_hour": <int>,
     "open_non_conformances": <int>
   },
-  "overdue": [ { "name", "checkpoint_name", "equipment", "frequency_mins",
-                 "last_inspection", "responsible_user", "minutes_to_next",
-                 "minutes_since" }, ... ],
-  "due_now":  [ ...same shape... ],
-  "upcoming": [ ...same shape... ],
   "recent_out_of_range": [ { "quality_inspection", "specification", "status",
                               "item_code", "inspection_type", "reference_type",
                               "reference_name", "ts" }, ... ]
 }
 ```
-
-**Classification logic:**
-- `minutes_to_next <= 0` → overdue
-- `0 < minutes_to_next <= 5` → due now
-- `minutes_to_next > 5` → upcoming
 
 **Helper functions:**
 - `_get_completed_last_hour(now)` — counts submitted Quality Inspections modified in the last hour
@@ -770,19 +706,6 @@ If a DocType's database table does not yet exist, the entry is `{ "total": 0, "s
 
 ---
 
-### `create_quality_inspection_from_checkpoint(checkpoint)`
-
-**Method:** `isnack.isnack.page.quality_hub.quality_hub.create_quality_inspection_from_checkpoint`  
-**Arguments:** `checkpoint` — name of a Lab Checkpoint document  
-**Purpose:** Creates a draft ERPNext **Quality Inspection** pre-filled from the Lab Checkpoint (template, linked checkpoint, reference type/name) and returns its name so the UI can route to the form.
-
-**Returns:**
-```json
-{ "name": "QI-0001" }
-```
-
----
-
 ## 11. Quality Hub UI Architecture
 
 **Page registration:** `isnack/isnack/page/quality-hub/`  
@@ -806,7 +729,7 @@ new QualityHub(wrapper)
 
 | Tab Button Label | `data-tab` | DocType(s) | Sub-Nav Pills |
 |---|---|---|---|
-| Live Monitor | `monitor` | Lab Checkpoint (monitoring only) | — |
+| Live Monitor | `monitor` | Quality Inspection Readings (out-of-range panel) | — |
 | Receiving (QCA) | `receiving` | QC Receiving Record | — |
 | Process (QCB–QCE) | `process` | QC Puffs / Rice / Frying / Oven | Puffs · Rice · Frying · Oven |
 | Tasting (QCF) | `tasting` | QC Tasting Record | — |
@@ -952,26 +875,17 @@ Paper Sheet                   Digital Entry
      │  User clicks Submit         ▼
      │                    [Frappe Submit (docstatus → 1)]
      │                             │
-     │  on_submit hook fires       ▼
-     │                    [on_qc_record_submit(doc, method)]
-     │                    - Reads doc.factory_line
-     │                    - Finds Lab Checkpoints for that line
-     │                    - Sets last_inspection = now()
-     │                             │
      ▼                             ▼
- [Paper filed]            [Lab Checkpoint updated]
-                                   │
-                          [Live Monitor auto-poll (30 s)]
+ [Paper filed]            [Live Monitor auto-poll (30 s)]
                                    │
                                    ▼
                           [get_quality_hub_data()]
-                          - Re-classifies checkpoints
-                            as overdue / due-now / upcoming
+                          - Returns stat cards data
+                          - Returns out-of-range readings
                                    │
                                    ▼
                           [Quality Hub Live Monitor]
                           - Stat cards update
-                          - Checkpoint tables refresh
                           - Out-of-range panel refreshes
 ```
 
@@ -1117,11 +1031,8 @@ docs/
 | QCH | Factory Line | `factory_line` | Line whose metal detector is being verified (CCP) |
 | QCI | Item | `item_code` | Finished product being weight-checked |
 | QCI | Batch | `batch_no` | The finished goods batch |
-| All 9 | Lab Checkpoint | `factory_line` (indirect) | `on_qc_record_submit` updates `last_inspection` on all checkpoints for the line |
-| Live Monitor | Quality Inspection | `lab_checkpoint` | Existing ERPNext QI records are surfaced in out-of-range panel |
 | Live Monitor | Quality Inspection Reading | (SQL join) | Rejected readings displayed in "Recent Out-of-Range" panel |
 | Live Monitor | Quality Feedback | `status` | Open non-conformance count (if module is in use) |
-| `create_quality_inspection_from_checkpoint` | Quality Inspection | `lab_checkpoint`, `quality_inspection_template` | Creates a draft QI from a Lab Checkpoint via the Live Monitor |
 
 ---
 
@@ -1155,7 +1066,7 @@ These fixtures are exported/imported with `bench export-fixtures` / `bench impor
 
 ### Factory Line Setup
 
-Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link for Lab Checkpoint lookups in `on_qc_record_submit`.
+Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link key across all QC record DocTypes.
 
 ### Deployment Steps
 
@@ -1194,5 +1105,3 @@ The following enhancements have been identified during the initial implementatio
 - **Notification / Alert Rules** — When `all_tests_passed = 0` (metal detector failure) or `overall_status = "Fail"` on submission, automated email or system notifications to the Quality Manager and Production Manager could be triggered via Frappe's `Notification` DocType or a custom scheduler event.
 
 - **`out_of_range_count` Logic for QCD and QCE** — The frying line (QCD) and oven (QCE) controllers currently set `out_of_range_count = 0` with a placeholder comment. Implementing spec-based range checks (e.g. comparing oil temperature against configurable min/max limits) is the next step for these DocTypes.
-
-- **ERPNext Quality Inspection Integration** — The `create_quality_inspection_from_checkpoint` API and `on_quality_inspection_submit` function provide a bridge to ERPNext's native quality module. A future enhancement could create a QI automatically for each submitted QC record, enabling use of ERPNext's standard quality reports and non-conformance workflows.
