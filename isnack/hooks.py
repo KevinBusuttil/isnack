@@ -157,33 +157,6 @@ doc_events = {
     "Batch": {
         "validate": "isnack.overrides.batch.validate_batch_spaces",
     },
-    "QC Receiving Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Puffs Extruder Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Rice Extruder Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Frying Line Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Oven Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Tasting Record": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Packaging Check": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Metal Detector Log": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
-    "QC Weight Check": {
-        "on_submit": "isnack.isnack.page.quality_hub.quality_hub.on_qc_record_submit",
-    },
 }
 
 # doc_events = {
