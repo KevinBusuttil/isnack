@@ -66,6 +66,10 @@
     margin-bottom: 1.5rem;
 }
 
+.qh-stat-grid-2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 @media (max-width: 1200px) {
     .qh-stat-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -178,14 +182,6 @@
     font-size: 0.72rem;
     color: #6b7280;
     background: #f9fafb;
-}
-
-.qh-row-overdue {
-    background: #fef2f2;
-}
-
-.qh-row-due-now {
-    background: #eff6ff;
 }
 
 /* Chips & dot */

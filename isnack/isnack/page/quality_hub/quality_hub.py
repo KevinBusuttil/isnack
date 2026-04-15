@@ -21,54 +21,19 @@ def get_quality_hub_data():
         ],
     )
 
-    overdue = []
-    due_now = []
-    upcoming = []
-
-    for cp in checkpoints:
-        freq = cp.frequency_mins or 0
-        if not freq:
-            continue
-
-        last = cp.last_inspection
-
-        if last:
-            # minutes until next due
-            minutes_since = (now - last).total_seconds() / 60.0
-            minutes_to_next = freq - minutes_since
-        else:
-            # never inspected = due now
-            minutes_since = None
-            minutes_to_next = 0
-
-        row = {
+    all_checkpoints = [
+        {
             "name": cp.name,
             "checkpoint_name": cp.checkpoint_name,
             "equipment": cp.equipment,
-            "frequency_mins": freq,
-            "last_inspection": last,
+            "frequency_mins": cp.frequency_mins or 0,
+            "last_inspection": cp.last_inspection,
             "responsible_user": cp.responsible_user,
-            "minutes_to_next": round(minutes_to_next, 1),
-            "minutes_since": round(minutes_since, 1)
-            if minutes_since is not None
-            else None,
         }
-
-        # classify
-        if minutes_to_next <= 0:
-            overdue.append(row)
-        elif minutes_to_next <= 5:  # due within 5 minutes
-            due_now.append(row)
-        else:
-            upcoming.append(row)
-
-    overdue.sort(key=lambda r: r["minutes_to_next"])
-    due_now.sort(key=lambda r: r["minutes_to_next"])
-    upcoming.sort(key=lambda r: r["minutes_to_next"])
+        for cp in checkpoints
+    ]
 
     stats = {
-        "overdue_count": len(overdue),
-        "due_now_count": len(due_now),
         "completed_last_hour": _get_completed_last_hour(now),
         "open_non_conformances": _get_open_non_conformances(),
     }
@@ -77,9 +42,7 @@ def get_quality_hub_data():
 
     return {
         "stats": stats,
-        "overdue": overdue,
-        "due_now": due_now,
-        "upcoming": upcoming,
+        "all_checkpoints": all_checkpoints,
         "recent_out_of_range": recent_out_of_range,
     }
 
