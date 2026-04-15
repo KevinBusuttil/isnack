@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "taster_name",
+  "appearance_score",
+  "colour_score",
+  "aroma_score",
+  "taste_score",
+  "texture_score",
+  "overall_score",
+  "comments"
+ ],
+ "fields": [
+  {
+   "fieldname": "taster_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Taster Name"
+  },
+  {
+   "fieldname": "appearance_score",
+   "fieldtype": "Rating",
+   "in_list_view": 1,
+   "label": "Appearance"
+  },
+  {
+   "fieldname": "colour_score",
+   "fieldtype": "Rating",
+   "in_list_view": 1,
+   "label": "Colour"
+  },
+  {
+   "fieldname": "aroma_score",
+   "fieldtype": "Rating",
+   "label": "Aroma"
+  },
+  {
+   "fieldname": "taste_score",
+   "fieldtype": "Rating",
+   "in_list_view": 1,
+   "label": "Taste"
+  },
+  {
+   "fieldname": "texture_score",
+   "fieldtype": "Rating",
+   "label": "Texture"
+  },
+  {
+   "fieldname": "overall_score",
+   "fieldtype": "Rating",
+   "in_list_view": 1,
+   "label": "Overall"
+  },
+  {
+   "fieldname": "comments",
+   "fieldtype": "Small Text",
+   "label": "Comments"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Tasting Score",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

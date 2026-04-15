@@ -1,0 +1,248 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "QCI-.YYYY.-.#####",
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "record_date",
+  "shift",
+  "factory_line",
+  "work_order",
+  "operator_name",
+  "qc_inspector",
+  "status",
+  "remarks",
+  "amended_from",
+  "item_code",
+  "item_name",
+  "batch_no",
+  "nominal_weight",
+  "tu1_limit",
+  "tu2_limit",
+  "samples",
+  "sample_count",
+  "average_weight",
+  "std_deviation",
+  "min_weight",
+  "max_weight",
+  "tu1_failures",
+  "tu2_failures",
+  "overall_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "record_date",
+   "fieldtype": "Date",
+   "label": "Record Date",
+   "reqd": 1,
+   "default": "Today"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "options": "Morning\nAfternoon\nNight",
+   "reqd": 1
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "label": "Factory Line",
+   "options": "Factory Line"
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "operator_name",
+   "fieldtype": "Data",
+   "label": "Operator Name"
+  },
+  {
+   "fieldname": "qc_inspector",
+   "fieldtype": "Link",
+   "label": "QC Inspector",
+   "options": "User",
+   "default": "__user"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nRejected\nClosed"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "QC Weight Check",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item"
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "fetch_from": "item_code.item_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "batch_no",
+   "fieldtype": "Link",
+   "label": "Batch No",
+   "options": "Batch"
+  },
+  {
+   "fieldname": "nominal_weight",
+   "fieldtype": "Float",
+   "label": "Nominal Weight (g)"
+  },
+  {
+   "fieldname": "tu1_limit",
+   "fieldtype": "Float",
+   "label": "TU1 Limit (g)"
+  },
+  {
+   "fieldname": "tu2_limit",
+   "fieldtype": "Float",
+   "label": "TU2 Limit (g)"
+  },
+  {
+   "fieldname": "samples",
+   "fieldtype": "Table",
+   "label": "Samples",
+   "options": "QC Weight Sample"
+  },
+  {
+   "fieldname": "sample_count",
+   "fieldtype": "Int",
+   "label": "Sample Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "average_weight",
+   "fieldtype": "Float",
+   "label": "Average Weight (g)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "std_deviation",
+   "fieldtype": "Float",
+   "label": "Std Deviation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_weight",
+   "fieldtype": "Float",
+   "label": "Min Weight (g)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_weight",
+   "fieldtype": "Float",
+   "label": "Max Weight (g)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tu1_failures",
+   "fieldtype": "Int",
+   "label": "TU1 Failures",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tu2_failures",
+   "fieldtype": "Int",
+   "label": "TU2 Failures",
+   "read_only": 1
+  },
+  {
+   "fieldname": "overall_status",
+   "fieldtype": "Select",
+   "label": "Overall Status",
+   "options": "Pass\nFail\nMarginal"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Weight Check",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Controller",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

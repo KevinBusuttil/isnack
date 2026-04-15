@@ -1,0 +1,219 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "QCG-.YYYY.-.#####",
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "record_date",
+  "shift",
+  "factory_line",
+  "work_order",
+  "operator_name",
+  "qc_inspector",
+  "status",
+  "remarks",
+  "amended_from",
+  "film_type",
+  "film_batch",
+  "print_quality_ok",
+  "seal_integrity_ok",
+  "label_correct",
+  "artwork_matches",
+  "qty_issued",
+  "qty_used",
+  "qty_wasted",
+  "qty_returned",
+  "variance",
+  "variance_acceptable"
+ ],
+ "fields": [
+  {
+   "fieldname": "record_date",
+   "fieldtype": "Date",
+   "label": "Record Date",
+   "reqd": 1,
+   "default": "Today"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "options": "Morning\nAfternoon\nNight",
+   "reqd": 1
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "label": "Factory Line",
+   "options": "Factory Line"
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "operator_name",
+   "fieldtype": "Data",
+   "label": "Operator Name"
+  },
+  {
+   "fieldname": "qc_inspector",
+   "fieldtype": "Link",
+   "label": "QC Inspector",
+   "options": "User",
+   "default": "__user"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nRejected\nClosed"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "QC Packaging Check",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "film_type",
+   "fieldtype": "Data",
+   "label": "Film Type"
+  },
+  {
+   "fieldname": "film_batch",
+   "fieldtype": "Data",
+   "label": "Film Batch"
+  },
+  {
+   "fieldname": "print_quality_ok",
+   "fieldtype": "Check",
+   "label": "Print Quality OK"
+  },
+  {
+   "fieldname": "seal_integrity_ok",
+   "fieldtype": "Check",
+   "label": "Seal Integrity OK"
+  },
+  {
+   "fieldname": "label_correct",
+   "fieldtype": "Check",
+   "label": "Label Correct"
+  },
+  {
+   "fieldname": "artwork_matches",
+   "fieldtype": "Check",
+   "label": "Artwork Matches"
+  },
+  {
+   "fieldname": "qty_issued",
+   "fieldtype": "Float",
+   "label": "Qty Issued"
+  },
+  {
+   "fieldname": "qty_used",
+   "fieldtype": "Float",
+   "label": "Qty Used"
+  },
+  {
+   "fieldname": "qty_wasted",
+   "fieldtype": "Float",
+   "label": "Qty Wasted"
+  },
+  {
+   "fieldname": "qty_returned",
+   "fieldtype": "Float",
+   "label": "Qty Returned"
+  },
+  {
+   "fieldname": "variance",
+   "fieldtype": "Float",
+   "label": "Variance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "variance_acceptable",
+   "fieldtype": "Check",
+   "label": "Variance Acceptable",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Packaging Check",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Controller",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
