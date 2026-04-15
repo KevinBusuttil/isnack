@@ -1,0 +1,262 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "QCA-.YYYY.-.#####",
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "record_date",
+  "shift",
+  "factory_line",
+  "work_order",
+  "operator_name",
+  "qc_inspector",
+  "status",
+  "remarks",
+  "amended_from",
+  "supplier",
+  "purchase_receipt",
+  "item_code",
+  "item_name",
+  "batch_no",
+  "qty_received",
+  "packaging_intact",
+  "labelling_correct",
+  "foreign_body_check",
+  "colour_acceptable",
+  "arrival_temperature",
+  "acceptable_range_min",
+  "acceptable_range_max",
+  "temp_pass",
+  "coa_received",
+  "coa_acceptable",
+  "spec_sheet_matches",
+  "overall_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "record_date",
+   "fieldtype": "Date",
+   "label": "Record Date",
+   "reqd": 1,
+   "default": "Today"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "options": "Morning\nAfternoon\nNight",
+   "reqd": 1
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "label": "Factory Line",
+   "options": "Factory Line"
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "operator_name",
+   "fieldtype": "Data",
+   "label": "Operator Name"
+  },
+  {
+   "fieldname": "qc_inspector",
+   "fieldtype": "Link",
+   "label": "QC Inspector",
+   "options": "User",
+   "default": "__user"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nRejected\nClosed"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "QC Receiving Record",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "purchase_receipt",
+   "fieldtype": "Link",
+   "label": "Purchase Receipt",
+   "options": "Purchase Receipt"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "fetch_from": "item_code.item_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "batch_no",
+   "fieldtype": "Link",
+   "label": "Batch No",
+   "options": "Batch"
+  },
+  {
+   "fieldname": "qty_received",
+   "fieldtype": "Float",
+   "label": "Qty Received"
+  },
+  {
+   "fieldname": "packaging_intact",
+   "fieldtype": "Check",
+   "label": "Packaging Intact"
+  },
+  {
+   "fieldname": "labelling_correct",
+   "fieldtype": "Check",
+   "label": "Labelling Correct"
+  },
+  {
+   "fieldname": "foreign_body_check",
+   "fieldtype": "Check",
+   "label": "Foreign Body Check"
+  },
+  {
+   "fieldname": "colour_acceptable",
+   "fieldtype": "Check",
+   "label": "Colour Acceptable"
+  },
+  {
+   "fieldname": "arrival_temperature",
+   "fieldtype": "Float",
+   "label": "Arrival Temperature (\u00b0C)"
+  },
+  {
+   "fieldname": "acceptable_range_min",
+   "fieldtype": "Float",
+   "label": "Acceptable Range Min (\u00b0C)"
+  },
+  {
+   "fieldname": "acceptable_range_max",
+   "fieldtype": "Float",
+   "label": "Acceptable Range Max (\u00b0C)"
+  },
+  {
+   "fieldname": "temp_pass",
+   "fieldtype": "Check",
+   "label": "Temperature Pass",
+   "read_only": 1
+  },
+  {
+   "fieldname": "coa_received",
+   "fieldtype": "Check",
+   "label": "COA Received"
+  },
+  {
+   "fieldname": "coa_acceptable",
+   "fieldtype": "Check",
+   "label": "COA Acceptable"
+  },
+  {
+   "fieldname": "spec_sheet_matches",
+   "fieldtype": "Check",
+   "label": "Spec Sheet Matches"
+  },
+  {
+   "fieldname": "overall_status",
+   "fieldtype": "Select",
+   "label": "Overall Status",
+   "options": "Accepted\nConditionally Accepted\nRejected"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Receiving Record",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Controller",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

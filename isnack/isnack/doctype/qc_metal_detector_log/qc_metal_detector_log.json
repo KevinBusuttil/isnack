@@ -1,0 +1,196 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "QCH-.YYYY.-.#####",
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "record_date",
+  "shift",
+  "factory_line",
+  "work_order",
+  "operator_name",
+  "qc_inspector",
+  "status",
+  "remarks",
+  "amended_from",
+  "metal_detector_id",
+  "detector_make_model",
+  "tests",
+  "all_tests_passed",
+  "corrective_action",
+  "last_calibration_date",
+  "next_calibration_date",
+  "calibration_certificate"
+ ],
+ "fields": [
+  {
+   "fieldname": "record_date",
+   "fieldtype": "Date",
+   "label": "Record Date",
+   "reqd": 1,
+   "default": "Today"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "options": "Morning\nAfternoon\nNight",
+   "reqd": 1
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "label": "Factory Line",
+   "options": "Factory Line"
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "operator_name",
+   "fieldtype": "Data",
+   "label": "Operator Name"
+  },
+  {
+   "fieldname": "qc_inspector",
+   "fieldtype": "Link",
+   "label": "QC Inspector",
+   "options": "User",
+   "default": "__user"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nRejected\nClosed"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "QC Metal Detector Log",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "metal_detector_id",
+   "fieldtype": "Data",
+   "label": "Metal Detector ID"
+  },
+  {
+   "fieldname": "detector_make_model",
+   "fieldtype": "Data",
+   "label": "Make/Model"
+  },
+  {
+   "fieldname": "tests",
+   "fieldtype": "Table",
+   "label": "Tests",
+   "options": "QC Metal Detector Test"
+  },
+  {
+   "fieldname": "all_tests_passed",
+   "fieldtype": "Check",
+   "label": "All Tests Passed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "corrective_action",
+   "fieldtype": "Small Text",
+   "label": "Corrective Action",
+   "mandatory_depends_on": "eval:!doc.all_tests_passed"
+  },
+  {
+   "fieldname": "last_calibration_date",
+   "fieldtype": "Date",
+   "label": "Last Calibration Date"
+  },
+  {
+   "fieldname": "next_calibration_date",
+   "fieldtype": "Date",
+   "label": "Next Calibration Date"
+  },
+  {
+   "fieldname": "calibration_certificate",
+   "fieldtype": "Attach",
+   "label": "Calibration Certificate"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Metal Detector Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Controller",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

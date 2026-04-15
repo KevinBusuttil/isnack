@@ -1,0 +1,202 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "QCE-.YYYY.-.#####",
+ "creation": "2026-04-15 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "record_date",
+  "shift",
+  "factory_line",
+  "work_order",
+  "operator_name",
+  "qc_inspector",
+  "status",
+  "remarks",
+  "amended_from",
+  "product_item",
+  "product_name",
+  "readings",
+  "avg_zone1_temp",
+  "avg_zone2_temp",
+  "avg_moisture",
+  "out_of_range_count",
+  "overall_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "record_date",
+   "fieldtype": "Date",
+   "label": "Record Date",
+   "reqd": 1,
+   "default": "Today"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "options": "Morning\nAfternoon\nNight",
+   "reqd": 1
+  },
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "label": "Factory Line",
+   "options": "Factory Line"
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "operator_name",
+   "fieldtype": "Data",
+   "label": "Operator Name"
+  },
+  {
+   "fieldname": "qc_inspector",
+   "fieldtype": "Link",
+   "label": "QC Inspector",
+   "options": "User",
+   "default": "__user"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nRejected\nClosed"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "QC Oven Record",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "product_item",
+   "fieldtype": "Link",
+   "label": "Product Item",
+   "options": "Item"
+  },
+  {
+   "fieldname": "product_name",
+   "fieldtype": "Data",
+   "label": "Product Name",
+   "fetch_from": "product_item.item_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "readings",
+   "fieldtype": "Table",
+   "label": "Readings",
+   "options": "QC Oven Reading"
+  },
+  {
+   "fieldname": "avg_zone1_temp",
+   "fieldtype": "Float",
+   "label": "Avg Zone 1 Temp (\u00b0C)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "avg_zone2_temp",
+   "fieldtype": "Float",
+   "label": "Avg Zone 2 Temp (\u00b0C)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "avg_moisture",
+   "fieldtype": "Float",
+   "label": "Avg Moisture (%)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "out_of_range_count",
+   "fieldtype": "Int",
+   "label": "Out of Range Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "overall_status",
+   "fieldtype": "Select",
+   "label": "Overall Status",
+   "options": "Pass\nFail"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-15 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Oven Record",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Controller",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
