@@ -228,3 +228,226 @@
         opacity: 0.4;
     }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Tab Navigation
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 2px solid #e5e7eb;
+    padding-bottom: 0;
+}
+
+.qh-tab {
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    border-radius: 0;
+    outline: none;
+}
+
+.qh-tab:hover {
+    color: #111827;
+}
+
+.qh-tab-active {
+    color: #0369a1;
+    border-bottom-color: #0369a1;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Sub-navigation pills (inside Process / Pkg tabs)
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-sub-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.qh-pill-nav {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    padding: 0.3rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    outline: none;
+}
+
+.qh-pill-nav:hover {
+    background: #e5e7eb;
+}
+
+.qh-pill-active {
+    background: #0369a1;
+    border-color: #0369a1;
+    color: #ffffff;
+}
+
+.qh-pill-active:hover {
+    background: #0284c7;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Filter bar
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.qh-filter-input {
+    width: auto !important;
+    min-width: 140px;
+    max-width: 200px;
+    height: 30px;
+    font-size: 0.82rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.qh-filter-bar .btn {
+    height: 30px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CCP alert banner
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-ccp-alert {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    background: #fffbeb;
+    border: 1px solid #fbbf24;
+    color: #92400e;
+}
+
+.qh-ccp-alert-ok {
+    background: #ecfdf5;
+    border-color: #34d399;
+    color: #047857;
+}
+
+.qh-ccp-alert-warn {
+    background: #fef2f2;
+    border-color: #f87171;
+    color: #b91c1c;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   QC Record Summary grid (Live Monitor)
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-qc-summary-grid {
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 1.25rem;
+}
+
+@media (max-width: 1400px) {
+    .qh-qc-summary-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .qh-qc-summary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+.qh-card-success {
+    border-color: #34d399;
+    background: #ecfdf5;
+}
+
+.qh-card-warn {
+    border-color: #fbbf24;
+    background: #fffbeb;
+}
+
+.qh-card-total {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: #6b7280;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Completion Matrix
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-matrix th,
+.qh-matrix td {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.qh-matrix th:first-child,
+.qh-matrix td:first-child {
+    text-align: left;
+}
+
+.qh-matrix-cell {
+    font-size: 1rem;
+}
+
+.qh-matrix-submitted {
+    /* green check — emoji already colored */
+}
+
+.qh-matrix-draft {
+    /* yellow circle — emoji already colored */
+}
+
+.qh-matrix-not-started {
+    color: #9ca3af;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Quick links row in Reports tab
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-quick-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Row cursor on record tables
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-table tbody tr[data-name] {
+    cursor: pointer;
+}
+
+.qh-table tbody tr[data-name]:hover {
+    background: #f0f9ff;
+}
