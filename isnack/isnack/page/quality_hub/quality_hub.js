@@ -31,11 +31,7 @@ isnack.quality_hub.QualityHub = class {
             <div class="quality-hub-wrapper">
                 <div class="qh-header">
                     <div>
-                        <div class="qh-header-title">
-                            <span class="qh-dot qh-blink"></span>
-                            ${__("Quality Hub")}
-                        </div>
-                        <div class="qh-header-subtitle">
+                        <div class="qh-header-subtitle qh-header-subtitle-standalone">
                             ${__("Central entry point for all Quality Control records.")}
                         </div>
                     </div>
@@ -62,11 +58,11 @@ isnack.quality_hub.QualityHub = class {
                 <!-- TAB: Live Monitor -->
                 <div class="qh-tab-content" data-content="monitor">
                     <div class="qh-stat-grid qh-stat-grid-2col">
-                        <div class="qh-card">
+                        <div class="qh-card qh-card-stat-success">
                             <div class="qh-card-label">${__("Completed last hour")}</div>
                             <div class="qh-card-value" data-role="stat-completed-hour">0</div>
                         </div>
-                        <div class="qh-card">
+                        <div class="qh-card qh-card-stat-danger">
                             <div class="qh-card-label">${__("Open non-conformances")}</div>
                             <div class="qh-card-value" data-role="stat-nc">0</div>
                         </div>
@@ -76,7 +72,7 @@ isnack.quality_hub.QualityHub = class {
                     <div class="qh-layout">
                         <div class="qh-panel">
                             <div class="qh-panel-header">
-                                <div class="qh-panel-title">${__("QC Checkpoints")}</div>
+                                <div class="qh-panel-title qh-panel-title-checkpoints">${__("QC Checkpoints")}</div>
                                 <span class="qh-badge" data-role="badge-due">
                                     0 ${__("checkpoints")}
                                 </span>
@@ -85,7 +81,7 @@ isnack.quality_hub.QualityHub = class {
                         </div>
                         <div class="qh-panel">
                             <div class="qh-panel-header">
-                                <div class="qh-panel-title">${__("Recent Out-of-Range Readings")}</div>
+                                <div class="qh-panel-title qh-panel-title-out-of-range">${__("Recent Out-of-Range Readings")}</div>
                                 <span class="qh-badge qh-badge-amber" data-role="badge-out-of-range">
                                     0 ${__("events")}
                                 </span>
@@ -223,15 +219,15 @@ isnack.quality_hub.QualityHub = class {
                     <div class="qh-panel">
                         <div class="qh-panel-title" style="margin-bottom:0.75rem">${__("Quick Links")}</div>
                         <div class="qh-quick-links">
-                            <a class="btn btn-sm btn-default" href="#List/QC Receiving Record">${__("Receiving Records")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Puffs Extruder Record">${__("Puffs Extruder")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Rice Extruder Record">${__("Rice Extruder")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Frying Line Record">${__("Frying Line")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Oven Record">${__("Oven Records")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Tasting Record">${__("Tasting Records")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Packaging Check">${__("Packaging Checks")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Metal Detector Log">${__("Metal Detector Logs")}</a>
-                            <a class="btn btn-sm btn-default" href="#List/QC Weight Check">${__("Weight Checks")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-blue" href="#List/QC Receiving Record">${__("Receiving Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Puffs Extruder Record">${__("Puffs Extruder")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Rice Extruder Record">${__("Rice Extruder")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Frying Line Record">${__("Frying Line")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Oven Record">${__("Oven Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-violet" href="#List/QC Tasting Record">${__("Tasting Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-teal" href="#List/QC Packaging Check">${__("Packaging Checks")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-amber" href="#List/QC Metal Detector Log">${__("Metal Detector Logs")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-teal" href="#List/QC Weight Check">${__("Weight Checks")}</a>
                         </div>
                     </div>
                 </div>
@@ -480,13 +476,20 @@ isnack.quality_hub.QualityHub = class {
             not_started: '<span class="qh-matrix-cell qh-matrix-not-started">—</span>',
         };
 
+        const shift_cls = {
+            Morning: "qh-matrix-shift-morning",
+            Afternoon: "qh-matrix-shift-afternoon",
+            Night: "qh-matrix-shift-night",
+        };
+
         const header = `<tr><th>${__("Shift")}</th>${codes.map((c) => `<th>${c}</th>`).join("")}</tr>`;
         const body = shifts.map((shift) => {
             const cells = codes.map((code) => {
                 const status = (matrix[shift] || {})[code] || "not_started";
                 return `<td class="text-center">${icon_map[status] || "—"}</td>`;
             }).join("");
-            return `<tr><td><strong>${__(shift)}</strong></td>${cells}</tr>`;
+            const cls = shift_cls[shift] || "";
+            return `<tr><td><strong class="${cls}">${__(shift)}</strong></td>${cells}</tr>`;
         }).join("");
 
         const $target = this.$container.find("[data-role='completion-matrix']");

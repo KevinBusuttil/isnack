@@ -26,17 +26,18 @@
     gap: 1rem;
 }
 
-.qh-header-title {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #0f172a;
-}
-
 .qh-header-subtitle {
     margin-top: 0.25rem;
     opacity: 0.7;
     font-size: 0.85rem;
     color: #4b5563;
+}
+
+.qh-header-subtitle-standalone {
+    opacity: 1;
+    font-size: 0.95rem;
+    color: #374151;
+    font-weight: 500;
 }
 
 .qh-pill {
@@ -255,11 +256,15 @@
 
 .qh-tab:hover {
     color: #111827;
+    background: rgba(3, 105, 161, 0.05);
+    border-radius: 0.35rem 0.35rem 0 0;
 }
 
 .qh-tab-active {
     color: #0369a1;
     border-bottom-color: #0369a1;
+    background: rgba(3, 105, 161, 0.07);
+    border-radius: 0.35rem 0.35rem 0 0;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -310,6 +315,10 @@
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
+    background: rgba(241, 245, 249, 0.8);
+    border: 1px solid #e2e8f0;
+    border-radius: 0.6rem;
+    padding: 0.5rem 0.75rem;
 }
 
 .qh-filter-input {
@@ -446,4 +455,148 @@
 
 .qh-table tbody tr[data-name]:hover {
     background: #f0f9ff;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Stat card colour accents (Live Monitor)
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-card-stat-success {
+    border-left: 4px solid #10b981;
+    background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 60%);
+}
+
+.qh-card-stat-success .qh-card-value {
+    color: #047857;
+}
+
+.qh-card-stat-danger {
+    border-left: 4px solid #f87171;
+    background: linear-gradient(135deg, #fef2f2 0%, #ffffff 60%);
+}
+
+.qh-card-stat-danger .qh-card-value {
+    color: #b91c1c;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   QC Summary cards — default (empty) state tint
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-qc-summary-grid .qh-card:not(.qh-card-success):not(.qh-card-warn) {
+    background: linear-gradient(135deg, #f0f4ff 0%, #ffffff 70%);
+    border-color: #c7d2fe;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Panel title colour accents
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-panel-title-checkpoints {
+    border-left: 3px solid #0369a1;
+    padding-left: 0.5rem;
+    color: #0c4a6e;
+}
+
+.qh-panel-title-out-of-range {
+    border-left: 3px solid #f87171;
+    padding-left: 0.5rem;
+    color: #7f1d1d;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Quick Links colour coding
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-ql-blue {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.qh-ql-blue:hover,
+.qh-ql-blue:focus {
+    background: #dbeafe;
+    border-color: #60a5fa;
+    color: #1e40af;
+}
+
+.qh-ql-green {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #15803d;
+}
+
+.qh-ql-green:hover,
+.qh-ql-green:focus {
+    background: #dcfce7;
+    border-color: #4ade80;
+    color: #166534;
+}
+
+.qh-ql-violet {
+    background: #f5f3ff;
+    border-color: #c4b5fd;
+    color: #6d28d9;
+}
+
+.qh-ql-violet:hover,
+.qh-ql-violet:focus {
+    background: #ede9fe;
+    border-color: #a78bfa;
+    color: #5b21b6;
+}
+
+.qh-ql-teal {
+    background: #f0fdfa;
+    border-color: #5eead4;
+    color: #0f766e;
+}
+
+.qh-ql-teal:hover,
+.qh-ql-teal:focus {
+    background: #ccfbf1;
+    border-color: #2dd4bf;
+    color: #115e59;
+}
+
+.qh-ql-amber {
+    background: #fffbeb;
+    border-color: #fcd34d;
+    color: #b45309;
+}
+
+.qh-ql-amber:hover,
+.qh-ql-amber:focus {
+    background: #fef3c7;
+    border-color: #fbbf24;
+    color: #92400e;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Completion Matrix — coloured header & shift name accents
+   ─────────────────────────────────────────────────────────────
+*/
+.qh-matrix thead th {
+    background: #f0f7ff;
+    color: #1e40af;
+    border-bottom: 2px solid #bfdbfe;
+}
+
+.qh-matrix-shift-morning {
+    border-left: 3px solid #fbbf24;
+    padding-left: 0.4rem;
+    color: #92400e;
+}
+
+.qh-matrix-shift-afternoon {
+    border-left: 3px solid #fb923c;
+    padding-left: 0.4rem;
+    color: #9a3412;
+}
+
+.qh-matrix-shift-night {
+    border-left: 3px solid #818cf8;
+    padding-left: 0.4rem;
+    color: #3730a3;
 }
