@@ -1805,12 +1805,13 @@ def _ensure_batch(item_code: str, batch_no: str, expiry_date=None):
     """Create or update a Batch for the given item/batch_no."""
     # Process spaces in batch number according to settings
     batch_no = _process_batch_spaces(batch_no)
+    normalized_expiry_date = _normalize_batch_expiry_date(expiry_date, item_code=item_code, batch_no=batch_no)
     
     existing_batch = frappe.db.exists("Batch", {"batch_id": batch_no, "item": item_code})
     if existing_batch:
-        if expiry_date:
+        if normalized_expiry_date:
             batch = frappe.get_doc("Batch", existing_batch)
-            batch.expiry_date = getdate(expiry_date)
+            batch.expiry_date = normalized_expiry_date
             batch.save()
         return existing_batch
 
@@ -1821,7 +1822,35 @@ def _ensure_batch(item_code: str, batch_no: str, expiry_date=None):
             "batch_id": batch_no,
         }
     )
-    if expiry_date:
-        batch.expiry_date = getdate(expiry_date)
+    if normalized_expiry_date:
+        batch.expiry_date = normalized_expiry_date
     batch.insert()
     return batch.name
+
+
+def _normalize_batch_expiry_date(expiry_date=None, item_code=None, batch_no=None):
+    if expiry_date is None:
+        return None
+
+    if hasattr(expiry_date, "year") and hasattr(expiry_date, "month") and hasattr(expiry_date, "day"):
+        return expiry_date
+
+    expiry_text = cstr(expiry_date).strip()
+    if not expiry_text:
+        return None
+
+    if expiry_text.lower() in {"nan/nan/nan", "undefined", "null", "invalid date"}:
+        frappe.throw(
+            _("Invalid Expiry Date for item {0}, batch {1}. Please select a valid date.").format(
+                item_code or _("Unknown"), batch_no or _("Unknown")
+            )
+        )
+
+    try:
+        return getdate(expiry_text)
+    except Exception:
+        frappe.throw(
+            _("Invalid Expiry Date '{0}' for item {1}, batch {2}. Please select a valid date.").format(
+                expiry_text, item_code or _("Unknown"), batch_no or _("Unknown")
+            )
+        )

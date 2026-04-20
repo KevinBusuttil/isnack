@@ -2093,7 +2093,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         const rejected = flt((entry && entry.rejected_qty) || 0);
         return {
           batch_no: ((entry && entry.batch_no) || '').trim(),
-          expiry_date: (entry && entry.expiry_date) || null,
+          expiry_date: normalize_po_receipt_expiry_date(entry && entry.expiry_date),
           accepted_qty: accepted,
           rejected_qty: rejected,
         };
@@ -2101,12 +2101,31 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       .filter(entry => entry.accepted_qty > 0 || entry.rejected_qty > 0);
   }
 
+  function normalize_po_receipt_expiry_date(value) {
+    if (value === null || value === undefined) return null;
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return null;
+      return frappe.datetime.obj_to_str(value);
+    }
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    const marker = raw.toLowerCase();
+    if (['nan/nan/nan', 'undefined', 'null', 'invalid date'].includes(marker)) {
+      return null;
+    }
+
+    const parsed = frappe.datetime.str_to_obj(raw);
+    if (!parsed || Number.isNaN(parsed.getTime())) return null;
+    return frappe.datetime.obj_to_str(parsed);
+  }
+
   function get_po_receipt_entries(row) {
     const batches = normalize_po_receipt_row_batches(row);
     if (batches.length) return batches;
     return [{
       batch_no: (row.batch_no || '').trim(),
-      expiry_date: row.expiry_date || null,
+      expiry_date: normalize_po_receipt_expiry_date(row.expiry_date),
       accepted_qty: flt(row.accepted_qty || 0),
       rejected_qty: flt(row.rejected_qty || 0),
     }];
@@ -2165,8 +2184,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if ($rejected.length) $rejected.val(fmt_qty(row.rejected_qty || 0));
     const $batch = $row.find('input[data-fieldname="batch_no"]');
     if ($batch.length) $batch.val(row.batch_no || '');
-    const $expiry = $row.find('input[data-fieldname="expiry_date"]');
-    if ($expiry.length) $expiry.val(row.expiry_date || '');
   }
 
   function refresh_po_receipt_batch_controls(grid) {
@@ -2229,7 +2246,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const pending_qty = flt(row_doc.pending_qty || 0);
     const working = get_po_receipt_entries(row_doc).map(entry => ({
       batch_no: (entry.batch_no || '').trim(),
-      expiry_date: entry.expiry_date || null,
+      expiry_date: normalize_po_receipt_expiry_date(entry.expiry_date),
       accepted_qty: flt(entry.accepted_qty || 0),
       rejected_qty: flt(entry.rejected_qty || 0),
     }));
@@ -2250,7 +2267,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         const cleaned = working
           .map(entry => ({
             batch_no: (entry.batch_no || '').trim(),
-            expiry_date: entry.expiry_date || null,
+            expiry_date: normalize_po_receipt_expiry_date(entry.expiry_date),
             accepted_qty: flt(entry.accepted_qty || 0),
             rejected_qty: flt(entry.rejected_qty || 0),
           }))
@@ -2382,7 +2399,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       });
       $wrap.find('.po-batch-expiry').on('input change', function () {
         const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
-        working[idx].expiry_date = $(this).val() || null;
+        working[idx].expiry_date = normalize_po_receipt_expiry_date($(this).val());
       });
       $wrap.find('.po-batch-accepted').on('change', function () {
         const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
@@ -2426,7 +2443,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             accepted_qty: row.pending_suggested || 0,
             rejected_qty: 0,
             batch_no: '',
-            expiry_date: row.default_expiry_date || null,
+            expiry_date: normalize_po_receipt_expiry_date(row.default_expiry_date),
             requires_batch: row.requires_batch,
             already_received_qty: row.received_qty,
             po_detail: row.name,
@@ -2462,14 +2479,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           if (fieldname === 'accepted_qty' || fieldname === 'rejected_qty') {
             grid_row.doc[fieldname] = flt(raw || 0);
           } else if (fieldname === 'expiry_date') {
-            grid_row.doc[fieldname] = raw || null;
+            grid_row.doc[fieldname] = normalize_po_receipt_expiry_date(raw);
           } else {
             grid_row.doc[fieldname] = raw || '';
           }
           if (normalized_batches.length <= 1) {
             grid_row.doc.batches = [{
               batch_no: (grid_row.doc.batch_no || '').trim(),
-              expiry_date: grid_row.doc.expiry_date || null,
+              expiry_date: normalize_po_receipt_expiry_date(grid_row.doc.expiry_date),
               accepted_qty: flt(grid_row.doc.accepted_qty || 0),
               rejected_qty: flt(grid_row.doc.rejected_qty || 0),
             }];
@@ -2523,12 +2540,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       .map(row => {
         const doc = { ...row.doc };              // base data from grid
         const $row = $(row.row);                 // row DOM
+        doc.expiry_date = normalize_po_receipt_expiry_date(doc.expiry_date);
 
         // pull latest visible values from inputs
         const acc_input = $row.find('input[data-fieldname="accepted_qty"]');
         const rej_input = $row.find('input[data-fieldname="rejected_qty"]');
         const batch_input = $row.find('input[data-fieldname="batch_no"]');
-        const exp_input = $row.find('input[data-fieldname="expiry_date"]');
 
         if (acc_input.length) {
           doc.accepted_qty = flt(acc_input.val() || 0);
@@ -2538,9 +2555,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         }
         if (batch_input.length) {
           doc.batch_no = batch_input.val() || '';
-        }
-        if (exp_input.length) {
-          doc.expiry_date = exp_input.val() || null;
         }
 
         return doc;
