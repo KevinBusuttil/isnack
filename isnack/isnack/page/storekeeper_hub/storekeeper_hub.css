@@ -843,3 +843,11 @@
 .po-receipt-dialog [data-fieldname="batch_no"].po-batch-split-active input[data-fieldname="batch_no"] {
   padding-right: 110px;
 }
+
+/* Single-mount anchor for the batch action button.
+   display:contents makes it layout-transparent; the child .po-row-batch-controls
+   remains absolutely positioned relative to the cell (which already has
+   position:relative). This ensures there is exactly one DOM mount point. */
+.po-receipt-dialog .po-row-batch-controls-anchor {
+  display: contents;
+}

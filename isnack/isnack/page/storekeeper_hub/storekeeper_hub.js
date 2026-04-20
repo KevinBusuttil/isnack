@@ -2144,6 +2144,20 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return totals;
   }
 
+  function get_po_receipt_batch_cell($row) {
+    // Prefer an explicit Frappe grid cell container
+    const $specific = $row.find(
+      '.grid-static-col[data-fieldname="batch_no"], .grid-row-col[data-fieldname="batch_no"]'
+    );
+    if ($specific.length) return $specific.first();
+
+    // Fallback: find [data-fieldname="batch_no"] but exclude input/control elements
+    const $fallback = $row.find('[data-fieldname="batch_no"]').filter(function () {
+      return !$(this).is('input, textarea, select, button');
+    });
+    return $fallback.first();
+  }
+
   function apply_po_receipt_row_mode(grid_row) {
     if (!grid_row || !grid_row.doc) return;
     const row = grid_row.doc;
@@ -2187,7 +2201,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if ($rejected.length) $rejected.val(fmt_qty(row.rejected_qty || 0));
     const $batch = $row.find('input[data-fieldname="batch_no"]');
     if ($batch.length) $batch.val(has_split ? '' : (row.batch_no || ''));
-    $row.find('[data-fieldname="batch_no"]').toggleClass('po-batch-split-active', has_split);
+    const $true_batch_cell = get_po_receipt_batch_cell($row);
+    if ($true_batch_cell.length) $true_batch_cell.toggleClass('po-batch-split-active', has_split);
   }
 
   function refresh_po_receipt_batch_controls(grid) {
@@ -2199,10 +2214,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const row = grid_row.doc;
       const batches = normalize_po_receipt_row_batches(row);
       const $row = $(grid_row.row);
-      const $batch_cell = $row.find('[data-fieldname="batch_no"]');
+      const $batch_cell = get_po_receipt_batch_cell($row);
       if (!$batch_cell.length) return;
 
-      $batch_cell.find('.po-row-batch-controls').remove();
+      // Remove old anchor (guarantees single mount point)
+      $batch_cell.find('.po-row-batch-controls-anchor').remove();
       if (!Number(row.requires_batch)) return;
 
       const has_split = batches.length > 1;
@@ -2220,10 +2236,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       `);
       controls.find('.po-row-batch-split-btn').attr('data-row-name', row.name || '');
 
-      // Append directly to the cell; CSS positions it as an inset overlay at
-      // the right edge. This avoids wrapping Frappe's internal control DOM,
-      // which caused the button to render outside/below the cell.
-      $batch_cell.append(controls);
+      // Single anchor — one mount point per row, ever
+      const $anchor = $('<span class="po-row-batch-controls-anchor"></span>');
+      $anchor.append(controls);
+      $batch_cell.append($anchor);
     });
   }
 
