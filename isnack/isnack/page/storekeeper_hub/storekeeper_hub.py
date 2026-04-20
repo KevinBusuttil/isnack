@@ -1,4 +1,5 @@
 import json
+import copy
 from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
@@ -1580,28 +1581,103 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
     if not items:
         frappe.throw(_("No items received."))
 
-    # 2) Build a map from PO Item (row.name) -> our dialog row
-    # Only keep rows where accepted or rejected > 0
+    po = frappe.get_doc("Purchase Order", purchase_order)
+    pending_map = {}
+    item_code_map = {}
+    for po_item in po.items:
+        pending_map[po_item.name] = max(0.0, flt(po_item.qty) - flt(po_item.received_qty))
+        item_code_map[po_item.name] = po_item.item_code
+
+    item_names = list({code for code in item_code_map.values() if code})
+    batch_flags = {}
+    if item_names:
+        item_docs = frappe.get_all(
+            "Item",
+            filters={"name": ["in", item_names]},
+            fields=["name", "has_batch_no"],
+        )
+        batch_flags = {d.name: bool(d.has_batch_no) for d in item_docs}
+
+    # 2) Build a map from PO Item (row.name) -> list[entries]
+    # Only keep entries where accepted or rejected > 0
     item_map = {}
     for row in items:
-        accepted = flt(row.get("accepted_qty") or 0)
-        rejected = flt(row.get("rejected_qty") or 0)
-        if accepted <= 0 and rejected <= 0:
-            continue
-
         po_detail = row.get("po_detail")
         if not po_detail:
-            # nothing to link to -> skip, or you can frappe.throw here
             continue
 
-        item_map[po_detail] = {
-            "row": row,
-            "accepted": accepted,
-            "rejected": rejected,
-        }
+        row_entries = []
+        batches = row.get("batches")
+        if isinstance(batches, str):
+            try:
+                batches = json.loads(batches or "[]")
+            except json.JSONDecodeError:
+                batches = []
+        if isinstance(batches, list):
+            for batch_row in batches:
+                accepted = flt((batch_row or {}).get("accepted_qty") or 0)
+                rejected = flt((batch_row or {}).get("rejected_qty") or 0)
+                if accepted <= 0 and rejected <= 0:
+                    continue
+                row_entries.append(
+                    {
+                        "accepted": accepted,
+                        "rejected": rejected,
+                        "batch_no": cstr((batch_row or {}).get("batch_no") or "").strip(),
+                        "expiry_date": (batch_row or {}).get("expiry_date"),
+                    }
+                )
+
+        if not row_entries:
+            accepted = flt(row.get("accepted_qty") or 0)
+            rejected = flt(row.get("rejected_qty") or 0)
+            if accepted <= 0 and rejected <= 0:
+                continue
+            row_entries.append(
+                {
+                    "accepted": accepted,
+                    "rejected": rejected,
+                    "batch_no": cstr(row.get("batch_no") or "").strip(),
+                    "expiry_date": row.get("expiry_date"),
+                }
+            )
+
+        item_map.setdefault(po_detail, []).extend(row_entries)
 
     if not item_map:
         frappe.throw(_("No quantities to receive."))
+
+    for po_detail, entries in item_map.items():
+        pending = pending_map.get(po_detail)
+        if pending is None:
+            frappe.throw(_("Invalid Purchase Order Item reference: {0}").format(po_detail))
+
+        total = sum(flt(e.get("accepted") or 0) + flt(e.get("rejected") or 0) for e in entries)
+        if total > pending + 0.0001:
+            frappe.throw(
+                _("Accepted + Rejected ({0}) cannot be greater than Pending ({1}) for Purchase Order Item {2}.").format(
+                    total, pending, po_detail
+                )
+            )
+
+        item_code = item_code_map.get(po_detail)
+        requires_batch = bool(batch_flags.get(item_code))
+        seen_batches = set()
+        for entry in entries:
+            accepted = flt(entry.get("accepted") or 0)
+            batch_no = cstr(entry.get("batch_no") or "").strip()
+            expiry_date = entry.get("expiry_date")
+
+            if requires_batch and accepted > 0 and (not batch_no or not expiry_date):
+                frappe.throw(
+                    _("Batch No and Expiry Date are required for accepted quantity on item {0}.").format(item_code)
+                )
+
+            if batch_no:
+                key = batch_no.lower()
+                if key in seen_batches:
+                    frappe.throw(_("Duplicate Batch No {0} for Purchase Order Item {1}.").format(batch_no, po_detail))
+                seen_batches.add(key)
 
     # 3) Delete any previous draft Purchase Receipts created from Storekeeper Hub for the same PO
     existing_drafts = frappe.get_all(
@@ -1640,37 +1716,45 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
         pr.set_posting_time = 1
 
     # 5) Filter & override PR items based on our dialog rows
-    new_items = []
-    for pr_item in pr.items:
-        data = item_map.get(pr_item.purchase_order_item)
-        if not data:
-            # This PO line wasn't selected in the dialog -> drop it
-            continue
-
-        row = data["row"]
-        accepted = data["accepted"]
-        rejected = data["rejected"]
-
+    def _apply_entry_to_pr_item(pr_item, entry):
+        accepted = flt(entry.get("accepted") or 0)
+        rejected = flt(entry.get("rejected") or 0)
         total = accepted + rejected
         if total <= 0:
-            continue
+            return False
 
-        # override quantities
         pr_item.qty = total
         pr_item.rejected_qty = rejected
+        pr_item.batch_no = ""
 
-        # batch handling
-        batch_no = (row.get("batch_no") or "").strip()
-        expiry_date = row.get("expiry_date")
+        batch_no = cstr(entry.get("batch_no") or "").strip()
+        expiry_date = entry.get("expiry_date")
         if batch_no:
             if not expiry_date:
-                frappe.throw(_("Row {0}: Expiry Date is required when a Batch No is provided for item {1}.").format(
-                    pr_item.idx, pr_item.item_code
-                ))
+                frappe.throw(
+                    _("Expiry Date is required when a Batch No is provided for item {0}.").format(pr_item.item_code)
+                )
             _ensure_batch(pr_item.item_code, batch_no, expiry_date)
             pr_item.batch_no = batch_no
 
-        new_items.append(pr_item)
+        return True
+
+    new_items = []
+    for pr_item in pr.items:
+        entries = item_map.get(pr_item.purchase_order_item)
+        if not entries:
+            # This PO line wasn't selected in the dialog -> drop it
+            continue
+
+        if _apply_entry_to_pr_item(pr_item, entries[0]):
+            new_items.append(pr_item)
+
+        for entry in entries[1:]:
+            clone = copy.deepcopy(pr_item)
+            clone.name = None
+            clone.idx = None
+            if _apply_entry_to_pr_item(clone, entry):
+                new_items.append(clone)
 
     if not new_items:
         frappe.throw(_("Nothing to post: all quantities are zero."))

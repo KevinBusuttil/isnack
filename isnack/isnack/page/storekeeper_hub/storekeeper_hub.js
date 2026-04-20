@@ -2020,15 +2020,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               fieldtype: 'Data',
               label: __('Batch No'),
               in_list_view: 1,
-              width: '100px',
-              columns: 1,
+              width: '220px',
+              columns: 2,
             },
             {
               fieldname: 'expiry_date',
               fieldtype: 'Date',
               label: __('Expiry Date'),
               in_list_view: 1,
-              width: '100px',
+              width: '60px',
               columns: 1,
             },
             {
@@ -2041,10 +2041,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               fieldname: 'already_received_qty',
               fieldtype: 'Float',
               label: __('Already Received'),
-              in_list_view: 1,
+              in_list_view: 0,
               read_only: 1,
-              width: '100px',
-              columns: 1,
             },
             {
               fieldname: 'po_detail',
@@ -2086,6 +2084,307 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     po_receipt_dialog.show();
   }
 
+  function normalize_po_receipt_row_batches(row) {
+    if (!row) return [];
+    const source = Array.isArray(row.batches) ? row.batches : [];
+    return source
+      .map((entry) => {
+        const accepted = flt((entry && entry.accepted_qty) || 0);
+        const rejected = flt((entry && entry.rejected_qty) || 0);
+        return {
+          batch_no: ((entry && entry.batch_no) || '').trim(),
+          expiry_date: (entry && entry.expiry_date) || null,
+          accepted_qty: accepted,
+          rejected_qty: rejected,
+        };
+      })
+      .filter(entry => entry.accepted_qty > 0 || entry.rejected_qty > 0);
+  }
+
+  function get_po_receipt_entries(row) {
+    const batches = normalize_po_receipt_row_batches(row);
+    if (batches.length) return batches;
+    return [{
+      batch_no: (row.batch_no || '').trim(),
+      expiry_date: row.expiry_date || null,
+      accepted_qty: flt(row.accepted_qty || 0),
+      rejected_qty: flt(row.rejected_qty || 0),
+    }];
+  }
+
+  function compute_po_receipt_batch_totals(entries) {
+    const totals = entries.reduce((acc, entry) => {
+      acc.accepted += flt(entry.accepted_qty || 0);
+      acc.rejected += flt(entry.rejected_qty || 0);
+      if (entry.expiry_date && (!acc.min_expiry || entry.expiry_date < acc.min_expiry)) {
+        acc.min_expiry = entry.expiry_date;
+      }
+      return acc;
+    }, { accepted: 0, rejected: 0, min_expiry: null });
+    return totals;
+  }
+
+  function apply_po_receipt_row_mode(grid_row) {
+    if (!grid_row || !grid_row.doc) return;
+    const row = grid_row.doc;
+    const batches = normalize_po_receipt_row_batches(row);
+    const has_split = batches.length > 1;
+    const $row = $(grid_row.row);
+
+    if (has_split) {
+      const totals = compute_po_receipt_batch_totals(batches);
+      row.accepted_qty = totals.accepted;
+      row.rejected_qty = totals.rejected;
+      row.batch_no = __('{0} batches', [batches.length]);
+      row.expiry_date = totals.min_expiry || null;
+    } else if (batches.length === 1) {
+      row.accepted_qty = flt(batches[0].accepted_qty || 0);
+      row.rejected_qty = flt(batches[0].rejected_qty || 0);
+      row.batch_no = batches[0].batch_no || '';
+      row.expiry_date = batches[0].expiry_date || null;
+    }
+
+    const readonly_fields = ['accepted_qty', 'rejected_qty', 'batch_no', 'expiry_date'];
+    readonly_fields.forEach((fieldname) => {
+      const $input = $row.find(`input[data-fieldname="${fieldname}"]`);
+      if (!$input.length) return;
+      $input.prop('readonly', has_split);
+      if (fieldname === 'expiry_date') {
+        $input.prop('disabled', has_split);
+      }
+      if (has_split) {
+        $input.addClass('disabled');
+      } else {
+        $input.removeClass('disabled');
+      }
+    });
+
+    const $accepted = $row.find('input[data-fieldname="accepted_qty"]');
+    if ($accepted.length) $accepted.val(fmt_qty(row.accepted_qty || 0));
+    const $rejected = $row.find('input[data-fieldname="rejected_qty"]');
+    if ($rejected.length) $rejected.val(fmt_qty(row.rejected_qty || 0));
+    const $batch = $row.find('input[data-fieldname="batch_no"]');
+    if ($batch.length) $batch.val(row.batch_no || '');
+    const $expiry = $row.find('input[data-fieldname="expiry_date"]');
+    if ($expiry.length) $expiry.val(row.expiry_date || '');
+  }
+
+  function refresh_po_receipt_batch_controls(grid) {
+    if (!grid || !grid.wrapper) return;
+    (grid.grid_rows || []).forEach((grid_row) => {
+      if (!grid_row || !grid_row.doc) return;
+      apply_po_receipt_row_mode(grid_row);
+
+      const row = grid_row.doc;
+      const batches = normalize_po_receipt_row_batches(row);
+      const $row = $(grid_row.row);
+      const $batch_cell = $row.find('[data-fieldname="batch_no"]');
+      if (!$batch_cell.length) return;
+
+      $batch_cell.find('.po-row-batch-controls').remove();
+      if (!Number(row.requires_batch)) return;
+
+      const has_split = batches.length > 1;
+      const chip = has_split
+        ? `<span class="chip" style="font-size: 10px; padding: 1px 6px;">${batches.length} ${__('batches')}</span>`
+        : '';
+      const controls = $(`
+        <span class="po-row-batch-controls" style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;">
+          ${chip}
+          <button type="button" class="btn btn-xs po-row-batch-split-btn"
+            style="background-color: gold; color: #1f2933; border-color: #d4a017;">...</button>
+        </span>
+      `);
+      controls.find('.po-row-batch-split-btn').attr('data-row-name', row.name || '');
+
+      const $batch_input = $batch_cell.find('input[data-fieldname="batch_no"]');
+      if ($batch_input.length) {
+        $batch_input.after(controls);
+      } else {
+        $batch_cell.find('.field-area').append(controls);
+      }
+    });
+  }
+
+  function open_po_receipt_batches_dialog(grid, row_doc) {
+    if (!grid || !row_doc) return;
+    const row_name = row_doc.name;
+    const grid_row = (grid.grid_rows || []).find(r => r.doc && r.doc.name === row_name);
+    if (!grid_row) return;
+
+    const pending_qty = flt(row_doc.pending_qty || 0);
+    const working = get_po_receipt_entries(row_doc).map(entry => ({
+      batch_no: (entry.batch_no || '').trim(),
+      expiry_date: entry.expiry_date || null,
+      accepted_qty: flt(entry.accepted_qty || 0),
+      rejected_qty: flt(entry.rejected_qty || 0),
+    }));
+    if (!working.length) {
+      working.push({ batch_no: '', expiry_date: null, accepted_qty: flt(row_doc.accepted_qty || 0), rejected_qty: flt(row_doc.rejected_qty || 0) });
+    }
+
+    const title_item = row_doc.item_code || row_doc.item_name || __('Item');
+    const dialog = new frappe.ui.Dialog({
+      title: __('Batches for {0}', [title_item]),
+      size: 'large',
+      fields: [
+        { fieldtype: 'HTML', fieldname: 'batch_info' },
+        { fieldtype: 'HTML', fieldname: 'batch_rows' },
+      ],
+      primary_action_label: __('Save'),
+      primary_action: () => {
+        const cleaned = working
+          .map(entry => ({
+            batch_no: (entry.batch_no || '').trim(),
+            expiry_date: entry.expiry_date || null,
+            accepted_qty: flt(entry.accepted_qty || 0),
+            rejected_qty: flt(entry.rejected_qty || 0),
+          }))
+          .filter(entry => entry.accepted_qty > 0 || entry.rejected_qty > 0);
+
+        const totals = compute_po_receipt_batch_totals(cleaned);
+        if ((totals.accepted + totals.rejected) > pending_qty + 0.0001) {
+          frappe.msgprint({
+            title: __('Validation Error'),
+            message: __('Accepted + Rejected ({0}) cannot exceed Pending Qty ({1}).', [fmt_qty(totals.accepted + totals.rejected), fmt_qty(pending_qty)]),
+            indicator: 'red',
+          });
+          return;
+        }
+
+        const seen = new Set();
+        for (let i = 0; i < cleaned.length; i++) {
+          const entry = cleaned[i];
+          const row_no = i + 1;
+          if (entry.accepted_qty > 0) {
+            if (!entry.batch_no) {
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Batch No is required when Accepted Qty is greater than zero.', [row_no]),
+                indicator: 'red',
+              });
+              return;
+            }
+            if (!entry.expiry_date) {
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Expiry Date is required when Accepted Qty is greater than zero.', [row_no]),
+                indicator: 'red',
+              });
+              return;
+            }
+          }
+          if (entry.batch_no) {
+            const key = entry.batch_no.toLowerCase();
+            if (seen.has(key)) {
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Duplicate Batch No {1}.', [row_no, entry.batch_no]),
+                indicator: 'red',
+              });
+              return;
+            }
+            seen.add(key);
+          }
+        }
+
+        row_doc.batches = cleaned;
+        apply_po_receipt_row_mode(grid_row);
+        refresh_po_receipt_batch_controls(grid);
+        dialog.hide();
+      },
+      secondary_action_label: __('Cancel'),
+      secondary_action: () => dialog.hide(),
+    });
+
+    dialog.show();
+
+    const render = () => {
+      const totals = compute_po_receipt_batch_totals(working);
+      const total_all = totals.accepted + totals.rejected;
+      const total_color = total_all > pending_qty + 0.0001
+        ? '#dc2626'
+        : (Math.abs(total_all - pending_qty) <= 0.0001 ? '#16a34a' : '#475569');
+      const info_html = `
+        <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+          <div><strong>${__('Item')}:</strong> ${frappe.utils.escape_html(row_doc.item_code || '')} ${row_doc.item_name ? `- ${frappe.utils.escape_html(row_doc.item_name)}` : ''}</div>
+          <div><strong>${__('UoM')}:</strong> ${frappe.utils.escape_html(row_doc.uom || '')}</div>
+          <div><strong>${__('Pending Qty')}:</strong> ${fmt_qty(pending_qty)}</div>
+          <div><strong>${__('Current Total Accepted')}:</strong> ${fmt_qty(totals.accepted)}</div>
+          <div><strong>${__('Current Total Rejected')}:</strong> ${fmt_qty(totals.rejected)}</div>
+          <div><strong>${__('Current Total')}:</strong> <span style="color:${total_color};">${fmt_qty(total_all)}</span></div>
+        </div>
+      `;
+      dialog.get_field('batch_info').$wrapper.html(info_html);
+
+      const table_html = `
+        <div>
+          <div style="margin-bottom: 8px;">
+            <button type="button" class="btn btn-sm btn-default po-batch-add-row">+ ${__('Add Batch')}</button>
+          </div>
+          <table class="table table-bordered table-condensed">
+            <thead>
+              <tr>
+                <th>${__('Batch No')}</th>
+                <th>${__('Expiry Date')}</th>
+                <th style="width: 120px;">${__('Accepted Qty')}</th>
+                <th style="width: 120px;">${__('Rejected Qty')}</th>
+                <th style="width: 70px;">${__('Actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${working.map((entry, idx) => `
+                <tr data-idx="${idx}">
+                  <td><input type="text" class="form-control form-control-sm po-batch-batch-no" value="${frappe.utils.escape_html(entry.batch_no || '')}" /></td>
+                  <td><input type="date" class="form-control form-control-sm po-batch-expiry" value="${frappe.utils.escape_html(entry.expiry_date || '')}" /></td>
+                  <td><input type="number" step="0.001" min="0" class="form-control form-control-sm po-batch-accepted" value="${fmt_qty(entry.accepted_qty || 0)}" /></td>
+                  <td><input type="number" step="0.001" min="0" class="form-control form-control-sm po-batch-rejected" value="${fmt_qty(entry.rejected_qty || 0)}" /></td>
+                  <td><button type="button" class="btn btn-xs btn-danger po-batch-delete-row">${__('Delete')}</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      const $wrap = dialog.get_field('batch_rows').$wrapper;
+      $wrap.html(table_html);
+
+      $wrap.find('.po-batch-add-row').on('click', () => {
+        working.push({ batch_no: '', expiry_date: null, accepted_qty: 0, rejected_qty: 0 });
+        render();
+      });
+      $wrap.find('.po-batch-delete-row').on('click', function () {
+        const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
+        working.splice(idx, 1);
+        if (!working.length) {
+          working.push({ batch_no: '', expiry_date: null, accepted_qty: 0, rejected_qty: 0 });
+        }
+        render();
+      });
+      $wrap.find('.po-batch-batch-no').on('input change', function () {
+        const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
+        working[idx].batch_no = ($(this).val() || '').trim();
+      });
+      $wrap.find('.po-batch-expiry').on('input change', function () {
+        const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
+        working[idx].expiry_date = $(this).val() || null;
+      });
+      $wrap.find('.po-batch-accepted').on('change', function () {
+        const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
+        working[idx].accepted_qty = flt($(this).val() || 0);
+        render();
+      });
+      $wrap.find('.po-batch-rejected').on('change', function () {
+        const idx = parseInt($(this).closest('tr').attr('data-idx'), 10) || 0;
+        working[idx].rejected_qty = flt($(this).val() || 0);
+        render();
+      });
+    };
+
+    render();
+  }
+
   function load_po_items_into_dialog(po_name) {
     const d = po_receipt_dialog;
     frappe.call({
@@ -2117,6 +2416,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             requires_batch: row.requires_batch,
             already_received_qty: row.received_qty,
             po_detail: row.name,
+            batches: [],
           };
         });
 
@@ -2133,7 +2433,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         // Remove both 'change' and 'input' handlers with the namespace to
         // avoid duplicate listeners if load_po_items_into_dialog is called again.
         const $grid_wrapper = $(grid.wrapper);
-        $grid_wrapper.off('change.po_receipt input.po_receipt');
+        $grid_wrapper.off('change.po_receipt input.po_receipt click.po_receipt_batches focusin.po_receipt_batches keyup.po_receipt_batches');
         $grid_wrapper.on('change.po_receipt input.po_receipt', 'input[data-fieldname]', function () {
           const $input = $(this);
           const fieldname = $input.attr('data-fieldname');
@@ -2142,6 +2442,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           const row_name = $row_el.attr('data-name');
           const grid_row = (grid.grid_rows || []).find(r => r.doc && r.doc.name === row_name);
           if (!grid_row) return;
+          const normalized_batches = normalize_po_receipt_row_batches(grid_row.doc);
+          if (normalized_batches.length > 1) return;
           const raw = $input.val();
           if (fieldname === 'accepted_qty' || fieldname === 'rejected_qty') {
             grid_row.doc[fieldname] = flt(raw || 0);
@@ -2150,8 +2452,31 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           } else {
             grid_row.doc[fieldname] = raw || '';
           }
+          if (normalized_batches.length <= 1) {
+            grid_row.doc.batches = [{
+              batch_no: (grid_row.doc.batch_no || '').trim(),
+              expiry_date: grid_row.doc.expiry_date || null,
+              accepted_qty: flt(grid_row.doc.accepted_qty || 0),
+              rejected_qty: flt(grid_row.doc.rejected_qty || 0),
+            }];
+          }
+          refresh_po_receipt_batch_controls(grid);
         });
 
+        $grid_wrapper.on('click.po_receipt_batches', '.po-row-batch-split-btn', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const row_name = $(this).attr('data-row-name');
+          const target_row = (grid.grid_rows || []).find(gr => gr.doc && gr.doc.name === row_name);
+          if (!target_row || !Number(target_row.doc.requires_batch)) return;
+          open_po_receipt_batches_dialog(grid, target_row.doc);
+        });
+
+        $grid_wrapper.on('focusin.po_receipt_batches keyup.po_receipt_batches', 'input[data-fieldname]', function () {
+          refresh_po_receipt_batch_controls(grid);
+        });
+
+        refresh_po_receipt_batch_controls(grid);
       },
     });
   }
@@ -2228,7 +2553,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     // Basic validation: accepted + rejected must not exceed pending
     for (let row of items) {
       const pending = flt(row.pending_qty || 0);
-      const total = flt(row.accepted_qty || 0) + flt(row.rejected_qty || 0);
+      const entries = get_po_receipt_entries(row);
+      const totals = compute_po_receipt_batch_totals(entries);
+      const total = totals.accepted + totals.rejected;
       if (total > pending + 0.0001) {
         frappe.throw(
           __('Row {0}: Accepted + Rejected ({1}) cannot be greater than Pending ({2}) for item {3}.', [
@@ -2240,13 +2567,28 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         );
       }
 
-      if (row.requires_batch && !row.batch_no) {
-        frappe.throw(__('Row {0}: Batch No is required for item {1}.', [row.idx || '', row.item_code]));
+      if (row.requires_batch) {
+        const seen_batches = new Set();
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          const batch_no = (entry.batch_no || '').trim();
+          if (flt(entry.accepted_qty || 0) > 0 && !batch_no) {
+            frappe.throw(__('Row {0}, batch row {1}: Batch No is required for item {2}.', [row.idx || '', i + 1, row.item_code]));
+          }
+          if (flt(entry.accepted_qty || 0) > 0 && !entry.expiry_date) {
+            frappe.throw(__('Row {0}, batch row {1}: Expiry Date is required for item {2}.', [row.idx || '', i + 1, row.item_code]));
+          }
+          if (batch_no) {
+            const key = batch_no.toLowerCase();
+            if (seen_batches.has(key)) {
+              frappe.throw(__('Row {0}: Duplicate Batch No {1} for item {2}.', [row.idx || '', batch_no, row.item_code]));
+            }
+            seen_batches.add(key);
+          }
+        }
       }
 
-      if (row.batch_no && !row.expiry_date) {
-        frappe.throw(__('Row {0}: Expiry Date is required when a Batch No is provided for item {1}.', [row.idx || '', row.item_code]));
-      }
+      row.batches = entries;
     }
 
     // Validate rejection_warehouse is provided if any item has rejected_qty > 0
