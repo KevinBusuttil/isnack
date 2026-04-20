@@ -838,5 +838,6 @@
   gap: 4px;
   margin-left: 4px;
   position: relative;
+  /* Keep split control above grid overlays so clicks are not swallowed. */
   z-index: 2;
 }

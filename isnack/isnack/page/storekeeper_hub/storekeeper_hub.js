@@ -2487,6 +2487,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
 
         refresh_po_receipt_batch_controls(grid);
+        // Frappe may finish editable-row paint on the next tick.
         setTimeout(() => refresh_po_receipt_batch_controls(grid), 0);
       },
     });
