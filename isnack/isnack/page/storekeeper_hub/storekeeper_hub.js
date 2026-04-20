@@ -2207,7 +2207,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         ? `<span class="chip" style="font-size: 10px; padding: 1px 6px;">${batches.length} ${__('batches')}</span>`
         : '';
       const controls = $(`
-        <span class="po-row-batch-controls" style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;">
+        <span class="po-row-batch-controls">
           ${chip}
           <button type="button" class="btn btn-xs po-row-batch-split-btn"
             title="${__('Split quantities across batches')}"
@@ -2217,24 +2217,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       `);
       controls.find('.po-row-batch-split-btn').attr('data-row-name', row.name || '');
 
-      const $field_area = $batch_cell.find('.field-area');
-      const $batch_input = $batch_cell.find('input[data-fieldname="batch_no"]');
-      if ($field_area.length) {
-        let $input_wrap = $field_area.find('.po-batch-input-wrap');
-        if (!$input_wrap.length) {
-          if ($batch_input.length) {
-            $batch_input.wrap('<span class="po-batch-input-wrap"></span>');
-            $input_wrap = $field_area.find('.po-batch-input-wrap');
-          } else {
-            $input_wrap = $('<span class="po-batch-input-wrap"></span>').appendTo($field_area);
-          }
-        }
-        $input_wrap.append(controls);
-      } else if ($batch_input.length) {
-        $batch_input.after(controls);
-      } else {
-        $batch_cell.append(controls);
-      }
+      // Append directly to the cell; CSS positions it as an inset overlay at
+      // the right edge. This avoids wrapping Frappe's internal control DOM,
+      // which caused the button to render outside/below the cell.
+      $batch_cell.append(controls);
     });
   }
 

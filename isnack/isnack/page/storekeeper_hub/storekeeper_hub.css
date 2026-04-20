@@ -814,30 +814,27 @@
 
 .po-receipt-dialog [data-fieldname="batch_no"] {
   min-width: 220px;
+  position: relative;  /* establish positioning context for the absolutely-placed button */
 }
 
 .po-receipt-dialog [data-fieldname="expiry_date"] {
   min-width: 120px;
 }
 
-.po-receipt-dialog .po-batch-input-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-}
-
-.po-receipt-dialog .po-batch-input-wrap input[data-fieldname="batch_no"] {
-  min-width: 0;
-  flex: 1 1 auto;
+/* Give the batch input right-side breathing room so text never hides under the button */
+.po-receipt-dialog [data-fieldname="batch_no"] input[data-fieldname="batch_no"] {
+  padding-right: 36px;
 }
 
 .po-receipt-dialog .po-row-batch-controls {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 4px;
-  position: relative;
-  /* Keep split control above grid overlays so clicks are not swallowed. */
+  /* Absolute overlay anchored to the right edge of the cell — stays inside
+     the cell regardless of Frappe's internal control DOM structure. */
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 2;
 }
