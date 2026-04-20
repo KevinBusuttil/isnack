@@ -433,6 +433,10 @@ def generate_next_batch_code(date=None) -> str:
 def _ensure_batch(item_code: str, batch_no: str) -> str:
     """
     Create or get existing Batch for the given item/batch_no.
+
+    Batch.name is globally unique (name == batch_id), so we first check
+    existence by name. If the batch exists but belongs to a different item,
+    raise a clear validation error instead of letting the DB throw a duplicate-key error.
     
     Args:
         item_code: Item code
@@ -443,10 +447,15 @@ def _ensure_batch(item_code: str, batch_no: str) -> str:
     """
     # Process spaces in batch number according to settings
     batch_no = _process_batch_spaces(batch_no)
-    
-    existing_batch = frappe.db.exists("Batch", {"batch_id": batch_no, "item": item_code})
-    if existing_batch:
-        return existing_batch
+
+    if frappe.db.exists("Batch", batch_no):
+        existing_item = frappe.db.get_value("Batch", batch_no, "item")
+        if existing_item != item_code:
+            frappe.throw(
+                _("Batch {0} already exists for item {1}. Please use a different batch ID for {2}.")
+                .format(batch_no, existing_item, item_code)
+            )
+        return batch_no
     
     batch = frappe.get_doc({
         "doctype": "Batch",
@@ -1053,7 +1062,10 @@ def set_work_order_state(
                 ))
         except Exception as e:
             # Log the error but don't block the Start action
-            frappe.log_error(f"Failed to transfer staged materials for {work_order}: {str(e)}")
+            frappe.log_error(
+                title="Transfer Staged To WIP Error",
+                message=f"Failed to transfer staged materials for {work_order}: {str(e)}",
+            )
             frappe.msgprint(_("Warning: Could not transfer staged materials. Error: {0}").format(str(e)), 
                           indicator="orange")
     elif action_lc == "pause":
@@ -1468,7 +1480,10 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         return {"ok": True, "msg": _("Consumed {0} {1} of {2}").format(qty, uom, item_code)}
 
     except Exception as e:
-        frappe.log_error(f"scan_material error: {str(e)}", "Material Scan Error")
+        frappe.log_error(
+            title="Material Scan Error",
+            message=f"scan_material error: {str(e)}",
+        )
         return {"ok": False, "msg": _("Failed to consume material. Please contact administrator.")}
 
 
@@ -1623,17 +1638,19 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
                         # Should not happen - BOM items with zero qty indicate data issue
                         variance_pct = 0
                         frappe.log_error(
-                            f"BOM item with zero required quantity for WO {work_order}: {item_code}",
-                            "BOM Data Issue"
+                            title="BOM Data Issue",
+                            message=f"BOM item with zero required quantity for WO {work_order}: {item_code}",
                         )
                     
                     frappe.log_error(
-                        f"Over-consumption detected for WO {work_order}\n"
-                        f"Item: {item_code}\n"
-                        f"Required: {required_qty:.4f}\n"
-                        f"Consumed: {already_consumed:.4f}\n"
-                        f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)",
-                        "Material Over-Consumption"
+                        title="Material Over-Consumption",
+                        message=(
+                            f"Over-consumption detected for WO {work_order}\n"
+                            f"Item: {item_code}\n"
+                            f"Required: {required_qty:.4f}\n"
+                            f"Consumed: {already_consumed:.4f}\n"
+                            f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                        ),
                     )
                     
                     # Add comment to Work Order for audit trail
@@ -1983,7 +2000,10 @@ def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
                 return {"conversion_factor": 1.0 / inverse_value, "found": True}
         
     except Exception as e:
-        frappe.log_error(f"Error getting conversion factor: {str(e)}", "get_pallet_conversion_factor")
+        frappe.log_error(
+            title="Pallet Conversion Factor Error",
+            message=f"Error getting conversion factor: {str(e)}",
+        )
     
     # No conversion found
     return {"conversion_factor": None, "found": False}
@@ -2042,7 +2062,10 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
             wo_list = json.loads(work_orders) if isinstance(work_orders, str) else work_orders
         except Exception as e:
             # Log parsing error but continue with empty list
-            frappe.log_error(f"Failed to parse work_orders parameter: {str(e)}", "get_packaging_bom_items_for_ended_wos")
+            frappe.log_error(
+                title="Packaging BOM Work Orders Parse Error",
+                message=f"Failed to parse work_orders parameter: {str(e)}",
+            )
     
     # If no explicit work orders provided, resolve from lines
     if not wo_list and lines:
@@ -2063,7 +2086,10 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                 wo_list = [wo["name"] for wo in ended_wos]
         except Exception as e:
             # Log error but continue - may be invalid lines parameter or query failure
-            frappe.log_error(f"Failed to resolve work orders from lines: {str(e)}", "get_packaging_bom_items_for_ended_wos")
+            frappe.log_error(
+                title="Packaging BOM Work Orders Resolve Error",
+                message=f"Failed to resolve work orders from lines: {str(e)}",
+            )
     
     if not wo_list:
         return {"items": []}
@@ -2466,12 +2492,14 @@ def close_production(good_qty: float, reject_qty: float = 0,
                                 variance_pct = 0
                             
                             frappe.log_error(
-                                f"Over-consumption detected for WO {wo_name}\n"
-                                f"Item: {item_code}\n"
-                                f"Required: {required_qty:.4f}\n"
-                                f"Consumed: {already_consumed:.4f}\n"
-                                f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)",
-                                "Material Over-Consumption"
+                                title="Material Over-Consumption",
+                                message=(
+                                    f"Over-consumption detected for WO {wo_name}\n"
+                                    f"Item: {item_code}\n"
+                                    f"Required: {required_qty:.4f}\n"
+                                    f"Consumed: {already_consumed:.4f}\n"
+                                    f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                                ),
                             )
             
             # Add packaging materials (only the portion not already consumed via LOAD)
@@ -2480,7 +2508,8 @@ def close_production(good_qty: float, reject_qty: float = 0,
                 for pkg_item in split["packaging"]:
                     item_code = pkg_item["item_code"]
                     qty = pkg_item["qty"]
-                    batch_no = pkg_item.get("batch_no")
+                    # Must not shadow the outer function parameter batch_no (Finished Goods batch).
+                    pkg_batch_no = pkg_item.get("batch_no")
                     if qty <= 0:
                         continue
 
@@ -2494,8 +2523,8 @@ def close_production(good_qty: float, reject_qty: float = 0,
                           AND se.purpose = 'Material Consumption for Manufacture'
                           AND sed.item_code = %s
                           AND sed.is_finished_item = 0
-                    """ + (" AND sed.batch_no = %s" if batch_no else ""),
-                        (wo_name, item_code, batch_no) if batch_no else (wo_name, item_code),
+                    """ + (" AND sed.batch_no = %s" if pkg_batch_no else ""),
+                        (wo_name, item_code, pkg_batch_no) if pkg_batch_no else (wo_name, item_code),
                         as_dict=True
                     )
                     already_consumed_pkg_qty = flt(already_consumed_pkg[0].total_qty) if already_consumed_pkg else 0
@@ -2510,17 +2539,19 @@ def close_production(good_qty: float, reject_qty: float = 0,
                             "s_warehouse": wip_wh,
                             "is_finished_item": 0,
                         }
-                        if batch_no:
-                            row["batch_no"] = batch_no
+                        if pkg_batch_no:
+                            row["batch_no"] = pkg_batch_no
                             row["use_serial_batch_fields"] = 1
                         se.append("items", row)
                     elif remaining_pkg_qty < -QTY_EPSILON:
                         frappe.log_error(
-                            f"Packaging item over-consumed for WO {wo_name}\n"
-                            f"Item: {item_code}" + (f" Batch: {batch_no}" if batch_no else "") + "\n"
-                            f"Entered: {qty:.4f}\n"
-                            f"Already consumed: {already_consumed_pkg_qty:.4f}",
-                            "Packaging Over-Consumption"
+                            title="Packaging Over-Consumption",
+                            message=(
+                                f"Packaging item over-consumed for WO {wo_name}\n"
+                                f"Item: {item_code}" + (f" Batch: {pkg_batch_no}" if pkg_batch_no else "") + "\n"
+                                f"Entered: {qty:.4f}\n"
+                                f"Already consumed: {already_consumed_pkg_qty:.4f}"
+                            ),
                         )
             
             # Add scrap/rejects if applicable
@@ -2571,7 +2602,10 @@ def close_production(good_qty: float, reject_qty: float = 0,
             completed_wos.append(wo_name)
             
         except Exception as e:
-            frappe.log_error(f"Failed to close production for {wo_name}: {str(e)}", "Close Production Error")
+            frappe.log_error(
+                title="Close Production Error",
+                message=f"Failed to close production for {wo_name}: {str(e)}",
+            )
             frappe.throw(_("Failed to close production for {0}: {1}").format(wo_name, str(e)))
     
     return {
