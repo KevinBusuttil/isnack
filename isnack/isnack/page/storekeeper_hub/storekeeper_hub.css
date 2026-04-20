@@ -811,3 +811,6 @@
 .po-receipt-dialog .frappe-control[data-fieldname="items"] .row-index {
   display: none !important;
 }
+
+.po-receipt-dialog [data-fieldname="expiry_date"] { max-width: 100px; }
+.po-receipt-dialog [data-fieldname="batch_no"] { min-width: 200px; }
