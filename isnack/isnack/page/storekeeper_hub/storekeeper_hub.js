@@ -2043,7 +2043,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               label: __('Already Received'),
               in_list_view: 0,
               read_only: 1,
-              width: '100px',
             },
             {
               fieldname: 'po_detail',
@@ -2090,8 +2089,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const source = Array.isArray(row.batches) ? row.batches : [];
     return source
       .map((entry) => {
-        const accepted = flt(entry && entry.accepted_qty || 0);
-        const rejected = flt(entry && entry.rejected_qty || 0);
+        const accepted = flt((entry && entry.accepted_qty) || 0);
+        const rejected = flt((entry && entry.rejected_qty) || 0);
         return {
           batch_no: ((entry && entry.batch_no) || '').trim(),
           expiry_date: (entry && entry.expiry_date) || null,
@@ -2106,7 +2105,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const batches = normalize_po_receipt_row_batches(row);
     if (batches.length) return batches;
     return [{
-      batch_no: ((row.batch_no || '') + '').trim(),
+      batch_no: (row.batch_no || '').trim(),
       expiry_date: row.expiry_date || null,
       accepted_qty: flt(row.accepted_qty || 0),
       rejected_qty: flt(row.rejected_qty || 0),
@@ -2259,16 +2258,31 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           const row_no = i + 1;
           if (entry.accepted_qty > 0) {
             if (!entry.batch_no) {
-              frappe.throw(__('Batch row {0}: Batch No is required when Accepted Qty is greater than zero.', [row_no]));
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Batch No is required when Accepted Qty is greater than zero.', [row_no]),
+                indicator: 'red',
+              });
+              return;
             }
             if (!entry.expiry_date) {
-              frappe.throw(__('Batch row {0}: Expiry Date is required when Accepted Qty is greater than zero.', [row_no]));
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Expiry Date is required when Accepted Qty is greater than zero.', [row_no]),
+                indicator: 'red',
+              });
+              return;
             }
           }
           if (entry.batch_no) {
             const key = entry.batch_no.toLowerCase();
             if (seen.has(key)) {
-              frappe.throw(__('Batch row {0}: Duplicate Batch No {1}.', [row_no, entry.batch_no]));
+              frappe.msgprint({
+                title: __('Validation Error'),
+                message: __('Batch row {0}: Duplicate Batch No {1}.', [row_no, entry.batch_no]),
+                indicator: 'red',
+              });
+              return;
             }
             seen.add(key);
           }
@@ -2322,7 +2336,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               ${working.map((entry, idx) => `
                 <tr data-idx="${idx}">
                   <td><input type="text" class="form-control form-control-sm po-batch-batch-no" value="${frappe.utils.escape_html(entry.batch_no || '')}" /></td>
-                  <td><input type="date" class="form-control form-control-sm po-batch-expiry" value="${entry.expiry_date || ''}" /></td>
+                  <td><input type="date" class="form-control form-control-sm po-batch-expiry" value="${frappe.utils.escape_html(entry.expiry_date || '')}" /></td>
                   <td><input type="number" step="0.001" min="0" class="form-control form-control-sm po-batch-accepted" value="${fmt_qty(entry.accepted_qty || 0)}" /></td>
                   <td><input type="number" step="0.001" min="0" class="form-control form-control-sm po-batch-rejected" value="${fmt_qty(entry.rejected_qty || 0)}" /></td>
                   <td><button type="button" class="btn btn-xs btn-danger po-batch-delete-row">${__('Delete')}</button></td>
@@ -2428,7 +2442,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           const row_name = $row_el.attr('data-name');
           const grid_row = (grid.grid_rows || []).find(r => r.doc && r.doc.name === row_name);
           if (!grid_row) return;
-          if (normalize_po_receipt_row_batches(grid_row.doc).length > 1) return;
+          const normalized_batches = normalize_po_receipt_row_batches(grid_row.doc);
+          if (normalized_batches.length > 1) return;
           const raw = $input.val();
           if (fieldname === 'accepted_qty' || fieldname === 'rejected_qty') {
             grid_row.doc[fieldname] = flt(raw || 0);
@@ -2437,7 +2452,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           } else {
             grid_row.doc[fieldname] = raw || '';
           }
-          if (normalize_po_receipt_row_batches(grid_row.doc).length <= 1) {
+          if (normalized_batches.length <= 1) {
             grid_row.doc.batches = [{
               batch_no: (grid_row.doc.batch_no || '').trim(),
               expiry_date: grid_row.doc.expiry_date || null,

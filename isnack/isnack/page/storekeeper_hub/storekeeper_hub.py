@@ -1611,7 +1611,7 @@ def post_po_receipt(purchase_order, items=None, receipt_date=None, rejection_war
         if isinstance(batches, str):
             try:
                 batches = json.loads(batches or "[]")
-            except Exception:
+            except json.JSONDecodeError:
                 batches = []
         if isinstance(batches, list):
             for batch_row in batches:
