@@ -452,7 +452,7 @@ def _ensure_batch(item_code: str, batch_no: str) -> str:
         existing_item = frappe.db.get_value("Batch", batch_no, "item")
         if existing_item != item_code:
             frappe.throw(
-                _("Batch {0} already exists for item {1}. Please use a different batch id for {2}.")
+                _("Batch {0} already exists for item {1}. Please use a different batch ID for {2}.")
                 .format(batch_no, existing_item, item_code)
             )
         return batch_no
@@ -2508,7 +2508,7 @@ def close_production(good_qty: float, reject_qty: float = 0,
                 for pkg_item in split["packaging"]:
                     item_code = pkg_item["item_code"]
                     qty = pkg_item["qty"]
-                    # Must not shadow outer batch_no (Finished Goods batch from function parameter).
+                    # Must not shadow the outer function parameter batch_no (Finished Goods batch).
                     pkg_batch_no = pkg_item.get("batch_no")
                     if qty <= 0:
                         continue
