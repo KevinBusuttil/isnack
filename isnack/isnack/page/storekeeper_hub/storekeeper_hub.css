@@ -813,7 +813,7 @@
 }
 
 .po-receipt-dialog [data-fieldname="batch_no"] {
-  min-width: 140px;
+  min-width: 220px;
 }
 
 .po-receipt-dialog [data-fieldname="expiry_date"] {
