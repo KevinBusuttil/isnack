@@ -2155,7 +2155,6 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const totals = compute_po_receipt_batch_totals(batches);
       row.accepted_qty = totals.accepted;
       row.rejected_qty = totals.rejected;
-      row.batch_no = __('{0} batches', [batches.length]);
       row.expiry_date = totals.min_expiry || null;
     } else if (batches.length === 1) {
       row.accepted_qty = flt(batches[0].accepted_qty || 0);
@@ -2184,7 +2183,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const $rejected = $row.find('input[data-fieldname="rejected_qty"]');
     if ($rejected.length) $rejected.val(fmt_qty(row.rejected_qty || 0));
     const $batch = $row.find('input[data-fieldname="batch_no"]');
-    if ($batch.length) $batch.val(row.batch_no || '');
+    if ($batch.length) $batch.val(has_split ? '' : (row.batch_no || ''));
   }
 
   function refresh_po_receipt_batch_controls(grid) {
