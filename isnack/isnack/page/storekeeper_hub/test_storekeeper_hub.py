@@ -3,11 +3,13 @@
 
 import json
 import unittest
+from datetime import date
 from unittest.mock import patch, MagicMock
 
 import frappe
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     get_items_per_stock_entry,
+    _normalize_batch_expiry_date,
     print_combined_pallet_labels,
 )
 
@@ -308,6 +310,30 @@ class TestPrintCombinedPalletLabels(unittest.TestCase):
 
         self.assertTrue(result['enable_silent_printing'])
         self.assertEqual(result['printer_name'], 'LabelPrinter1')
+
+
+class TestNormalizeBatchExpiryDate(unittest.TestCase):
+    def test_returns_none_for_empty_values(self):
+        self.assertIsNone(_normalize_batch_expiry_date(None))
+        self.assertIsNone(_normalize_batch_expiry_date(""))
+        self.assertIsNone(_normalize_batch_expiry_date("   "))
+
+    def test_keeps_date_objects_unchanged(self):
+        value = date(2026, 4, 20)
+        self.assertEqual(_normalize_batch_expiry_date(value), value)
+
+    def test_parses_valid_date_string(self):
+        self.assertEqual(_normalize_batch_expiry_date("2026-04-20"), date(2026, 4, 20))
+
+    @patch("frappe.throw", side_effect=frappe.ValidationError("Invalid Expiry Date"))
+    def test_rejects_known_invalid_markers(self, _throw):
+        with self.assertRaisesRegex(frappe.ValidationError, "Invalid Expiry Date"):
+            _normalize_batch_expiry_date("NaN/NaN/NaN", item_code="ITEM-001", batch_no="BATCH-001")
+
+    @patch("frappe.throw", side_effect=frappe.ValidationError("Invalid Expiry Date"))
+    def test_rejects_malformed_date_strings(self, _throw):
+        with self.assertRaisesRegex(frappe.ValidationError, "Invalid Expiry Date"):
+            _normalize_batch_expiry_date("31/31/2026", item_code="ITEM-001", batch_no="BATCH-001")
 
 
 if __name__ == '__main__':
