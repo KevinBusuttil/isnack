@@ -2020,15 +2020,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               fieldtype: 'Data',
               label: __('Batch No'),
               in_list_view: 1,
-              width: '220px',
-              columns: 2,
+              width: '140px',
+              columns: 1,
             },
             {
               fieldname: 'expiry_date',
               fieldtype: 'Date',
               label: __('Expiry Date'),
               in_list_view: 1,
-              width: '60px',
+              width: '120px',
               columns: 1,
             },
             {
@@ -2192,16 +2192,30 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         <span class="po-row-batch-controls" style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;">
           ${chip}
           <button type="button" class="btn btn-xs po-row-batch-split-btn"
+            title="${__('Split quantities across batches')}"
+            aria-label="${__('Split quantities across batches')}"
             style="background-color: gold; color: #1f2933; border-color: #d4a017;">...</button>
         </span>
       `);
       controls.find('.po-row-batch-split-btn').attr('data-row-name', row.name || '');
 
+      const $field_area = $batch_cell.find('.field-area');
       const $batch_input = $batch_cell.find('input[data-fieldname="batch_no"]');
-      if ($batch_input.length) {
+      if ($field_area.length) {
+        let $input_wrap = $field_area.find('.po-batch-input-wrap');
+        if (!$input_wrap.length) {
+          if ($batch_input.length) {
+            $batch_input.wrap('<span class="po-batch-input-wrap"></span>');
+            $input_wrap = $field_area.find('.po-batch-input-wrap');
+          } else {
+            $input_wrap = $('<span class="po-batch-input-wrap"></span>').appendTo($field_area);
+          }
+        }
+        $input_wrap.append(controls);
+      } else if ($batch_input.length) {
         $batch_input.after(controls);
       } else {
-        $batch_cell.find('.field-area').append(controls);
+        $batch_cell.append(controls);
       }
     });
   }
@@ -2433,7 +2447,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         // Remove both 'change' and 'input' handlers with the namespace to
         // avoid duplicate listeners if load_po_items_into_dialog is called again.
         const $grid_wrapper = $(grid.wrapper);
-        $grid_wrapper.off('change.po_receipt input.po_receipt click.po_receipt_batches focusin.po_receipt_batches keyup.po_receipt_batches');
+        $grid_wrapper.off('change.po_receipt input.po_receipt click.po_receipt_batches');
         $grid_wrapper.on('change.po_receipt input.po_receipt', 'input[data-fieldname]', function () {
           const $input = $(this);
           const fieldname = $input.attr('data-fieldname');
@@ -2472,11 +2486,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           open_po_receipt_batches_dialog(grid, target_row.doc);
         });
 
-        $grid_wrapper.on('focusin.po_receipt_batches keyup.po_receipt_batches', 'input[data-fieldname]', function () {
-          refresh_po_receipt_batch_controls(grid);
-        });
-
         refresh_po_receipt_batch_controls(grid);
+        setTimeout(() => refresh_po_receipt_batch_controls(grid), 0);
       },
     });
   }

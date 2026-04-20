@@ -812,5 +812,31 @@
   display: none !important;
 }
 
-.po-receipt-dialog [data-fieldname="expiry_date"] { max-width: 100px; }
-.po-receipt-dialog [data-fieldname="batch_no"] { min-width: 200px; }
+.po-receipt-dialog [data-fieldname="batch_no"] {
+  min-width: 140px;
+}
+
+.po-receipt-dialog [data-fieldname="expiry_date"] {
+  min-width: 120px;
+}
+
+.po-receipt-dialog .po-batch-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.po-receipt-dialog .po-batch-input-wrap input[data-fieldname="batch_no"] {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.po-receipt-dialog .po-row-batch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  position: relative;
+  z-index: 2;
+}
