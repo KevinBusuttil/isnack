@@ -838,3 +838,8 @@
   transform: translateY(-50%);
   z-index: 2;
 }
+
+/* In split mode, widen right padding to prevent the badge + button from overlapping input text */
+.po-receipt-dialog [data-fieldname="batch_no"].po-batch-split-active input[data-fieldname="batch_no"] {
+  padding-right: 110px;
+}
