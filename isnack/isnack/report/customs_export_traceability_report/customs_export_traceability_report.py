@@ -671,8 +671,7 @@ def _fetch_batch_balance(batch_item_pairs):
 				batch_no=batch_no,
 				item_code=item_code,
 				for_stock_levels=True,
-				consider_negative_batches=True,
-				ignore_reserved_stock=True,
+				consider_negative_batches=True
 			)
 			total = sum(b.get("qty", 0) for b in (batches or []))
 			result[(item_code, batch_no)] = total
