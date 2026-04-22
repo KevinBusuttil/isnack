@@ -698,6 +698,7 @@ def _fetch_si_header_details(si_names):
 			po_no,
 			territory,
 			remarks,
+			custom_customs_document_no,
 			customer_address,
 			shipping_address_name,
 			address_display,
@@ -850,6 +851,7 @@ def get_print_html(filters):
 			"company": _v(first.get("company")),
 			"po_no": _v(si_extra.get("po_no")),
 			"territory": _v(si_extra.get("territory")),
+			"customs_export_declaration_no": _v(si_extra.get("custom_customs_document_no")),
 			"remarks": _v(si_extra.get("remarks")),
 			"customer_address": _v(si_extra.get("address_display") or si_extra.get("customer_address")),
 			"company_address": _v(si_extra.get("company_address_display")),
@@ -1027,16 +1029,16 @@ def get_export_excel(filters):
 		po_no = si_extra.get("po_no") or ""
 		territory = si_extra.get("territory") or ""
 		remarks = si_extra.get("remarks") or ""
-		customs_export_document_no = si_extra.get("customs_export_document_no") or ""
+		customs_export_declaration_no = si_extra.get("custom_customs_document_no") or ""
 
-		if po_no or territory:
+		if po_no or territory or customs_export_declaration_no:
 			extra_parts = []
 			if po_no:
 				extra_parts.append(f"PO Ref: {po_no}")
 			if territory:
 				extra_parts.append(f"Territory: {territory}")
-			if customs_export_document_no:
-				extra_parts.append(f"Customs Export Document No: {customs_export_document_no}")				
+			if customs_export_declaration_no:
+				extra_parts.append(f"Customs Export Declaration No: {customs_export_declaration_no}")
 			_write_merged_row(
 				" | ".join(extra_parts),
 				font=_normal_font(size=9),
