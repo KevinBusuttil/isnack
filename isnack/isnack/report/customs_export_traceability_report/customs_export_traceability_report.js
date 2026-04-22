@@ -81,7 +81,7 @@ frappe.query_reports["Customs Export Traceability Report"] = {
 		},
 		{
 			"fieldname": "customs_document_no",
-			"label": __("Customs Document No"),
+			"label": __("Customs Import Declaration No"),
 			"fieldtype": "Data"
 		}
 	],
