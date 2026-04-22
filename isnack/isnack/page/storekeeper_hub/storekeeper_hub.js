@@ -2021,7 +2021,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               label: __('Batch No'),
               in_list_view: 1,
               width: '220px',
-              columns: 1,
+              columns: 2,
             },
             {
               fieldname: 'expiry_date',
