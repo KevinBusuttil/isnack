@@ -1027,12 +1027,16 @@ def get_export_excel(filters):
 		po_no = si_extra.get("po_no") or ""
 		territory = si_extra.get("territory") or ""
 		remarks = si_extra.get("remarks") or ""
+		customs_export_document_no = si_extra.get("customs_export_document_no") or ""
+
 		if po_no or territory:
 			extra_parts = []
 			if po_no:
 				extra_parts.append(f"PO Ref: {po_no}")
 			if territory:
 				extra_parts.append(f"Territory: {territory}")
+			if customs_export_document_no:
+				extra_parts.append(f"Customs Export Document No: {customs_export_document_no}")				
 			_write_merged_row(
 				" | ".join(extra_parts),
 				font=_normal_font(size=9),
