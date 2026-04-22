@@ -1905,7 +1905,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         {
           fieldname: 'customs_document_no',
           fieldtype: 'Data',
-          label: __('Customs Document No'),
+          label: __('Customs Import Declaration No'),
           description: __('Tunisia customs declaration reference (DDM)'),
         },
         {
