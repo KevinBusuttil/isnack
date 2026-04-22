@@ -260,6 +260,12 @@
       <span class="field-value">{{ invoice.territory }}</span>
     </div>
     {% endif %}
+    {% if invoice.customs_export_declaration_no %}
+    <div class="field-pair">
+      <span class="field-label">Customs Export Declaration No</span>
+      <span class="field-value">{{ invoice.customs_export_declaration_no }}</span>
+    </div>
+    {% endif %}
     {% if invoice.company_address %}
     <div class="field-pair">
       <span class="field-label">Company Address</span>
