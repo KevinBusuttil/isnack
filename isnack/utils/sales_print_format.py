@@ -173,7 +173,15 @@ def get_item_discounts(doc, row):
 
     if base_amount and price_list_rate:
         actual_disc = base_amount - row_amount  # == discount_amount * qty (after rounding)
-        precision = doc.precision("amount", row) if hasattr(doc, "precision") else 2
+
+        # Clamp to 0 in case row.amount exceeds base_amount due to data inconsistency.
+        if actual_disc < 0:
+            actual_disc = 0.0
+
+        try:
+            precision = doc.precision("amount", row)
+        except Exception:
+            precision = 2
 
         if disc2_percent:
             # Split the known combined discount: Tier 1 from percentage (rounded to
@@ -181,7 +189,8 @@ def get_item_discounts(doc, row):
             # disc1 + disc2 + total == base_amount exactly.
             disc1_amount = flt(base_amount * disc1_percent / 100.0, precision)
             disc2_amount = actual_disc - disc1_amount
-            # Guard: if percentages don't add up cleanly, clamp and absorb into disc1.
+            # Guard: clamp disc2 to 0 if rounding or misconfigured percentages yield
+            # a Tier-1 value larger than the total discount; absorb residual into disc1.
             if disc2_amount < 0:
                 disc1_amount = actual_disc
                 disc2_amount = 0.0
