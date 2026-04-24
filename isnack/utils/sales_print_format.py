@@ -164,9 +164,46 @@ def get_item_discounts(doc, row):
             )
 
     # --- Amounts and final total ---
-    disc1_amount = base_amount * disc1_percent / 100.0
-    disc2_amount = (base_amount - disc1_amount) * disc2_percent / 100.0
-    total = base_amount - disc1_amount - disc2_amount
+    # Use ERPNext's already-rounded row.amount as the authoritative line total so
+    # that the printed Disc / Total columns match the stored document values exactly.
+    # Only fall back to percentage-based recomputation when price_list_rate is
+    # 0 / missing (edge case where base_amount is unknown).
+    row_amount = flt(getattr(row, "amount", None))
+    price_list_rate = flt(getattr(row, "price_list_rate", 0))
+
+    if base_amount and price_list_rate:
+        actual_disc = base_amount - row_amount  # == discount_amount * qty (after rounding)
+
+        # Clamp to 0 in case row.amount exceeds base_amount due to data inconsistency.
+        if actual_disc < 0:
+            actual_disc = 0.0
+
+        try:
+            precision = doc.precision("amount", row)
+        except Exception:
+            precision = 2
+
+        if disc2_percent:
+            # Split the known combined discount: Tier 1 from percentage (rounded to
+            # currency precision), Tier 2 absorbs the remainder so that
+            # disc1 + disc2 + total == base_amount exactly.
+            disc1_amount = flt(base_amount * disc1_percent / 100.0, precision)
+            disc2_amount = actual_disc - disc1_amount
+            # Guard: clamp disc2 to 0 if rounding or misconfigured percentages yield
+            # a Tier-1 value larger than the total discount; absorb residual into disc1.
+            if disc2_amount < 0:
+                disc1_amount = actual_disc
+                disc2_amount = 0.0
+        else:
+            disc1_amount = actual_disc
+            disc2_amount = 0.0
+
+        total = row_amount
+    else:
+        # Fallback: price_list_rate is 0/missing – recompute from percentages.
+        disc1_amount = base_amount * disc1_percent / 100.0
+        disc2_amount = (base_amount - disc1_amount) * disc2_percent / 100.0
+        total = base_amount - disc1_amount - disc2_amount
 
     return frappe._dict(
         base_rate=base_rate,
