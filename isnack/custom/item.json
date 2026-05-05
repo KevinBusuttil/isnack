@@ -1,0 +1,17 @@
+{
+  "custom_fields": [
+    {
+      "fieldname": "custom_volume_per_unit",
+      "fieldtype": "Float",
+      "label": "Volume per Unit",
+      "insert_after": "weight_uom"
+    },
+    {
+      "fieldname": "custom_volume_uom",
+      "fieldtype": "Link",
+      "options": "UOM",
+      "label": "Volume UOM",
+      "insert_after": "custom_volume_per_unit"
+    }
+  ]
+}
