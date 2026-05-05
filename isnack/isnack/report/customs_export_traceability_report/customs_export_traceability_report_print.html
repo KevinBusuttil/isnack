@@ -293,6 +293,10 @@
           <th>FG Item Name</th>
           <th class="num-col">Sold Qty</th>
           <th>UOM</th>
+          <th class="num-col">Total Weight</th>
+          <th>Weight UOM</th>
+          <th class="num-col">Total Volume</th>
+          <th>Volume UOM</th>
           <th>FG Batch No</th>
           <th>Work Order</th>
           <th>Mfg Date</th>
@@ -306,6 +310,10 @@
           <td>{{ fg.fg_item_name }}</td>
           <td class="num-col">{{ fg.sales_qty }}</td>
           <td>{{ fg.sales_uom }}</td>
+          <td class="num-col">{{ fg.fg_total_weight }}</td>
+          <td>{{ fg.fg_weight_uom }}</td>
+          <td class="num-col">{{ fg.fg_total_volume }}</td>
+          <td>{{ fg.fg_volume_uom }}</td>
           <td>{{ fg.fg_batch_no }}</td>
           <td>{{ fg.work_order }}</td>
           <td>{{ fg.manufacturing_date }}</td>

@@ -51,6 +51,10 @@ def get_columns():
 		{"label": _("Sales Qty"), "fieldname": "sales_qty", "fieldtype": "Float", "width": 90},
 		{"label": _("Sales UOM"), "fieldname": "sales_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Stock Qty"), "fieldname": "stock_qty", "fieldtype": "Float", "width": 90},
+		{"label": _("FG Total Weight"), "fieldname": "fg_total_weight", "fieldtype": "Float", "width": 120},
+		{"label": _("FG Weight UOM"), "fieldname": "fg_weight_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
+		{"label": _("FG Total Volume"), "fieldname": "fg_total_volume", "fieldtype": "Float", "width": 120},
+		{"label": _("FG Volume UOM"), "fieldname": "fg_volume_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
 		{"label": _("Item Group"), "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 120},
 		# B. Finished good traceability
 		{"label": _("FG Batch No"), "fieldname": "fg_batch_no", "fieldtype": "Link", "options": "Batch", "width": 130},
@@ -151,6 +155,13 @@ def get_data(filters):
 					pr_name = rm.get("purchase_receipt")
 					pr = pr_details.get(pr_name) or {} if pr_name else {}
 
+					# Calculate FG total weight and volume (based on sales qty)
+					_sales_qty = frappe.utils.flt(si_row.qty)
+					_weight_per_unit = frappe.utils.flt(si_row.get("weight_per_unit"))
+					_volume_per_unit = frappe.utils.flt(si_row.get("custom_volume_per_unit"))
+					_fg_total_weight = (_sales_qty * _weight_per_unit) if (_sales_qty and _weight_per_unit) else None
+					_fg_total_volume = (_sales_qty * _volume_per_unit) if (_sales_qty and _volume_per_unit) else None
+
 					row = frappe._dict(
 						# A
 						company=si_row.company,
@@ -166,6 +177,10 @@ def get_data(filters):
 						sales_qty=si_row.qty,
 						sales_uom=si_row.uom,
 						stock_qty=si_row.stock_qty,
+						fg_total_weight=_fg_total_weight,
+						fg_weight_uom=si_row.get("weight_uom") or None,
+						fg_total_volume=_fg_total_volume,
+						fg_volume_uom=si_row.get("custom_volume_uom") or None,
 						item_group=si_row.item_group,
 						# B
 						fg_batch_no=fg_batch_no or None,
@@ -293,9 +308,14 @@ def _fetch_si_items(filters):
 			sii.stock_qty,
 			sii.item_group,
 			sii.batch_no,
-			sii.serial_and_batch_bundle
+			sii.serial_and_batch_bundle,
+			item.weight_per_unit,
+			item.weight_uom,
+			item.custom_volume_per_unit,
+			item.custom_volume_uom
 		FROM `tabSales Invoice Item` sii
 		JOIN `tabSales Invoice` si ON si.name = sii.parent
+		LEFT JOIN `tabItem` item ON item.name = sii.item_code
 		WHERE {where_clause}
 		ORDER BY si.posting_date, si.name, sii.idx
 		""",
@@ -821,6 +841,10 @@ def get_print_html(filters):
 					"fg_item_name": _v(row.get("fg_item_name")),
 					"sales_qty": _v(row.get("sales_qty")),
 					"sales_uom": _v(row.get("sales_uom")),
+					"fg_total_weight": _v(row.get("fg_total_weight")),
+					"fg_weight_uom": _v(row.get("fg_weight_uom")),
+					"fg_total_volume": _v(row.get("fg_total_volume")),
+					"fg_volume_uom": _v(row.get("fg_volume_uom")),
 					"fg_batch_no": _v(row.get("fg_batch_no")),
 					"work_order": _v(row.get("work_order")),
 					"manufacturing_date": _v(row.get("manufacturing_date")),
@@ -939,8 +963,8 @@ def get_export_excel(filters):
 	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 
-	# FG table: 8 cols; RM table: 10 cols → use 10 as total width
-	TOTAL_COLS = 10
+	# FG table: 12 cols; RM table: 10 cols → use 12 as total width
+	TOTAL_COLS = 12
 
 	wb = Workbook()
 	ws = wb.active
@@ -999,7 +1023,20 @@ def get_export_excel(filters):
 	FILL_COL_HEADER = _make_fill("3A6B96")
 	WHITE_BOLD = _bold_font(color="FFFFFF")
 
-	FG_HEADERS = ["#", "FG Item Code", "FG Item Name", "Sold Qty", "UOM", "FG Batch No", "Work Order", "Mfg Date"]
+	FG_HEADERS = [
+		"#",
+		"FG Item Code",
+		"FG Item Name",
+		"Sold Qty",
+		"UOM",
+		"Total Weight",
+		"Weight UOM",
+		"Total Volume",
+		"Volume UOM",
+		"FG Batch No",
+		"Work Order",
+		"Mfg Date",
+	]
 	RM_HEADERS = [
 		"RM Item Code", "RM Item Name", "Consumed Qty", "RM Batch No",
 		"Purchase Receipt", "PR Date", "Supplier Name",
@@ -1080,21 +1117,37 @@ def get_export_excel(filters):
 			except (TypeError, ValueError):
 				sales_qty = str(sales_qty) if sales_qty is not None else ""
 
+			fg_total_weight = row.get("fg_total_weight")
+			try:
+				fg_total_weight = float(fg_total_weight) if fg_total_weight is not None else ""
+			except (TypeError, ValueError):
+				fg_total_weight = str(fg_total_weight) if fg_total_weight is not None else ""
+
+			fg_total_volume = row.get("fg_total_volume")
+			try:
+				fg_total_volume = float(fg_total_volume) if fg_total_volume is not None else ""
+			except (TypeError, ValueError):
+				fg_total_volume = str(fg_total_volume) if fg_total_volume is not None else ""
+
 			fg_row = [
 				row.get("si_item_idx") or "",
 				row.get("fg_item_code") or "",
 				row.get("fg_item_name") or "",
 				sales_qty,
 				row.get("sales_uom") or "",
+				fg_total_weight,
+				row.get("fg_weight_uom") or "",
+				fg_total_volume,
+				row.get("fg_volume_uom") or "",
 				row.get("fg_batch_no") or "",
 				row.get("work_order") or "",
 				mfg_date if mfg_date else "",
 			]
 			data_row_idx = ws.max_row + 1
 			ws.append(fg_row + [""] * (TOTAL_COLS - len(fg_row)))
-			# Format date cell
+			# Format date cell (Mfg Date is now column 12)
 			if mfg_date:
-				date_cell = ws.cell(row=data_row_idx, column=8)
+				date_cell = ws.cell(row=data_row_idx, column=12)
 				date_cell.number_format = "YYYY-MM-DD"
 
 		_write_blank_row()
@@ -1186,7 +1239,7 @@ def get_export_excel(filters):
 	# ---------------------------------------------------------------------------
 	# Column widths (reasonable fixed widths)
 	# ---------------------------------------------------------------------------
-	col_widths = [20, 30, 35, 12, 12, 22, 12, 20, 22, 25]
+	col_widths = [6, 20, 30, 10, 10, 14, 12, 14, 12, 22, 25, 15]
 	for i, width in enumerate(col_widths, start=1):
 		ws.column_dimensions[get_column_letter(i)].width = width
 
