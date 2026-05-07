@@ -287,9 +287,10 @@ Click **Load Materials**. The scan field is automatically focused. Scan the barc
 Click **Manual Load** if you do not have a scanner:
 1. Select Item Code (e.g., `Corn Starch`).
 2. Select Batch No if applicable.
-3. Enter Qty (e.g., `50`).
-4. Click **Add**, then repeat for each item.
-5. Click **Post Consumption** to save all rows at once.
+3. Review **Required Qty**, **Remaining Qty** and **Available Qty in WIP** to decide how much to load.
+4. Enter Qty (e.g., `50`).
+5. Click **Add**, then repeat for each item.
+6. Click **Post Consumption** to save all rows at once.
 
 The **Materials** panel updates in real time:
 

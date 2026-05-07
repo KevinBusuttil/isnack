@@ -813,7 +813,9 @@ function init_operator_hub($root) {
         },
         { label: 'Description', fieldname: 'item_desc', fieldtype: 'Small Text', read_only: 1 },
         { label: 'Batch No', fieldname: 'batch_no', fieldtype: 'Link', options: 'Batch', reqd: 0 },
-        { label: 'Available Qty', fieldname: 'available_qty', fieldtype: 'Float', read_only: 1 },
+        { label: 'Required Qty', fieldname: 'required_qty', fieldtype: 'Float', read_only: 1 },
+        { label: 'Remaining Qty', fieldname: 'remaining_qty', fieldtype: 'Float', read_only: 1 },
+        { label: 'Available Qty in WIP', fieldname: 'available_qty', fieldtype: 'Float', read_only: 1 },
         { label: 'Qty', fieldname: 'qty', fieldtype: 'Float', reqd: 0 },
         { fieldname: 'list', fieldtype: 'HTML', options: listHTML },
       ],
@@ -835,11 +837,13 @@ function init_operator_hub($root) {
       }
     });
 
-    // When item_code changes: fetch description, clear batch/qty, update batch filter
+    // When item_code changes: fetch description + WO context, clear batch/qty, update batch filter
     d.fields_dict.item_code.df.onchange = function() {
       const item_code = (d.get_value('item_code') || '').trim();
       d.set_value('item_desc', '');
       d.set_value('batch_no', '');
+      d.set_value('required_qty', 0);
+      d.set_value('remaining_qty', 0);
       d.set_value('available_qty', 0);
       d.set_value('qty', 0);
       if (!item_code) return;
@@ -847,6 +851,31 @@ function init_operator_hub($root) {
       // Fetch item description
       frappe.db.get_value('Item', item_code, 'description').then(r => {
         if (r && r.message) d.set_value('item_desc', r.message.description || '');
+      });
+
+      // Fetch WO-specific required/remaining context for this item
+      rpc('isnack.api.mes_ops.get_manual_load_item_context', {
+        work_order: state.current_wo,
+        item_code
+      }).then(r => {
+        const msg = r && r.message;
+        if (!msg) return;
+        d.set_value('required_qty', parseFloat(msg.required_qty) || 0);
+        d.set_value('remaining_qty', parseFloat(msg.remaining_qty) || 0);
+      });
+
+      // Populate item-level WIP availability when no batch is selected
+      rpc('isnack.api.mes_ops.get_batch_available_qty', {
+        work_order: state.current_wo,
+        item_code,
+        batch_no: ''
+      }).then(r => {
+        const msg = r && r.message;
+        if (!msg) return;
+        // Only apply if user has not yet picked a batch
+        if (!(d.get_value('batch_no') || '').trim()) {
+          d.set_value('available_qty', parseFloat(msg.qty) || 0);
+        }
       });
 
       // Update batch filter to show only batches in staging for this item/WO
@@ -857,13 +886,13 @@ function init_operator_hub($root) {
       };
     };
 
-    // When batch_no changes: fetch available qty from WIP
+    // When batch_no changes: fetch available qty from WIP (batch-specific or item-level)
     d.fields_dict.batch_no.df.onchange = function() {
       const item_code = (d.get_value('item_code') || '').trim();
       const batch_no  = (d.get_value('batch_no')  || '').trim();
       d.set_value('available_qty', 0);
       d.set_value('qty', 0);
-      if (!item_code || !batch_no) return;
+      if (!item_code) return;
 
       rpc('isnack.api.mes_ops.get_batch_available_qty', {
         work_order: state.current_wo,
@@ -902,6 +931,7 @@ function init_operator_hub($root) {
       if (batch_no && qty > avail_qty) { frappe.msgprint(`Qty cannot exceed available qty (${avail_qty})`); return; }
       lines.push({ item_code, qty, batch_no: batch_no || undefined });
       d.set_value('item_code', ''); d.set_value('item_desc', ''); d.set_value('batch_no', '');
+      d.set_value('required_qty', 0); d.set_value('remaining_qty', 0);
       d.set_value('available_qty', 0); d.set_value('qty', 0);
       redraw();
     }

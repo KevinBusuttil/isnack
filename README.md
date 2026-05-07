@@ -820,17 +820,19 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 1. Click **Manual Load** button
 2. Select **Item Code** from the dropdown (description auto-populates)
-3. Select **Batch No** — filtered to batches available in the Staging Warehouse for the current line
-4. **Available Qty** auto-populates with the quantity in the Staging Warehouse for the selected batch
-5. Enter **Qty** to consume (cannot exceed Available Qty)
-6. Click **Add** to add the item to the consumption list
-7. Repeat steps 2–6 for additional items
-8. Click **Post Consumption** to submit
+3. **Required Qty** and **Remaining Qty** auto-populate from the current Work Order's BOM and prior consumption
+4. Select **Batch No** — filtered to batches available in the WIP Warehouse for the current line
+5. **Available Qty in WIP** auto-populates with the quantity in the WIP Warehouse for the selected batch (or item-level when no batch is chosen)
+6. Enter **Qty** to consume (cannot exceed Available Qty in WIP when a batch is selected; Remaining Qty is shown for guidance only)
+7. Click **Add** to add the item to the consumption list
+8. Repeat steps 2–7 for additional items
+9. Click **Post Consumption** to submit
 
 **Features:**
 - Works without barcode scanner
-- Batch filter shows only batches with available stock in the Staging Warehouse
-- Qty validation prevents over-entry at dialog level
+- Batch filter shows only batches with available stock in the WIP Warehouse
+- Required / Remaining qty show WO-specific context alongside warehouse availability
+- Qty validation prevents over-entry against batch availability at dialog level
 - Over-consumption threshold check (same as scan-based Load)
 - Creates the same Stock Entry type as scanner-based Load
 

@@ -3177,6 +3177,68 @@ def get_batch_available_qty(work_order: str, item_code: str, batch_no: str):
 
 
 @frappe.whitelist()
+def get_manual_load_item_context(work_order: str, item_code: str):
+    """
+    Return BOM-required, consumed and remaining quantities for a given item on
+    a Work Order. Used by the Manual Load dialog to give operators WO-specific
+    context alongside the existing WIP availability figure.
+
+    Required qty is computed using the same scaling logic as
+    get_materials_snapshot (BOM item qty * WO/BOM factor).
+
+    Consumed qty sums submitted "Material Consumption for Manufacture" Stock
+    Entries for this WO/item, ignoring finished/scrap rows.
+    """
+    _require_roles(["Factory Operator", "Stores User", "Production Manager"])
+
+    item_code = (item_code or "").strip()
+    if not work_order or not item_code:
+        return {
+            "item_code": item_code,
+            "uom": "",
+            "required_qty": 0.0,
+            "consumed_qty": 0.0,
+            "remaining_qty": 0.0,
+        }
+
+    wo = frappe.get_doc("Work Order", work_order)
+    uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+
+    required_qty = 0.0
+    if wo.get("bom_no"):
+        bom = frappe.get_doc("BOM", wo.bom_no)
+        bom_qty = float(bom.get("quantity") or 1) or 1
+        wo_qty = float(wo.get("qty") or 0)
+        factor = wo_qty / bom_qty if bom_qty else 1.0
+        for it in bom.items:
+            if it.item_code == item_code:
+                required_qty += float(it.qty or 0) * factor
+
+    consumed_row = frappe.db.sql("""
+        SELECT COALESCE(SUM(sed.qty), 0) AS total
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+          AND se.work_order = %s
+          AND se.purpose = 'Material Consumption for Manufacture'
+          AND sed.item_code = %s
+          AND sed.is_finished_item = 0
+          AND sed.is_scrap_item = 0
+    """, (work_order, item_code))
+    consumed_qty = float((consumed_row and consumed_row[0][0]) or 0)
+
+    remaining_qty = max(required_qty - consumed_qty, 0.0)
+
+    return {
+        "item_code": item_code,
+        "uom": uom,
+        "required_qty": required_qty,
+        "consumed_qty": consumed_qty,
+        "remaining_qty": remaining_qty,
+    }
+
+
+@frappe.whitelist()
 def manual_load_materials(work_order: str, items: str):
     """
     Manually consume materials from WIP warehouse into a Work Order without barcode scanning.
