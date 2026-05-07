@@ -233,11 +233,13 @@ Click **Manual Load** for situations without a barcode scanner:
 1. Select an **Item Code** (filtered to items from the WO's BOM that have stock in the WIP warehouse).
 2. The item **Description** auto-populates.
 3. Select an optional **Batch No** (filtered to batches in the WIP warehouse for the selected item).
-4. **Available Qty** shows the quantity in the WIP warehouse for that batch/item.
-5. Enter **Qty** (must not exceed available qty when a batch is specified).
-6. Click **Add** to add the row. Repeat for additional items.
-7. Click **Post Consumption** — the server creates a single `Material Consumption for Manufacture` SE covering all rows, validating BOM membership and the over-consumption threshold.
-8. The materials snapshot refreshes on success.
+4. **Required Qty** shows the BOM/planned requirement for this item on the current Work Order.
+5. **Remaining Qty** shows `max(required - already consumed for this WO, 0)` — use this as the primary decision aid.
+6. **Available Qty in WIP** shows the quantity in the WIP warehouse for that batch/item.
+7. Enter **Qty** (must not exceed Available Qty in WIP when a batch is specified). Remaining Qty is informational and does not block entry above it (the server's over-consumption threshold still applies).
+8. Click **Add** to add the row. Repeat for additional items.
+9. Click **Post Consumption** — the server creates a single `Material Consumption for Manufacture` SE covering all rows, validating BOM membership and the over-consumption threshold.
+10. The materials snapshot refreshes on success.
 
 ---
 

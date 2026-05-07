@@ -774,6 +774,14 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
   color: #9f1239 !important;
 }
 
+/* Required Qty / Remaining Qty — neutral informational style */
+.manual-load-dialog [data-fieldname="required_qty"] .form-control,
+.manual-load-dialog [data-fieldname="remaining_qty"] .form-control{
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+
 /* Add button — teal accent matching theme */
 .manual-load-dialog .ml-add-btn{
   background: #15b79e !important;
