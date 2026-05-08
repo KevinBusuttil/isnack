@@ -793,15 +793,28 @@ def get_wo_banner(work_order):
     type_chip = "FG" if is_fg else "SF"
     batch = wo.get("batch_no") or "-"
     line = _line_for_work_order(work_order) or "-"
+    ended = bool(wo.get("custom_production_ended"))
+    ended_badge = (
+        ' <span class="badge bg-dark ms-2">Production Ended</span>' if ended else ""
+    )
+    ended_note = (
+        '<div class="small" style="color:#92400e;">'
+        '<b>Production ended</b> — awaiting Close Production. '
+        'No further material loading allowed.'
+        "</div>"
+        if ended
+        else ""
+    )
 
     html = f"""
       <div class="d-flex flex-wrap justify-content-between">
         <div><b>{frappe.utils.escape_html(wo.name)}</b> — {frappe.utils.escape_html(wo.item_name)}</div>
-        <div><span class="badge {'bg-primary' if is_fg else 'bg-secondary'}">{type_chip}</span></div>
+        <div><span class="badge {'bg-primary' if is_fg else 'bg-secondary'}">{type_chip}</span>{ended_badge}</div>
       </div>
       <div>Batch: {frappe.utils.escape_html(batch)}</div>
       <div>Target: {wo.qty} &nbsp; Actual: {actual} &nbsp; Rejects: {rejects} &nbsp; Status: {frappe.utils.escape_html(wo.status)}</div>
       <div class="small text-muted">Line: {frappe.utils.escape_html(line)} · Operator: {frappe.utils.escape_html(frappe.session.user)}</div>
+      {ended_note}
     """
     return {"html": html}
 
@@ -1043,6 +1056,9 @@ def set_work_order_state(
 
     now = frappe.utils.now_datetime()
     action_lc = (action or "").strip().lower()
+    # Block any state change that resumes production after End WO.
+    if action_lc in ("start", "resume", "reopen"):
+        _assert_not_ended(work_order)
     updates: dict = {}
     stage_status = _storekeeper_stage_status(work_order)
     if stage_status != "Staged" and action_lc in ("start", "pause", "stop", "resume", "reopen"):
@@ -1346,6 +1362,9 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         if not work_order:
             frappe.throw(_("Missing work_order / job_card"))
 
+        # Block scans on ended Work Orders.
+        _assert_not_ended(work_order)
+
         # Duplicate-scan guard
         if _has_recent_duplicate(work_order, code):
             return {"ok": False, "msg": _("Duplicate scan ignored")}
@@ -1498,6 +1517,8 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
         work_order = frappe.db.get_value("Job Card", job_card, "work_order")
     if not work_order:
         frappe.throw(_("Missing work_order / job_card"))
+
+    _assert_not_ended(work_order)
 
     central_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
     projected_qty = frappe.db.get_value("Bin", {"warehouse": central_wh, "item_code": item_code}, "projected_qty") or 0
@@ -1725,6 +1746,22 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     wo.flags.ignore_permissions = True
     wo.save()
     return True
+
+def _assert_not_ended(work_order: str) -> None:
+    """Block any material movement / state change once End WO has been pressed.
+
+    Source-of-truth guard used by scan, manual load, and Start/Resume so a stale
+    UI tab cannot keep posting against an ended Work Order. Cleared by
+    `close_production` when it sets `custom_production_ended = 0`.
+    """
+    if not work_order:
+        return
+    if frappe.db.get_value("Work Order", work_order, "custom_production_ended"):
+        frappe.throw(
+            _("Work Order {0} has been ended; further material movements are "
+              "not allowed until Close Production.").format(work_order)
+        )
+
 
 @frappe.whitelist()
 def end_work_order(work_order: str, sfg_usage: str = None):
@@ -3252,6 +3289,8 @@ def manual_load_materials(work_order: str, items: str):
 
     if not work_order:
         frappe.throw(_("Missing work_order"))
+
+    _assert_not_ended(work_order)
 
     try:
         item_list = json.loads(items) if isinstance(items, str) else items

@@ -361,11 +361,15 @@ function init_operator_hub($root) {
     const hasWO   = !!state.current_wo;
     const enableCore = hasEmp && hasWO;
     const isAllocated = state.current_stage_status === 'Staged';
+    const isProductionEnded = state.current_production_ended || false;
     const enableActions = enableCore && isAllocated;
+    // Once production has been ended, all material-movement / state-change
+    // actions on this WO are blocked until Close Production runs.
+    const enableLiveActions = enableActions && !isProductionEnded;
     const status = state.current_wo_status;
 
     // Enable Start button only if status is "Not Started" and fully allocated
-    const isStartDisabled = !enableActions || status !== "Not Started";
+    const isStartDisabled = !enableLiveActions || status !== "Not Started";
     $('#btn-start',  $root).prop('disabled', isStartDisabled);
 
     // Dynamic Pause/Resume button
@@ -375,21 +379,22 @@ function init_operator_hub($root) {
     } else {
       $pauseBtn.text('Pause').removeClass('btn-success').addClass('btn-warning');
     }
-    $pauseBtn.prop('disabled', !enableActions);
+    $pauseBtn.prop('disabled', !enableLiveActions);
 
-    $('#btn-load',        $root).prop('disabled', !enableActions);
-    $('#btn-manual-load', $root).prop('disabled', !enableActions);
-    $('#btn-request', $root).prop('disabled', !enableActions);
+    $('#btn-load',        $root).prop('disabled', !enableLiveActions);
+    $('#btn-manual-load', $root).prop('disabled', !enableLiveActions);
+    $('#btn-request', $root).prop('disabled', !enableLiveActions);
+    // Return is left available after End WO so operators can still return
+    // surplus staged material before Close Production sweeps the WO.
     $('#btn-return',  $root).prop('disabled', !enableActions);
-    
+
     // End Shift Return only requires operator and line (no work order needed)
     $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
-    $('#btn-label', $root).prop('disabled', !(enableActions && state.current_lines.length));
+    $('#btn-label', $root).prop('disabled', !(enableLiveActions && state.current_lines.length));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
-    
+
     // End WO button: enabled when operator set + WO selected + WO allocated + not already ended
-    const isProductionEnded = state.current_production_ended || false;
     $('#btn-end-wo', $root).prop('disabled', !(enableActions && !isProductionEnded));
     
     // Close Production button: enabled when operator set + line(s) set (no specific WO required)
@@ -592,8 +597,11 @@ function init_operator_hub($root) {
         'Stopped':'chip chip-paused',
         'Completed':'chip chip-running'
       }[row.status] || 'chip chip-ns');
+      const isEnded = !!row.custom_production_ended;
+      const endedChip = isEnded ? '<span class="chip chip-ended" title="Production ended — awaiting Close Production">Ended</span>' : '';
+      const rowClass = isEnded ? ' row-ended' : '';
       const el = $(`
-        <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center" type="button">
+        <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center${rowClass}" type="button">
           <div class="fw-semibold">
             <span class="me-2">${frappe.utils.escape_html(row.name)}</span>
             <span class="text-muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
@@ -604,6 +612,7 @@ function init_operator_hub($root) {
             <span class="${chipType}">${row.type}</span>
             ${allocChip}
             <span class="${stClass}">${row.status}</span>
+            ${endedChip}
           </div>
         </button>
       `);
@@ -640,6 +649,11 @@ function init_operator_hub($root) {
     }
     if (!state.current_emp) { ensureOperatorNotice(); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
     if (!state.current_wo){ flashStatus('Pick a Work Order first', 'warning'); try { errTone.play().catch(()=>{}); } catch(_) {} return; }
+    if (state.current_production_ended) {
+      flashStatus('Work Order has been ended — no further loading allowed', 'error');
+      try { errTone.play().catch(()=>{}); } catch(_) {}
+      return;
+    }
 
     setStatus('Processing scan…');
     
@@ -1775,10 +1789,19 @@ function init_operator_hub($root) {
         rpc('isnack.api.mes_ops.end_work_order', {
           work_order: state.current_wo,
           sfg_usage: JSON.stringify(sfgUsage),
-        }).then(() => {
+        }).then(async () => {
           d.hide();
-          flashStatus(`Ended — ${state.current_wo}`, 'success');
-          load_queue();
+          const endedWo = state.current_wo;
+          // Optimistically reflect ended state so the UI updates immediately.
+          state.current_production_ended = true;
+          refreshButtonStates();
+          flashStatus(`Ended — ${endedWo}`, 'success');
+          // Refresh queue (re-renders the row with the Ended chip) and re-select
+          // the same WO so the banner re-fetches with the ended note.
+          await load_queue();
+          if (endedWo && (state.orders || []).find(o => o.name === endedWo)) {
+            set_active_work_order(endedWo);
+          }
         });
       }
     });
