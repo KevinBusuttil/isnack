@@ -541,6 +541,159 @@
 }
 
 /* =====================================
+   Operator Hub — Shared Dialog Theme (.op-dialog)
+   =====================================
+   Every Operator Hub dialog opts in via `d.$wrapper.addClass('op-dialog')`.
+   Dialog-specific styling (per-fieldname tints, custom tables, etc.) layers
+   on top via its own class (.manual-load-dialog, .close-production-dialog
+   etc.) and does NOT need to redeclare the header, primary CTA, or
+   reduced-motion block. */
+
+/* Header: 3px teal stripe + soft teal-to-white gradient */
+.op-dialog .modal-header{
+  border-top: 3px solid #15b79e;
+  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
+}
+.op-dialog .modal-header .modal-title{
+  color: #0f766e;
+  font-weight: 700;
+  letter-spacing: .15px;
+}
+
+/* Body padding */
+.op-dialog .modal-body{
+  padding: 1rem 1.25rem;
+}
+
+/* Section break labels (Frappe renders Section Break as an h6 inside
+   .form-section). Keep them visually grouped with the theme. */
+.op-dialog .form-section .section-head{
+  color: #0f766e;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: .78rem;
+  letter-spacing: .3px;
+  border-bottom: 1px solid #cdebe4;
+  padding-bottom: .25rem;
+  margin-bottom: .5rem;
+}
+
+/* Primary CTA — single canonical teal. Per-dialog rules can still override. */
+.op-dialog .modal-footer .btn-primary{
+  background: #15b79e !important;
+  border-color: #109487 !important;
+  color: #053b37 !important;
+  font-weight: 600;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.op-dialog .modal-footer .btn-primary:enabled:hover{
+  background: #109487 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(21,183,158,.3);
+}
+.op-dialog .modal-footer .btn-primary:disabled{
+  background: #cbd5e1 !important;
+  border-color: #94a3b8 !important;
+  color: #475569 !important;
+  box-shadow: none !important;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* Secondary modal buttons stay neutral but consistent */
+.op-dialog .modal-footer .btn-default,
+.op-dialog .modal-footer .btn-secondary{
+  background: #f3f4f6 !important;
+  border-color: #cbd5e1 !important;
+  color: #1f2937 !important;
+}
+
+/* ----- Semantic input helpers — opt-in per field via .$input.addClass(...)
+   so any dialog can use the shared colour vocabulary regardless of
+   fieldname. ------------------------------------------------------- */
+.op-dialog .op-input-info,
+.op-dialog .op-input-info .form-control{
+  background: #e8f1ff !important;
+  border-color: #93c5fd !important;
+  color: #1e3a8a;
+}
+.op-dialog .op-input-key,
+.op-dialog .op-input-key .form-control{
+  background: #fff3d6 !important;
+  border-color: #fbbf24 !important;
+  color: #78350f;
+}
+.op-dialog .op-input-good,
+.op-dialog .op-input-good .form-control{
+  background: #f0fdf4 !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+}
+.op-dialog .op-input-bad,
+.op-dialog .op-input-bad .form-control{
+  background: #fff5f5 !important;
+  border-color: #fca5a5 !important;
+  color: #9f1239 !important;
+}
+.op-dialog .op-input-readonly,
+.op-dialog .op-input-readonly .form-control{
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+/* Table headers inside Operator Hub dialogs — consistent teal look */
+.op-dialog .op-table thead tr,
+.op-dialog table.op-table thead tr{
+  background: #e7fbf7;
+  color: #0f766e;
+}
+.op-dialog .op-table thead th{
+  border-bottom: 2px solid #b8f1e6;
+  font-weight: 700;
+  font-size: .82rem;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  padding: .5rem .6rem;
+  white-space: nowrap;
+}
+.op-dialog .op-table tbody tr:nth-child(even){ background: #fbfdfd; }
+.op-dialog .op-table tbody tr:hover{ background: #f0fdf9; }
+
+/* Themed alerts inside dialogs (used by End WO consumption summary) */
+.op-dialog .op-alert{
+  border-radius: 8px;
+  padding: .55rem .75rem;
+  margin-bottom: .6rem;
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+.op-dialog .op-alert-good{
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+.op-dialog .op-alert-warn{
+  background: #fff3d6;
+  border-color: #fbbf24;
+  color: #78350f;
+}
+.op-dialog .op-alert-bad{
+  background: #fff5f5;
+  border-color: #fca5a5;
+  color: #9f1239;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .op-dialog .modal-footer .btn-primary,
+  .op-dialog .op-table tbody tr{
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* =====================================
    End Shift Return Dialog Styles
    ===================================== */
 .op-teal .end-shift-return-dialog .modal-dialog{
@@ -548,13 +701,12 @@
   width: calc(100% - 2rem);
 }
 
-/* Teal gradient accent on dialog header */
-.end-shift-return-dialog .modal-header{
-  border-top: 3px solid #15b79e;
-  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
-}
+/* Header is provided by .op-dialog. Per-dialog adjustments only below. */
 
-/* Colour-coded table header — subtle teal-tinted background */
+/* Colour-coded table header — uses shared .op-table styling via .op-dialog
+   when callers add the `op-table` class. The selectors below remain so the
+   existing `.wip-return-table` markup keeps the same look without needing
+   a markup change. */
 .end-shift-return-dialog .wip-return-table thead tr{
   background: #e7fbf7;
   color: #0f766e;
@@ -696,18 +848,7 @@
   background: #fee2e2 !important;
 }
 
-/* Post Return button — teal accent */
-.end-shift-return-dialog .modal-footer .btn-primary{
-  background: #15b79e !important;
-  border-color: #109487 !important;
-  color: #053b37 !important;
-  font-weight: 600;
-}
-.end-shift-return-dialog .modal-footer .btn-primary:hover{
-  background: #109487 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(21,183,158,.3);
-}
+/* Post Return button — teal CTA is provided by .op-dialog. */
 
 /* Summary footer */
 .end-shift-return-dialog .wip-summary-footer{
@@ -725,12 +866,11 @@
   font-weight: 600;
 }
 
-/* Reduce motion */
+/* Reduce motion (per-dialog elements only; modal-footer CTA is handled by .op-dialog) */
 @media (prefers-reduced-motion: reduce){
   .end-shift-return-dialog .wip-return-table tbody tr,
   .end-shift-return-dialog .wip-row-clear-btn,
-  .end-shift-return-dialog .wip-clear-selected-btn,
-  .end-shift-return-dialog .modal-footer .btn-primary{
+  .end-shift-return-dialog .wip-clear-selected-btn{
     transition: none !important;
     animation: none !important;
   }
@@ -783,11 +923,7 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
    Manual Load Dialog Styles
    ===================================== */
 
-/* Teal accent stripe at top of dialog header */
-.manual-load-dialog .modal-header{
-  border-top: 3px solid #15b79e;
-  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
-}
+/* Header is provided by .op-dialog. */
 
 /* Instruction text — slightly more prominent */
 .manual-load-dialog .modal-body .text-muted:first-child{
@@ -886,11 +1022,7 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
    Close Production Dialog Styles
    ===================================== */
 
-/* Teal accent stripe at top of dialog header */
-.close-production-dialog .modal-header{
-  border-top: 3px solid #15b79e;
-  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
-}
+/* Header is provided by .op-dialog. */
 
 /* Ended WO list items — teal left-border accent + subtle teal-tinted background */
 .close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded{
@@ -928,23 +1060,9 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
   border-color: #93c5fd !important;
 }
 
-/* Close Production primary button — teal accent */
-.close-production-dialog .modal-footer .btn-primary{
-  background: #15b79e !important;
-  border-color: #109487 !important;
-  color: #053b37 !important;
-  font-weight: 600;
-}
-.close-production-dialog .modal-footer .btn-primary:hover{
-  background: #109487 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(21,183,158,.3);
-}
-
-/* Reduce motion */
+/* Primary CTA + reduced-motion are provided by .op-dialog. */
 @media (prefers-reduced-motion: reduce){
-  .close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded,
-  .close-production-dialog .modal-footer .btn-primary{
+  .close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded{
     transition: none !important;
     animation: none !important;
   }
