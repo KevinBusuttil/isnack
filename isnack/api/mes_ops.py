@@ -1592,10 +1592,12 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
         "qty": qty,
         "schedule_date": mr.schedule_date,
     })
-    if reason:
-        mr.notes = reason
     mr.flags.ignore_permissions = True
     mr.insert()
+    if reason:
+        # Material Request has no 'notes' field; persist the operator's reason
+        # as a Comment so it is visible in the timeline and queryable later.
+        mr.add_comment("Comment", reason)
 
     # Notify any live Storekeeper Hub sessions so they refresh their
     # Pending Requests panel without polling. Listeners are scoped on the
