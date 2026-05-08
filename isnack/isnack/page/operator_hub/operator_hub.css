@@ -237,19 +237,11 @@
   background:#fff5f5!important; border-color:#fca5a5!important; color:#7f1d1d!important;
 }
 
-/* Operator-meaningful colors for action groups */
-.op-teal #btn-start{
-  background:var(--teal)!important; border-color:var(--teal-d)!important; color:#053b37!important;
-}
-.op-teal #btn-pause{
-  background:var(--amber)!important; border-color:#d97706!important; color:#3b2400!important;
-}
-.op-teal #btn-load{ background:#0ea5e9!important; border-color:#0284c7!important; color:#07344a!important; }
-.op-teal #btn-manual-load{ background:#f97316!important; border-color:#ea580c!important; color:#431407!important; }
-.op-teal #btn-request{ background:#f59e0b!important; border-color:#d97706!important; color:#3b2400!important; }
-.op-teal #btn-return{ background:#f3f4f6!important; border-color:#d1d5db!important; color:#111827!important; }
-.op-teal #btn-label{ background:#22c55e!important; border-color:#16a34a!important; color:#052e16!important; }
-.op-teal #btn-close{ background:#6b7280!important; border-color:#4b5563!important; color:#f8fafc!important; }
+/* Operator-meaningful colors for action groups.
+   The authoritative palette lives under "Button palettes by group" further
+   down (.op-bottom .op-btn-*). The Pause/Resume button intentionally has
+   no #btn-pause override here so the JS class swap
+   (.btn-warning ↔ .btn-success) drives the colour. */
 
 /* =====================================
    Sticky Bottom Action Bar
@@ -316,13 +308,13 @@
 
 /* compact tile buttons */
 .op-teal .tile-btn{
-  min-height:70px;
-  padding:.55rem .7rem;
-  font-size:.92rem;
+  min-height:76px;          /* slightly larger touch target for kiosk */
+  padding:.6rem .75rem;
+  font-size:.95rem;
   border-radius:10px;
   letter-spacing:.12px;
   font-weight:700;
-  white-space:normal;   /* allow wrap */
+  white-space:normal;       /* allow wrap */
   line-height:1.2;
   min-width:130px;
   text-align:center;
@@ -330,27 +322,63 @@
 
 /* =========================
    Button palettes by group
-   ========================= */
+   =========================
+   Roles, accessibility, and authorisation are unchanged. Only visuals
+   move: a calmer, semantically-grouped palette + unified disabled,
+   focus-visible, active and hover states. */
 .op-teal .op-bottom .tile-btn{
   border:1px solid transparent;
-  box-shadow:0 6px 14px rgba(15,23,42,.08);
-  transition:transform .12s ease, box-shadow .12s ease, background-color .12s ease;
+  /* subtle inner highlight gives a tactile feel on coloured tiles */
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.18),
+    0 6px 14px rgba(15,23,42,.08);
+  transition:
+    transform .12s ease,
+    box-shadow .12s ease,
+    background-color .12s ease,
+    filter .12s ease;
 }
 
+/* Hover: tiny lift + slight darken so colour also responds, not just elevation */
 .op-teal .op-bottom .tile-btn:enabled:hover{
   transform:translateY(-1px);
-  box-shadow:0 10px 18px rgba(15,23,42,.14);
+  filter:brightness(.96);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    0 10px 18px rgba(15,23,42,.14);
 }
 
-.op-teal .op-bottom .tile-btn:disabled{
-  opacity:.55;
-  box-shadow:none;
+/* Active/pressed: tactile press feedback for touch screens */
+.op-teal .op-bottom .tile-btn:enabled:active{
+  transform:translateY(0);
+  filter:brightness(.92);
+  box-shadow:inset 0 2px 6px rgba(0,0,0,.18);
 }
 
-/* Group 1: Run controls (go / stop) */
+/* Focus-visible: explicit outline for keyboard / scanner kiosk */
+.op-teal .op-bottom .tile-btn:focus-visible{
+  outline:3px solid #0ea5e9;
+  outline-offset:2px;
+}
+
+/* Unified disabled state: clearly inert regardless of original palette.
+   Uses !important to neutralise the per-group bg/border/text below. */
+.op-teal .op-bottom .tile-btn:disabled,
+.op-teal .op-bottom .tile-btn[disabled]{
+  background:#f1f5f9 !important;
+  border-color:#e2e8f0 !important;
+  color:#94a3b8 !important;
+  -webkit-text-fill-color:#94a3b8;
+  box-shadow:none !important;
+  filter:none;
+  cursor:not-allowed;
+  opacity:1;                /* don't dim — the neutral palette already reads as disabled */
+}
+
+/* Group 1: Run controls (go / pause / resume) */
 .op-teal .op-bottom .op-btn-run-start{
-  background:#16a34a;
-  border-color:#15803d;
+  background:#10b981;
+  border-color:#059669;
   color:#ffffff;
 }
 
@@ -360,35 +388,38 @@
   color:#1f2937;
 }
 
+/* Resume reuses the same green as Start so identical meaning reads identically. */
 .op-teal .op-bottom .op-btn-run-toggle.btn-success{
-  background:#22c55e;
-  border-color:#16a34a;
+  background:#10b981;
+  border-color:#059669;
   color:#ffffff;
 }
 
 /* Group 2: Materials */
 .op-teal .op-bottom .op-btn-material{
-  background:#2563eb;
-  border-color:#1d4ed8;
+  background:#0284c7;
+  border-color:#0369a1;
   color:#ffffff;
 }
 
 .op-teal .op-bottom .op-btn-manual-load{
-  background:#f97316;
+  background:#fb923c;
   border-color:#ea580c;
-  color:#ffffff;
+  color:#1f2937;
 }
 
+/* Request More: warning/attention. Distinct from Pause via dashed border. */
 .op-teal .op-bottom .op-btn-material-strong{
-  background:#1e40af;
-  border-color:#1e3a8a;
-  color:#ffffff;
+  background:#fbbf24;
+  border-color:#d97706;
+  border-style:dashed;
+  color:#1f2937;
 }
 
 .op-teal .op-bottom .op-btn-material-outline{
-  background:#eff6ff;
-  border-color:#93c5fd;
-  color:#1e3a8a;
+  background:#e2e8f0;
+  border-color:#94a3b8;
+  color:#0f172a;
 }
 
 /* Group 3: Labels */
@@ -406,15 +437,15 @@
 
 /* Group 4: End WO / Close Production */
 .op-teal .op-bottom .op-btn-close{
-  background:#64748b !important;
-  border-color:#475569 !important;
+  background:#475569 !important;
+  border-color:#334155 !important;
   color:#ffffff !important;
   -webkit-text-fill-color:#ffffff;
 }
 
 .op-teal .op-bottom .op-btn-close-production{
-  background:#28a745 !important;
-  border-color:#1e7e34 !important;
+  background:#15803d !important;
+  border-color:#166534 !important;
   color:#ffffff !important;
   -webkit-text-fill-color:#ffffff;
 }
