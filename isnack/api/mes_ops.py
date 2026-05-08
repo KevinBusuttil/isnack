@@ -1771,9 +1771,14 @@ ROLES_END_WO_OVERRIDE = ["Production Manager"]
 
 def _end_wo_tolerance_pct() -> float:
     """Read End WO tolerance % from Factory Settings, falling back to the
-    default. The Factory Settings field is optional; if it does not exist we
-    silently use the default constant."""
+    default. The Factory Settings field is optional; we check the meta first
+    so we never call `get_single_value` on a missing field (which would emit
+    a "Field does not exist" message to the client even if we catch the
+    Python exception)."""
     try:
+        meta = frappe.get_meta("Factory Settings")
+        if not meta.has_field("end_wo_tolerance_pct"):
+            return END_WO_DEFAULT_TOLERANCE_PCT
         val = frappe.db.get_single_value("Factory Settings", "end_wo_tolerance_pct")
         if val is not None and float(val) >= 0:
             return float(val)
