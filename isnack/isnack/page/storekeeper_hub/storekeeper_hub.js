@@ -1829,29 +1829,30 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
 
     rows.forEach(row => {
+      const partial = row.received > 0
+        ? `<span class="muted xsmall">(of ${fmt_qty(row.requested)})</span>`
+        : '';
       const $r = $(`
         <div class="hub-row pending-mr-row" data-mr="${frappe.utils.escape_html(row.mr)}" data-mri="${frappe.utils.escape_html(row.mri)}">
-          <div class="cell">
-            <div class="pending-mr-main">
+          <div class="pending-mr-head">
+            <div class="pending-mr-id">
               <b>${frappe.utils.escape_html(row.item_code)}</b>
               <span class="muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
             </div>
-            <div class="muted small">
-              WO <a class="pending-mr-wo">${frappe.utils.escape_html(row.work_order || '')}</a>
-              ${row.factory_line ? ` · Line ${frappe.utils.escape_html(row.factory_line)}` : ''}
-              ${row.reason ? ` · <span class="pending-mr-reason">${frappe.utils.escape_html(row.reason)}</span>` : ''}
-            </div>
-            <div class="muted small">
-              ${frappe.utils.escape_html(row.operator || '')}
-              · ${frappe.datetime.comment_when(row.creation)}
+            <div class="pending-mr-qty">
+              <b>${fmt_qty(row.remaining)}</b>
+              <span class="muted small">${frappe.utils.escape_html(row.uom || '')}</span>
+              ${partial}
             </div>
           </div>
-          <div class="cell text-end pending-mr-qty">
-            <b>${fmt_qty(row.remaining)}</b>
-            <span class="muted small">${frappe.utils.escape_html(row.uom || '')}</span>
-            ${row.received > 0 ? `<div class="muted xsmall">of ${fmt_qty(row.requested)} requested</div>` : ''}
+          <div class="pending-mr-meta muted small">
+            WO <a class="pending-mr-wo">${frappe.utils.escape_html(row.work_order || '')}</a>${row.factory_line ? ` · Line ${frappe.utils.escape_html(row.factory_line)}` : ''}
+            ${row.reason ? ` <span class="pending-mr-reason">${frappe.utils.escape_html(row.reason)}</span>` : ''}
           </div>
-          <div class="cell">
+          <div class="pending-mr-foot">
+            <div class="muted xsmall">
+              ${frappe.utils.escape_html(row.operator || '')} · ${frappe.datetime.comment_when(row.creation)}
+            </div>
             <div class="btn-group">
               <button class="btn btn-xs btn-default pending-mr-open" title="Open Material Request">Open</button>
               <button class="btn btn-xs btn-primary pending-mr-stage" title="Fulfil from Source Warehouse">Stage</button>
