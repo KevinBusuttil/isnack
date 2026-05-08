@@ -1732,26 +1732,82 @@ function init_operator_hub($root) {
     await showLabelHistoryDialog();
   });
 
-  // >>> NEW: End WO - Mark work order as ended and consume semi-finished materials <<<
+  // >>> End WO - consume SFG, enforce BOM consumption tolerance, mark ended <<<
+  function renderEndWoSummaryHtml(summary) {
+    const tol = (summary && summary.tolerance_pct != null) ? summary.tolerance_pct : 0;
+    const items = (summary && summary.items) || [];
+    if (!items.length) {
+      return '<div class="text-muted small">No BOM items found for this Work Order.</div>';
+    }
+    const fmt = (n) => {
+      if (n == null) return '0';
+      const v = Number(n);
+      return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
+    };
+    const rows = items.map(it => {
+      let badge, badgeText;
+      if (it.is_sfg) {
+        badge = 'bg-secondary'; badgeText = 'SFG (enter below)';
+      } else if (it.status === 'ok') {
+        badge = 'bg-success'; badgeText = 'OK';
+      } else if (it.status === 'over') {
+        badge = 'bg-warning text-dark'; badgeText = 'Over';
+      } else {
+        badge = 'bg-danger'; badgeText = 'Short';
+      }
+      const remainingDisplay = it.remaining > 0 ? fmt(it.remaining) : (it.remaining < 0 ? `+${fmt(-it.remaining)}` : '0');
+      return `
+        <tr>
+          <td>${frappe.utils.escape_html(it.item_code)}</td>
+          <td class="small text-muted">${frappe.utils.escape_html(it.item_name || '')}</td>
+          <td class="text-end">${fmt(it.required)}</td>
+          <td class="text-end">${fmt(it.consumed)}</td>
+          <td class="text-end">${remainingDisplay} ${frappe.utils.escape_html(it.uom || '')}</td>
+          <td><span class="badge ${badge}">${badgeText}</span></td>
+        </tr>`;
+    }).join('');
+    const shortfalls = (summary && summary.shortfalls) || 0;
+    const headline = shortfalls
+      ? `<div class="alert alert-danger py-2 mb-2"><b>${shortfalls} item(s)</b> below tolerance (${tol}%). Consume the missing materials, or a Production Manager may override with a written reason.</div>`
+      : `<div class="alert alert-success py-2 mb-2">All required materials consumed (within ${tol}% tolerance).</div>`;
+    return `
+      ${headline}
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr>
+            <th>Item</th><th>Name</th>
+            <th class="text-end">Required</th>
+            <th class="text-end">Consumed</th>
+            <th class="text-end">Remaining</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
   $('#btn-end-wo',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);
 
-    // Get semi-finished components (slurry / rice mix etc.) for this WO
-    let sfgRows = [];
+    let summary = { items: [], sfg_items: [], shortfalls: 0, can_end: true,
+                    tolerance_pct: 0, can_override: false };
     try {
-      const r2 = await rpc('isnack.api.mes_ops.get_sfg_components_for_wo', { work_order: state.current_wo });
-      sfgRows = (r2.message && r2.message.items) || [];
+      const r = await rpc('isnack.api.mes_ops.get_end_wo_summary', { work_order: state.current_wo });
+      summary = Object.assign(summary, r.message || {});
     } catch (e) {
-      console.warn('get_sfg_components_for_wo failed', e);
+      console.warn('get_end_wo_summary failed', e);
     }
+    const sfgRows = summary.sfg_items || [];
+    const canEnd = !!summary.can_end;
+    const canOverride = !!summary.can_override;
 
     const fields = [];
+    fields.push({ fieldtype: 'HTML', fieldname: 'consumption_summary' });
 
     if (sfgRows.length) {
       fields.push({ fieldtype: 'Section Break', label: 'Semi-finished usage (slurry / rice mix)' });
       fields.push({ fieldtype: 'HTML', fieldname: 'sfg_help' });
-
       sfgRows.forEach((row, idx) => {
         fields.push({
           label: `${(row.item_code || '')} — ${(row.item_name || '')}`,
@@ -1761,54 +1817,78 @@ function init_operator_hub($root) {
           description: row.uom ? `UOM: ${row.uom}` : '',
         });
       });
-    } else {
-      fields.push({ 
-        fieldtype: 'HTML', 
-        fieldname: 'no_sfg_help',
-        options: '<div class="text-muted">No semi-finished materials to record. Click End WO to mark this work order as ended.</div>'
+    }
+
+    if (!canEnd && canOverride) {
+      fields.push({ fieldtype: 'Section Break', label: 'Manager override' });
+      fields.push({
+        fieldtype: 'HTML', fieldname: 'override_help',
+        options: '<div class="text-muted small mb-2">As a Production Manager you can force-end this WO. The reason below is logged on the Work Order for audit.</div>'
+      });
+      fields.push({
+        fieldtype: 'Small Text', fieldname: 'override_reason',
+        label: 'Reason for shortfall', reqd: 1,
+      });
+    } else if (!canEnd && !canOverride) {
+      fields.push({ fieldtype: 'Section Break' });
+      fields.push({
+        fieldtype: 'HTML', fieldname: 'no_override_help',
+        options: '<div class="text-muted small">A Production Manager must force-end this Work Order while a shortfall exists.</div>'
       });
     }
 
-    const d = new frappe.ui.Dialog({
-      title:'End Work Order',
+    const dialog_opts = {
+      title: 'End Work Order',
       fields,
-      primary_action_label:'End WO',
+      primary_action_label: 'End WO',
       primary_action: (v) => {
+        // Re-evaluate using the most recently rendered summary.
+        if (!canEnd && !canOverride) {
+          flashStatus('Cannot end: required materials below tolerance', 'error');
+          return;
+        }
+        if (!canEnd && canOverride && !(v.override_reason || '').trim()) {
+          flashStatus('Reason for shortfall is required to override', 'warning');
+          return;
+        }
         setStatus('Ending work order…');
-
         const sfgUsage = [];
         sfgRows.forEach((row, idx) => {
-          const key = `sfg_${idx}`;
-          const rawVal = v[key];
-          const qty = parseFloat(rawVal || 0);
-          if (qty > 0) {
-            sfgUsage.push({ item_code: row.item_code, qty: qty });
-          }
+          const qty = parseFloat(v[`sfg_${idx}`] || 0);
+          if (qty > 0) sfgUsage.push({ item_code: row.item_code, qty });
         });
-
-        rpc('isnack.api.mes_ops.end_work_order', {
+        const args = {
           work_order: state.current_wo,
           sfg_usage: JSON.stringify(sfgUsage),
-        }).then(async () => {
+        };
+        if (!canEnd && canOverride) args.override_reason = (v.override_reason || '').trim();
+        rpc('isnack.api.mes_ops.end_work_order', args).then(async () => {
           d.hide();
           const endedWo = state.current_wo;
-          // Optimistically reflect ended state so the UI updates immediately.
           state.current_production_ended = true;
           refreshButtonStates();
           flashStatus(`Ended — ${endedWo}`, 'success');
-          // Refresh queue (re-renders the row with the Ended chip) and re-select
-          // the same WO so the banner re-fetches with the ended note.
           await load_queue();
           if (endedWo && (state.orders || []).find(o => o.name === endedWo)) {
             set_active_work_order(endedWo);
           }
-        });
-      }
-    });
+        }).catch(() => {/* server-side message already shown */});
+      },
+    };
+    const d = new frappe.ui.Dialog(dialog_opts);
 
-    const f = d.get_field('sfg_help');
-    if (f && f.$wrapper) {
-      f.$wrapper.html('<div class="text-muted small mb-2">Enter the actual quantities of semi-finished materials used. They will be consumed from the Semi-finished warehouse.</div>');
+    const summaryField = d.get_field('consumption_summary');
+    if (summaryField && summaryField.$wrapper) {
+      summaryField.$wrapper.html(renderEndWoSummaryHtml(summary));
+    }
+    const sfgHelp = d.get_field('sfg_help');
+    if (sfgHelp && sfgHelp.$wrapper) {
+      sfgHelp.$wrapper.html('<div class="text-muted small mb-2">Enter the actual quantities of semi-finished materials used. They will be consumed from the Semi-finished warehouse.</div>');
+    }
+
+    // Disable the End WO submit when we cannot end and the user lacks the override role.
+    if (!canEnd && !canOverride) {
+      d.get_primary_btn().prop('disabled', true).attr('title', 'Required materials below tolerance');
     }
 
     d.show();

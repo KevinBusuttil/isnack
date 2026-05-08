@@ -1763,8 +1763,113 @@ def _assert_not_ended(work_order: str) -> None:
         )
 
 
+# Default tolerance applied to End WO consumption check when Factory Settings
+# does not define `end_wo_tolerance_pct`. Expressed as a percent of required qty.
+END_WO_DEFAULT_TOLERANCE_PCT = 2.0
+ROLES_END_WO_OVERRIDE = ["Production Manager"]
+
+
+def _end_wo_tolerance_pct() -> float:
+    """Read End WO tolerance % from Factory Settings, falling back to the
+    default. The Factory Settings field is optional; if it does not exist we
+    silently use the default constant."""
+    try:
+        val = frappe.db.get_single_value("Factory Settings", "end_wo_tolerance_pct")
+        if val is not None and float(val) >= 0:
+            return float(val)
+    except Exception:
+        pass
+    return END_WO_DEFAULT_TOLERANCE_PCT
+
+
+def _end_wo_consumption_summary(work_order: str) -> dict:
+    """Compute required vs consumed for each BOM item on the WO.
+
+    Returns a dict with:
+      - tolerance_pct: float
+      - items: list of rows (excluding SFG components, which are handled
+        separately via the End WO dialog's SFG section). Each row:
+          {item_code, item_name, uom, required, consumed, remaining,
+           is_packaging, is_sfg, status}
+        status ∈ {"ok", "short", "over"}.
+      - shortfalls: count of items with status == "short" (non-SFG only)
+      - can_end: True iff there are no shortfalls
+    """
+    tolerance_pct = _end_wo_tolerance_pct()
+    out = {"tolerance_pct": tolerance_pct, "items": [], "shortfalls": 0, "can_end": True}
+
+    wo = frappe.get_doc("Work Order", work_order)
+    if not wo.bom_no:
+        return out
+
+    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty))
+    consumed_map = _get_consumed_materials_from_load(work_order)
+
+    sfg_codes = {row["item_code"] for row in (get_sfg_components_for_wo(work_order).get("items") or [])}
+    packaging_groups = _packaging_groups_global()
+
+    rows: list[dict] = []
+    shortfalls = 0
+    for bi in bom_items:
+        item_code = bi["item_code"]
+        required = float(bi.get("qty") or 0)
+        consumed = float(consumed_map.get(item_code, 0) or 0)
+        remaining = required - consumed
+        group = (_get_item_group(item_code) or "").strip().lower()
+        is_packaging = group in packaging_groups
+        is_sfg = item_code in sfg_codes
+        allowed_short = required * (tolerance_pct / 100.0)
+
+        if remaining > allowed_short + QTY_EPSILON:
+            status = "short"
+        elif remaining < -QTY_EPSILON:
+            status = "over"
+        else:
+            status = "ok"
+
+        # SFG items are handled by the SFG section of the dialog and are
+        # excluded from the "must be consumed" gate.
+        if not is_sfg and status == "short":
+            shortfalls += 1
+
+        rows.append(
+            {
+                "item_code": item_code,
+                "item_name": frappe.db.get_value("Item", item_code, "item_name") or item_code,
+                "uom": bi.get("uom") or "",
+                "required": required,
+                "consumed": consumed,
+                "remaining": remaining,
+                "is_packaging": is_packaging,
+                "is_sfg": is_sfg,
+                "status": status,
+            }
+        )
+
+    out["items"] = rows
+    out["shortfalls"] = shortfalls
+    out["can_end"] = shortfalls == 0
+    return out
+
+
 @frappe.whitelist()
-def end_work_order(work_order: str, sfg_usage: str = None):
+def get_end_wo_summary(work_order: str):
+    """Snapshot used by the Operator Hub End WO dialog.
+
+    Combines the consumption summary with the existing SFG component list and
+    a flag indicating whether the current user can override a shortfall.
+    """
+    _require_roles(ROLES_OPERATOR)
+    summary = _end_wo_consumption_summary(work_order)
+    summary["sfg_items"] = (get_sfg_components_for_wo(work_order) or {}).get("items") or []
+    user_roles = set(frappe.get_roles(frappe.session.user))
+    summary["can_override"] = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
+    return summary
+
+
+@frappe.whitelist()
+def end_work_order(work_order: str, sfg_usage: str = None,
+                   override_reason: str = None):
     """
     End a work order - consume SFG materials and mark as ended.
     Does NOT create Manufacture Stock Entry.
@@ -1776,15 +1881,15 @@ def end_work_order(work_order: str, sfg_usage: str = None):
     _require_roles(ROLES_OPERATOR)
 
     wo = frappe.get_doc("Work Order", work_order)
-    
+
     # Validate WO status - must be In Process or Not Started with allocation
     if wo.status not in ("Not Started", "In Process"):
         frappe.throw(_("Work Order must be 'Not Started' or 'In Process' to end"))
-    
+
     # Check if already ended
     if wo.get("custom_production_ended"):
         frappe.throw(_("Work Order is already ended"))
-    
+
     # Parse and post SFG consumption if provided
     sfg_rows: list[dict] = []
     if sfg_usage:
@@ -1798,11 +1903,49 @@ def end_work_order(work_order: str, sfg_usage: str = None):
 
     if sfg_rows:
         _post_sfg_consumption(wo, sfg_rows, 0)  # fg_completed_qty = 0 since we're not creating FG yet
-    
+
+    # Tolerance-based check: every required (non-SFG) BOM item must be
+    # consumed at or above (required - tolerance). Production Managers can
+    # override with a written reason which is stored on the WO for audit.
+    summary = _end_wo_consumption_summary(work_order)
+    if not summary["can_end"]:
+        reason = (override_reason or "").strip()
+        user_roles = set(frappe.get_roles(frappe.session.user))
+        is_override_allowed = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
+
+        short_rows = [r for r in summary["items"] if (not r["is_sfg"]) and r["status"] == "short"]
+        short_summary = ", ".join(
+            f"{r['item_code']} ({r['consumed']:.4g}/{r['required']:.4g} {r['uom']})"
+            for r in short_rows
+        )
+
+        if not reason:
+            frappe.throw(
+                _(
+                    "Cannot end Work Order: {0} required item(s) below tolerance "
+                    "({1}%): {2}. All required materials must be consumed "
+                    "(within tolerance) before ending."
+                ).format(summary["shortfalls"], summary["tolerance_pct"], short_summary)
+            )
+        if not is_override_allowed:
+            frappe.throw(
+                _(
+                    "Only a Production Manager can force-end an under-consumed "
+                    "Work Order. Shortfall: {0}."
+                ).format(short_summary)
+            )
+        # Reason supplied + manager role: log and continue.
+        wo.add_comment(
+            "Info",
+            _(
+                "End WO override by {0}. Shortfall (>{1}% tolerance): {2}. Reason: {3}"
+            ).format(frappe.session.user, summary["tolerance_pct"], short_summary, reason),
+        )
+
     # Mark as ended
     wo.db_set("custom_production_ended", 1, commit=True)
     wo.add_comment("Info", _("Work Order ended - awaiting production closure"))
-    
+
     return {"success": True, "message": "Work Order ended successfully"}
 
 @frappe.whitelist()
