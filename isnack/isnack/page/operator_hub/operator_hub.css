@@ -375,64 +375,77 @@
   opacity:1;                /* don't dim — the neutral palette already reads as disabled */
 }
 
-/* Group 1: Run controls (go / pause / resume) */
+/* Group 1: Run controls (go / pause / resume).
+   !important is required throughout this section: the global
+   `.op-teal .btn { background:#fff !important; border:... !important }`
+   rule above otherwise wins and we end up with white-on-white text on
+   palettes that use light-coloured ink. */
 .op-teal .op-bottom .op-btn-run-start{
-  background:#10b981;
-  border-color:#059669;
-  color:#ffffff;
+  background:#10b981 !important;
+  border-color:#059669 !important;
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff;
 }
 
 .op-teal .op-bottom .op-btn-run-toggle.btn-warning{
-  background:#f59e0b;
-  border-color:#d97706;
-  color:#1f2937;
+  background:#f59e0b !important;
+  border-color:#d97706 !important;
+  color:#1f2937 !important;
+  -webkit-text-fill-color:#1f2937;
 }
 
 /* Resume reuses the same green as Start so identical meaning reads identically. */
 .op-teal .op-bottom .op-btn-run-toggle.btn-success{
-  background:#10b981;
-  border-color:#059669;
-  color:#ffffff;
+  background:#10b981 !important;
+  border-color:#059669 !important;
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff;
 }
 
 /* Group 2: Materials */
 .op-teal .op-bottom .op-btn-material{
-  background:#0284c7;
-  border-color:#0369a1;
-  color:#ffffff;
+  background:#0284c7 !important;
+  border-color:#0369a1 !important;
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff;
 }
 
 .op-teal .op-bottom .op-btn-manual-load{
-  background:#fb923c;
-  border-color:#ea580c;
-  color:#1f2937;
+  background:#fb923c !important;
+  border-color:#ea580c !important;
+  color:#1f2937 !important;
+  -webkit-text-fill-color:#1f2937;
 }
 
 /* Request More: warning/attention. Distinct from Pause via dashed border. */
 .op-teal .op-bottom .op-btn-material-strong{
-  background:#fbbf24;
-  border-color:#d97706;
-  border-style:dashed;
-  color:#1f2937;
+  background:#fbbf24 !important;
+  border-color:#d97706 !important;
+  border-style:dashed !important;
+  color:#1f2937 !important;
+  -webkit-text-fill-color:#1f2937;
 }
 
 .op-teal .op-bottom .op-btn-material-outline{
-  background:#e2e8f0;
-  border-color:#94a3b8;
-  color:#0f172a;
+  background:#e2e8f0 !important;
+  border-color:#94a3b8 !important;
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a;
 }
 
 /* Group 3: Labels */
 .op-teal .op-bottom .op-btn-label{
-  background:#7c3aed;
-  border-color:#6d28d9;
-  color:#ffffff;
+  background:#7c3aed !important;
+  border-color:#6d28d9 !important;
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff;
 }
 
 .op-teal .op-bottom .op-btn-label-outline{
-  background:#f5f3ff;
-  border-color:#c4b5fd;
-  color:#5b21b6;
+  background:#f5f3ff !important;
+  border-color:#c4b5fd !important;
+  color:#5b21b6 !important;
+  -webkit-text-fill-color:#5b21b6;
 }
 
 /* Group 4: End WO / Close Production */
