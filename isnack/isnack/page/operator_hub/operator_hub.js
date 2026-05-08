@@ -349,6 +349,16 @@ function init_operator_hub($root) {
   }
   updateClockShift(); setInterval(updateClockShift, 30_000);
 
+  // Every dialog opened from the Operator Hub gets the shared visual
+  // theme via `.op-dialog` (header stripe, primary CTA, table headers,
+  // semantic input helpers). Use this helper instead of
+  // `new frappe.ui.Dialog(...)` so the class is applied consistently.
+  function opDialog(opts) {
+    const d = new frappe.ui.Dialog(opts);
+    if (d && d.$wrapper) d.$wrapper.addClass('op-dialog');
+    return d;
+  }
+
   // Safe RPC
   async function rpc(path, args) {
     try { return await frappe.call(path, args); }
@@ -433,7 +443,7 @@ function init_operator_hub($root) {
     setScanMode(false);
     const r = await rpc('isnack.api.mes_ops.list_workstations');
     const opts = (r.message || []);
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title: 'Select Factory Sections',
       fields: [{ 
         label:'Factory Sections', 
@@ -471,7 +481,7 @@ function init_operator_hub($root) {
   // Choose operator
   $('#kiosk-choose-emp', $root).on('click', () => {
     setScanMode(false);  // avoid hidden scanner stealing focus inside dialog    
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title: 'Set Operator',
       fields: [
         { label:'Employee', fieldname:'employee', fieldtype:'Link', options:'Employee', reqd:1 }, 
@@ -784,7 +794,7 @@ function init_operator_hub($root) {
       </div>
     `;
     
-    const d = new frappe.ui.Dialog({ 
+    const d = opDialog({ 
       title: 'Load / Scan Materials',
       fields: [
         { 
@@ -816,7 +826,7 @@ function init_operator_hub($root) {
       <div id="manual-load-list" class="list-group" style="max-height:220px; overflow:auto;"></div>
     `;
 
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title: 'Manual Load Materials',
       fields: [
         { label: 'Item Code', fieldname: 'item_code', fieldtype: 'Link', options: 'Item', reqd: 0,
@@ -962,7 +972,7 @@ function init_operator_hub($root) {
   $('#btn-request',$root).on('click', () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);  // let the dialog keep focus
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title:'Request More Material',
       fields: [
         { label:'Item',   fieldname:'item_code', fieldtype:'Link', options:'Item', reqd:1 },
@@ -988,7 +998,7 @@ function init_operator_hub($root) {
       <div class="mb-2 text-muted">Scan an item barcode, enter quantity (UoM), optional batch, then click <b>Add</b>. When done, click <b>Post Returns</b>.</div>
       <div id="ret-list" class="list-group" style="max-height:220px; overflow:auto;"></div>
     `;
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title:'Return Materials',
       fields: [
         { label:'Scan / Item Code', fieldname:'scan', fieldtype:'Data', reqd:0, description:'Scan barcode or type item code' },
@@ -1051,7 +1061,7 @@ function init_operator_hub($root) {
     // If multiple lines are selected, ask user to choose which line to return WIP from
     let selectedLine;
     if (state.current_lines.length > 1) {
-      const lineDialog = new frappe.ui.Dialog({
+      const lineDialog = opDialog({
         title: 'Select Section for WIP Return',
         fields: [{
           label: 'Factory Section',
@@ -1114,7 +1124,7 @@ function init_operator_hub($root) {
         </div>
       `;
       
-      const d = new frappe.ui.Dialog({
+      const d = opDialog({
         title: `End Shift Return — ${line}`,
         size: 'extra-large',
         fields: [
@@ -1377,7 +1387,7 @@ function init_operator_hub($root) {
     }
 
     // 4. Build the dialog with a Table (grid) field
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title: 'Print Pallet Label (FG only)',
       size: 'extra-large',
       fields: [
@@ -1553,7 +1563,7 @@ function init_operator_hub($root) {
     if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
     setScanMode(false);
 
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title:`Label History — ${state.current_wo}`,
       fields: [
         { fieldtype:'Section Break', label:'Previously Printed Labels' },
@@ -1658,7 +1668,7 @@ function init_operator_hub($root) {
         }
 
         if (action === 'split') {
-          const splitDialog = new frappe.ui.Dialog({
+          const splitDialog = opDialog({
             title: `Split Label — ${row.name}`,
             fields: [
               { label:'Quantities (comma-separated)', fieldname:'quantities', fieldtype:'Data', reqd:1 },
@@ -1768,12 +1778,12 @@ function init_operator_hub($root) {
     }).join('');
     const shortfalls = (summary && summary.shortfalls) || 0;
     const headline = shortfalls
-      ? `<div class="alert alert-danger py-2 mb-2"><b>${shortfalls} item(s)</b> below tolerance (${tol}%). Consume the missing materials, or a Production Manager may override with a written reason.</div>`
-      : `<div class="alert alert-success py-2 mb-2">All required materials consumed (within ${tol}% tolerance).</div>`;
+      ? `<div class="op-alert op-alert-bad"><b>${shortfalls} item(s)</b> below tolerance (${tol}%). Consume the missing materials, or a Production Manager may override with a written reason.</div>`
+      : `<div class="op-alert op-alert-good">All required materials consumed (within ${tol}% tolerance).</div>`;
     return `
       ${headline}
       <div class="table-responsive">
-        <table class="table table-sm table-bordered mb-0">
+        <table class="table table-sm table-bordered op-table mb-0">
           <thead><tr>
             <th>Item</th><th>Name</th>
             <th class="text-end">Required</th>
@@ -1875,7 +1885,7 @@ function init_operator_hub($root) {
         }).catch(() => {/* server-side message already shown */});
       },
     };
-    const d = new frappe.ui.Dialog(dialog_opts);
+    const d = opDialog(dialog_opts);
 
     const summaryField = d.get_field('consumption_summary');
     if (summaryField && summaryField.$wrapper) {
@@ -1981,7 +1991,7 @@ function init_operator_hub($root) {
       });
     }
 
-    const d = new frappe.ui.Dialog({
+    const d = opDialog({
       title:'Close Production',
       fields,
       size: 'large',
