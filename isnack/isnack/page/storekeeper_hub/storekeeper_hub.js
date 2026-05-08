@@ -393,9 +393,21 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     load_staged();
     load_manual_entries();
     load_pallets();
+    load_pending_mrs();
   };
 
   refresh_btn.on('click', refresh);
+
+  // ----- Realtime: refresh Pending Requests when an operator creates an
+  // MR or when one is fulfilled. Listener is scoped to this page only -
+  // it is removed when the page is destroyed (next on_page_load) since
+  // the closure goes with it. ------------------------------------------
+  if (frappe.realtime && frappe.realtime.on) {
+    frappe.realtime.on('isnack_pending_mr_changed', () => {
+      // Only react if the page is still in the DOM.
+      if ($('.pending-mrs').length) load_pending_mrs();
+    });
+  }
 
   // --- Generate Picklist ---
   async function generate_picklist() {
@@ -945,6 +957,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const $staged  = $hub.find('.staged');
   const $manual  = $hub.find('.manual-se');
   const $pallets = $hub.find('.pallets');
+  const $pendingMrs = $hub.find('.pending-mrs');
+  const $pendingMrCount = $('#pending-mr-count');
 
   // Visual cues for WO selection within a bucket
   function paint_selection($bucket) {
@@ -1788,6 +1802,151 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       `).find('.cell:last').append(open_btn).end());
     });
     if (!$pallets.children().length) $pallets.append('<div class="muted">No pallets in the last 24h</div>');
+  }
+
+  // ---------- Pending Material Requests ----------
+  async function load_pending_mrs(){
+    if (!$pendingMrs.length) return;
+    $pendingMrs.empty().append('<div class="muted">Loading…</div>');
+    let rows = [];
+    try {
+      const r = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_pending_material_requests',
+        args: { factory_line: state.factory_line || null }
+      });
+      rows = r.message || [];
+    } catch (e) {
+      $pendingMrs.empty().append('<div class="muted">Failed to load Material Requests.</div>');
+      $pendingMrCount.text('');
+      return;
+    }
+    $pendingMrs.empty();
+    $pendingMrCount.text(rows.length ? `(${rows.length})` : '');
+
+    if (!rows.length) {
+      $pendingMrs.append('<div class="muted">No pending requests for this line.</div>');
+      return;
+    }
+
+    rows.forEach(row => {
+      const $r = $(`
+        <div class="hub-row pending-mr-row" data-mr="${frappe.utils.escape_html(row.mr)}" data-mri="${frappe.utils.escape_html(row.mri)}">
+          <div class="cell">
+            <div class="pending-mr-main">
+              <b>${frappe.utils.escape_html(row.item_code)}</b>
+              <span class="muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
+            </div>
+            <div class="muted small">
+              WO <a class="pending-mr-wo">${frappe.utils.escape_html(row.work_order || '')}</a>
+              ${row.factory_line ? ` · Line ${frappe.utils.escape_html(row.factory_line)}` : ''}
+              ${row.reason ? ` · <span class="pending-mr-reason">${frappe.utils.escape_html(row.reason)}</span>` : ''}
+            </div>
+            <div class="muted small">
+              ${frappe.utils.escape_html(row.operator || '')}
+              · ${frappe.datetime.comment_when(row.creation)}
+            </div>
+          </div>
+          <div class="cell text-end pending-mr-qty">
+            <b>${fmt_qty(row.remaining)}</b>
+            <span class="muted small">${frappe.utils.escape_html(row.uom || '')}</span>
+            ${row.received > 0 ? `<div class="muted xsmall">of ${fmt_qty(row.requested)} requested</div>` : ''}
+          </div>
+          <div class="cell">
+            <div class="btn-group">
+              <button class="btn btn-xs btn-default pending-mr-open" title="Open Material Request">Open</button>
+              <button class="btn btn-xs btn-primary pending-mr-stage" title="Fulfil from Source Warehouse">Stage</button>
+            </div>
+          </div>
+        </div>
+      `);
+      $r.find('.pending-mr-open').on('click', () => frappe.set_route('Form', 'Material Request', row.mr));
+      $r.find('.pending-mr-wo').on('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if (row.work_order) frappe.set_route('Form', 'Work Order', row.work_order);
+      });
+      $r.find('.pending-mr-stage').on('click', () => show_stage_mr_dialog(row));
+      $pendingMrs.append($r);
+    });
+  }
+
+  function show_stage_mr_dialog(row){
+    const default_src = state.src_warehouse || '';
+    const itemHasBatch = (row.item_code || '');
+
+    const d = new frappe.ui.Dialog({
+      title: __('Stage Material Request {0}', [row.mr]),
+      fields: [
+        {
+          fieldtype: 'HTML', fieldname: 'header',
+          options: `
+            <div class="mb-2">
+              <b>${frappe.utils.escape_html(row.item_code)}</b>
+              <span class="text-muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
+              <div class="text-muted small">
+                Requested ${fmt_qty(row.requested)} ${frappe.utils.escape_html(row.uom || '')}
+                · Already received ${fmt_qty(row.received)} ${frappe.utils.escape_html(row.uom || '')}
+                · Remaining <b>${fmt_qty(row.remaining)} ${frappe.utils.escape_html(row.uom || '')}</b>
+              </div>
+              ${row.reason ? `<div class="text-muted small mt-1">Reason: ${frappe.utils.escape_html(row.reason)}</div>` : ''}
+            </div>`
+        },
+        {
+          fieldtype: 'Link', fieldname: 'source_warehouse', options: 'Warehouse',
+          label: __('Source Warehouse'), reqd: 1, default: default_src
+        },
+        {
+          fieldtype: 'Float', fieldname: 'qty',
+          label: __('Qty ({0})', [row.uom || '']), reqd: 1, default: row.remaining,
+          description: __('Cannot exceed remaining {0} {1}', [fmt_qty(row.remaining), row.uom || ''])
+        },
+        {
+          fieldtype: 'Link', fieldname: 'batch_no', options: 'Batch',
+          label: __('Batch (if batch-tracked)'),
+          get_query: () => {
+            const wh = d.get_value('source_warehouse');
+            if (!wh) return { filters: { item: itemHasBatch } };
+            return {
+              query: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.batch_link_query',
+              filters: { item_code: itemHasBatch, warehouse: wh, non_expired: 1 }
+            };
+          }
+        }
+      ],
+      primary_action_label: __('Stage'),
+      primary_action: (v) => {
+        const qty = parseFloat(v.qty || 0);
+        if (qty <= 0) {
+          frappe.msgprint(__('Qty must be positive')); return;
+        }
+        if (qty - row.remaining > 1e-9) {
+          frappe.msgprint(__('Qty exceeds remaining {0} {1}', [fmt_qty(row.remaining), row.uom || ''])); return;
+        }
+        frappe.call({
+          method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.fulfil_material_request',
+          args: {
+            material_request: row.mr,
+            material_request_item: row.mri,
+            source_warehouse: v.source_warehouse,
+            qty: qty,
+            batch_no: v.batch_no || null,
+          },
+          freeze: true,
+          freeze_message: __('Submitting Stock Entry…'),
+          callback: (r) => {
+            if (!r.message || !r.message.ok) return;
+            d.hide();
+            frappe.show_alert({
+              message: __('Staged: Stock Entry {0}', [r.message.stock_entry]),
+              indicator: 'green'
+            }, 5);
+            // refresh both panels
+            load_pending_mrs();
+            load_staged();
+          }
+        });
+      }
+    });
+    d.show();
   }
 
   // ---------- PO Receipt Dialog ----------

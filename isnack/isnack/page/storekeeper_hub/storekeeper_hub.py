@@ -1854,3 +1854,191 @@ def _normalize_batch_expiry_date(expiry_date=None, item_code=None, batch_no=None
                 expiry_text, item_code or _("Unknown"), batch_no or _("Unknown")
             )
         )
+
+
+# ============================================================================
+# Pending Material Requests (operator-initiated "Request More Material" flow)
+# ============================================================================
+
+def _mr_realtime_room() -> str:
+    """Channel name used to broadcast MR-related events to live Storekeeper Hubs."""
+    return "isnack_storekeeper_hub"
+
+
+@frappe.whitelist()
+def get_pending_material_requests(factory_line: str | None = None,
+                                  source_warehouse: str | None = None):
+    """List operator-initiated Material Requests still awaiting fulfilment.
+
+    Filters:
+      - material_request_type = 'Material Transfer'
+      - docstatus = 1 (submitted)
+      - status not in ('Stopped','Cancelled')
+      - linked to a Work Order whose status is not 'Completed'
+      - row-level remaining > 0
+      - optional factory_line (resolved via WO.custom_factory_line or BOM default)
+
+    Returns one row per *Material Request Item* with all the detail the
+    Storekeeper Hub needs to render and stage from a single click.
+    """
+    factory_line = _normalize_factory_line(factory_line)
+
+    rows = frappe.db.sql(
+        """
+        select
+            mr.name              as mr,
+            mr.work_order        as work_order,
+            wo.production_item   as production_item,
+            wo.item_name         as wo_item_name,
+            wo.custom_factory_line as wo_line,
+            bom.custom_default_factory_line as bom_line,
+            mr.transaction_date,
+            mr.creation,
+            mr.owner             as operator,
+            mr.notes             as reason,
+            mri.name             as mri,
+            mri.item_code,
+            mri.item_name,
+            mri.uom,
+            mri.qty              as requested_qty,
+            mri.received_qty,
+            mri.ordered_qty
+        from `tabMaterial Request` mr
+        join `tabMaterial Request Item` mri on mri.parent = mr.name
+        left join `tabWork Order` wo on wo.name = mr.work_order
+        left join `tabBOM` bom on bom.name = wo.bom_no
+        where mr.docstatus = 1
+          and mr.material_request_type = 'Material Transfer'
+          and mr.status not in ('Stopped','Cancelled')
+          and (wo.status is null or wo.status != 'Completed')
+        order by mr.creation desc
+        limit 200
+        """,
+        as_dict=True,
+    )
+
+    out = []
+    for r in rows:
+        line = r.get("wo_line") or r.get("bom_line") or None
+        if factory_line and line != factory_line:
+            continue
+        requested = float(r.get("requested_qty") or 0)
+        received = float(r.get("received_qty") or 0)
+        remaining = max(requested - received, 0)
+        if remaining <= 0:
+            continue
+        out.append({
+            "mr": r["mr"],
+            "mri": r["mri"],
+            "work_order": r.get("work_order"),
+            "wo_item_name": r.get("wo_item_name"),
+            "production_item": r.get("production_item"),
+            "factory_line": line,
+            "transaction_date": r.get("transaction_date"),
+            "creation": r.get("creation"),
+            "operator": r.get("operator"),
+            "reason": r.get("reason"),
+            "item_code": r.get("item_code"),
+            "item_name": r.get("item_name"),
+            "uom": r.get("uom"),
+            "requested": requested,
+            "received": received,
+            "remaining": remaining,
+        })
+    return out
+
+
+@frappe.whitelist()
+def fulfil_material_request(material_request: str,
+                            material_request_item: str,
+                            source_warehouse: str,
+                            qty: float,
+                            batch_no: str | None = None):
+    """Stage an operator's Material Request by creating and submitting a
+    Material Transfer Stock Entry from `source_warehouse` to the WO's
+    staging-or-WIP warehouse. Setting `material_request` and
+    `material_request_item` on the detail row makes ERPNext auto-update
+    the MR's received quantity, eventually marking it Transferred.
+    """
+    if not material_request:
+        frappe.throw(_("Missing Material Request"))
+    if not material_request_item:
+        frappe.throw(_("Missing Material Request Item"))
+    if not source_warehouse:
+        frappe.throw(_("Source Warehouse is required"))
+
+    qty = float(qty or 0)
+    if qty <= 0:
+        frappe.throw(_("Qty must be positive"))
+
+    mr = frappe.get_doc("Material Request", material_request)
+    if mr.docstatus != 1:
+        frappe.throw(_("Material Request {0} is not submitted").format(mr.name))
+    if mr.status in ("Stopped", "Cancelled"):
+        frappe.throw(_("Material Request {0} is {1}").format(mr.name, mr.status))
+    if mr.material_request_type != "Material Transfer":
+        frappe.throw(_("Only Material Transfer Material Requests can be staged here"))
+    if not mr.work_order:
+        frappe.throw(_("Material Request {0} is not linked to a Work Order").format(mr.name))
+
+    mri = next((r for r in mr.items if r.name == material_request_item), None)
+    if not mri:
+        frappe.throw(_("Material Request Item {0} not found on {1}").format(
+            material_request_item, mr.name))
+
+    requested = float(mri.qty or 0)
+    already = float(mri.received_qty or 0)
+    remaining = max(requested - already, 0)
+    if remaining <= 0:
+        frappe.throw(_("This request line is already fulfilled."))
+    if qty - remaining > 1e-9:
+        frappe.throw(_("Qty {0} exceeds remaining {1} {2}").format(
+            qty, remaining, mri.uom or ""))
+
+    # Resolve target warehouse: prefer staging, fall back to WIP. Mirrors the
+    # logic used by `create_consolidated_transfers`.
+    wo_doc = frappe.get_doc("Work Order", mr.work_order)
+    target_wh = _staging_for(wo_doc) or _wip_for(wo_doc)
+    if not target_wh:
+        frappe.throw(_("No Staging or WIP warehouse configured for WO {0}").format(wo_doc.name))
+
+    # Batch validation: required if the item is batch-tracked.
+    item_has_batch = bool(frappe.db.get_value("Item", mri.item_code, "has_batch_no"))
+    batch_no = (batch_no or "").strip() or None
+    if item_has_batch and not batch_no:
+        frappe.throw(_("Batch is required for item {0}").format(mri.item_code))
+
+    se = frappe.new_doc("Stock Entry")
+    se.company = wo_doc.company
+    se.stock_entry_type = "Material Transfer"
+    se.purpose = "Material Transfer"
+    se.work_order = wo_doc.name
+    se.from_warehouse = source_warehouse
+    se.to_warehouse = target_wh
+    se.remarks = _("Fulfil Material Request {0} | WO: {1}").format(mr.name, wo_doc.name)
+    se.append("items", {
+        "item_code": mri.item_code,
+        "qty": flt(qty, 3),
+        "uom": mri.uom or frappe.db.get_value("Item", mri.item_code, "stock_uom"),
+        "s_warehouse": source_warehouse,
+        "t_warehouse": target_wh,
+        "batch_no": batch_no,
+        "use_serial_batch_fields": 1 if batch_no else 0,
+        # Linking to MR makes ERPNext update mri.received_qty and the MR status.
+        "material_request": mr.name,
+        "material_request_item": mri.name,
+    })
+    se.insert(ignore_permissions=True)
+    se.submit()
+
+    # Notify any open Storekeeper Hubs so they can refresh.
+    try:
+        frappe.publish_realtime(
+            event="isnack_pending_mr_changed",
+            message={"mr": mr.name, "stock_entry": se.name},
+            after_commit=True,
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "stock_entry": se.name, "mr": mr.name}

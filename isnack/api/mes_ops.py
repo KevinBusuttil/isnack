@@ -1596,6 +1596,19 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
         mr.notes = reason
     mr.flags.ignore_permissions = True
     mr.insert()
+
+    # Notify any live Storekeeper Hub sessions so they refresh their
+    # Pending Requests panel without polling. Listeners are scoped on the
+    # client side (only open Storekeeper Hubs react to the event).
+    try:
+        frappe.publish_realtime(
+            event="isnack_pending_mr_changed",
+            message={"mr": mr.name, "work_order": work_order, "item_code": item_code},
+            after_commit=True,
+        )
+    except Exception:
+        pass
+
     return {"ok": True, "mr": mr.name, "type": "Material Transfer"}
 
 @frappe.whitelist()
