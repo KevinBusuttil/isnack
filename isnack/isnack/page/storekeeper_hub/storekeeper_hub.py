@@ -1895,7 +1895,6 @@ def get_pending_material_requests(factory_line: str | None = None,
             mr.transaction_date,
             mr.creation,
             mr.owner             as operator,
-            mr.notes             as reason,
             mri.name             as mri,
             mri.item_code,
             mri.item_name,
@@ -1917,6 +1916,28 @@ def get_pending_material_requests(factory_line: str | None = None,
         as_dict=True,
     )
 
+    mr_names = list({r["mr"] for r in rows})
+    reasons_by_mr: dict = {}
+    if mr_names:
+        comment_rows = frappe.db.sql(
+            """
+            select reference_name, content, creation
+            from `tabComment`
+            where comment_type = 'Comment'
+              and reference_doctype = 'Material Request'
+              and reference_name in %(names)s
+            order by creation desc
+            """,
+            {"names": tuple(mr_names)},
+            as_dict=True,
+        )
+        for c in comment_rows:
+            # keep only the most recent per MR (rows are sorted desc)
+            reasons_by_mr.setdefault(
+                c["reference_name"],
+                frappe.utils.strip_html_tags(c["content"] or "").strip(),
+            )
+
     out = []
     for r in rows:
         line = r.get("wo_line") or r.get("bom_line") or None
@@ -1937,7 +1958,7 @@ def get_pending_material_requests(factory_line: str | None = None,
             "transaction_date": r.get("transaction_date"),
             "creation": r.get("creation"),
             "operator": r.get("operator"),
-            "reason": r.get("reason"),
+            "reason": reasons_by_mr.get(r["mr"]) or None,
             "item_code": r.get("item_code"),
             "item_name": r.get("item_name"),
             "uom": r.get("uom"),
