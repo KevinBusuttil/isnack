@@ -1506,7 +1506,58 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         return {"ok": False, "msg": _("Failed to consume material. Please contact administrator.")}
 
 
+@frappe.whitelist()
+def get_requestable_items_for_wo(work_order: str):
+    """Return leaf BOM raw-material items for the WO that an operator may
+    legitimately request from stores.
+
+    Excludes:
+      - Items that have their own active+default BOM (semi-finished goods —
+        those are produced via sub-WOs, not requested from stores).
+
+    Each row carries `required / consumed / remaining` so the Operator Hub
+    can pre-fill the Qty input and show a shortage hint.
+    """
+    _require_roles(["Stores User", *ROLES_OPERATOR])
+
+    wo = frappe.get_doc("Work Order", work_order)
+    if not wo.bom_no:
+        return {"items": []}
+
+    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty))
+    consumed_map = _get_consumed_materials_from_load(work_order)
+    sfg_codes = {
+        row["item_code"]
+        for row in (get_sfg_components_for_wo(work_order).get("items") or [])
+    }
+
+    out = []
+    for bi in bom_items:
+        item_code = bi["item_code"]
+        if item_code in sfg_codes:
+            continue
+        required = float(bi.get("qty") or 0)
+        consumed = float(consumed_map.get(item_code, 0) or 0)
+        remaining = max(required - consumed, 0)
+        out.append({
+            "item_code": item_code,
+            "item_name": frappe.db.get_value("Item", item_code, "item_name") or item_code,
+            "uom": bi.get("uom") or "",
+            "required": required,
+            "consumed": consumed,
+            "remaining": remaining,
+        })
+    return {"items": out}
+
+
+@frappe.whitelist()
 def request_material(item_code, qty, reason=None, job_card: Optional[str] = None, work_order: Optional[str] = None):
+    """Operator-initiated Material Request for a shortage on the current WO.
+
+    Restricted to leaf BOM raw materials of the Work Order (non-SFG). Always
+    creates a Material Transfer Material Request — central-warehouse / purchase
+    decisions are made by the buyer, not the operator.
+    """
     _require_roles(["Stores User", *ROLES_OPERATOR])
 
     qty = float(qty or 0)
@@ -1520,21 +1571,32 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
 
     _assert_not_ended(work_order)
 
-    central_wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
-    projected_qty = frappe.db.get_value("Bin", {"warehouse": central_wh, "item_code": item_code}, "projected_qty") or 0
-    is_purchase_item = bool(frappe.db.get_value("Item", item_code, "is_purchase_item"))
-    mr_type = "Material Transfer" if projected_qty >= qty else ("Purchase" if is_purchase_item else "Material Transfer")
+    requestable = {
+        it["item_code"]
+        for it in (get_requestable_items_for_wo(work_order).get("items") or [])
+    }
+    if item_code not in requestable:
+        frappe.throw(
+            _(
+                "Item {0} is not a raw material of this Work Order, or is a "
+                "semi-finished item (those are produced, not requested)."
+            ).format(item_code)
+        )
 
     mr = frappe.new_doc("Material Request")
-    mr.material_request_type = mr_type
+    mr.material_request_type = "Material Transfer"
     mr.schedule_date = frappe.utils.nowdate()
     mr.work_order = work_order
-    mr.append("items", {"item_code": item_code, "qty": qty, "schedule_date": mr.schedule_date})
+    mr.append("items", {
+        "item_code": item_code,
+        "qty": qty,
+        "schedule_date": mr.schedule_date,
+    })
     if reason:
         mr.notes = reason
     mr.flags.ignore_permissions = True
     mr.insert()
-    return {"ok": True, "mr": mr.name, "type": mr_type}
+    return {"ok": True, "mr": mr.name, "type": "Material Transfer"}
 
 @frappe.whitelist()
 def set_wo_status(work_order, action, reason=None, remarks=None):

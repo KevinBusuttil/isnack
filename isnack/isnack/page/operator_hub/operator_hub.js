@@ -969,24 +969,93 @@ function init_operator_hub($root) {
     redraw();
   });
 
-  $('#btn-request',$root).on('click', () => {
+  $('#btn-request',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);  // let the dialog keep focus
+
+    // Fetch the WO's leaf BOM raw materials so the Item field is restricted
+    // to materials that actually belong to this Work Order.
+    let items = [];
+    try {
+      const r = await rpc('isnack.api.mes_ops.get_requestable_items_for_wo', { work_order: state.current_wo });
+      items = (r.message && r.message.items) || [];
+    } catch (e) {
+      console.warn('get_requestable_items_for_wo failed', e);
+    }
+    if (!items.length) {
+      flashStatus('No raw materials available to request for this Work Order', 'warning');
+      return;
+    }
+
+    const fmt = (n) => {
+      if (n == null) return '0';
+      const v = Number(n);
+      return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
+    };
+    const itemMap = {};
+    items.forEach(it => { itemMap[it.item_code] = it; });
+    const allowedCodes = items.map(it => it.item_code);
+
     const d = opDialog({
       title:'Request More Material',
       fields: [
-        { label:'Item',   fieldname:'item_code', fieldtype:'Link', options:'Item', reqd:1 },
-        { label:'Qty',    fieldname:'qty', fieldtype:'Float', reqd:1 },
-        { label:'Reason', fieldname:'reason', fieldtype:'Select', options:['Evaporation/Wastage','Overweight Spec','Machine Loss','Short Pick','Other'] }
+        {
+          label:'Item', fieldname:'item_code', fieldtype:'Link', options:'Item', reqd:1,
+          // Restrict the Link autocomplete to this WO's BOM raw materials only.
+          get_query: () => ({ filters: { name: ['in', allowedCodes] } }),
+        },
+        { fieldtype:'HTML', fieldname:'item_hint' },
+        { label:'Qty', fieldname:'qty', fieldtype:'Float', reqd:1 },
+        { label:'Reason', fieldname:'reason', fieldtype:'Select', options:['Evaporation/Wastage','Overweight Spec','Machine Loss','Short Pick','Other'] },
       ],
       primary_action_label:'Send Request',
       primary_action: (v) => {
+        if (!itemMap[v.item_code]) {
+          flashStatus('Pick an item from this Work Order’s BOM', 'warning');
+          return;
+        }
         setStatus('Submitting material request…');
         rpc('isnack.api.mes_ops.request_material', { work_order: state.current_wo, ...v })
-          .then(r => { d.hide(); frappe.msgprint('Material Request: ' + (r.message && r.message.mr)); flashStatus('Material request submitted', 'success'); });
-      }
+          .then(r => {
+            d.hide();
+            const mr = r.message && r.message.mr;
+            frappe.msgprint(mr ? `Material Request created: ${mr}` : 'Material Request created');
+            flashStatus('Material request submitted', 'success');
+          })
+          .catch(() => { /* server-side message already shown */ });
+      },
     });
+
+    // Once an item is picked, default Qty to the remaining shortfall and
+    // show a small Required / Consumed / Remaining hint.
+    const itemField = d.get_field('item_code');
+    const qtyField = d.get_field('qty');
+    const hintField = d.get_field('item_hint');
+    const updateForItem = (code) => {
+      const it = itemMap[code];
+      if (!it) {
+        if (hintField && hintField.$wrapper) hintField.$wrapper.html('');
+        return;
+      }
+      if (qtyField) qtyField.set_value(it.remaining);
+      if (hintField && hintField.$wrapper) {
+        hintField.$wrapper.html(
+          `<div class="text-muted small mb-2">`
+          + `Required <b>${fmt(it.required)} ${frappe.utils.escape_html(it.uom)}</b> &middot; `
+          + `Consumed <b>${fmt(it.consumed)} ${frappe.utils.escape_html(it.uom)}</b> &middot; `
+          + `Remaining <b>${fmt(it.remaining)} ${frappe.utils.escape_html(it.uom)}</b>`
+          + `</div>`
+        );
+      }
+    };
+    if (itemField) {
+      itemField.df.onchange = () => updateForItem(itemField.get_value());
+    }
+
     d.show();
+    // Tag the qty input with the shared "key operator input" style.
+    if (qtyField && qtyField.$input) qtyField.$input.addClass('op-input-key');
+    if (itemField && itemField.$input) itemField.$input.addClass('op-input-info');
   });
 
   // Return Materials
