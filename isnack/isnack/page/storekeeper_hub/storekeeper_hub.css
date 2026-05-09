@@ -552,7 +552,7 @@
 }
 
 .ppl-se-card.ppl-se-selected {
-  background: rgba(15, 118, 110, .05);
+  background: var(--isn-dialog-primary-soft-hover);
 }
 
 .ppl-se-card-header {
@@ -763,7 +763,7 @@
 }
 .sk-dialog .modal-footer .btn-primary:enabled:hover{
   background: var(--isn-dialog-primary-strong) !important;
-  box-shadow: 0 6px 16px rgba(15,118,110,.22);
+  box-shadow: var(--isn-dialog-primary-shadow);
 }
 .sk-dialog .modal-footer .btn-primary:disabled{
   background: #cbd5e1 !important;
@@ -986,13 +986,13 @@
 
 .batch-selection-dialog .sk-batch-selection-table .batch-row:nth-child(even),
 .po-batch-dialog .po-batch-table tbody tr:nth-child(even){
-  background: rgba(15, 118, 110, .03);
+  background: var(--isn-dialog-primary-soft-alt);
 }
 
 .batch-selection-dialog .sk-batch-selection-table .batch-qty-input:focus,
 .po-batch-dialog .po-batch-table input:focus{
   border-color: var(--isn-dialog-primary);
-  box-shadow: 0 0 0 .2rem rgba(15, 118, 110, .12);
+  box-shadow: var(--isn-dialog-focus-shadow);
 }
 
 .batch-selection-dialog .sk-batch-selection-total-label{

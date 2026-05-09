@@ -13,6 +13,10 @@
     --isn-dialog-border: #d7e3ea;
     --isn-dialog-body-bg: #ffffff;
     --isn-dialog-footer-bg: #f8fafc;
+    --isn-dialog-primary-soft-hover: rgba(15, 118, 110, .05);
+    --isn-dialog-primary-soft-alt: rgba(15, 118, 110, .03);
+    --isn-dialog-primary-shadow: 0 6px 16px rgba(15, 118, 110, .22);
+    --isn-dialog-focus-shadow: 0 0 0 .2rem rgba(15, 118, 110, .12);
     --isn-dialog-info-bg: #e8f1ff;
     --isn-dialog-info-border: #93c5fd;
     --isn-dialog-info-text: #1e3a8a;
@@ -102,7 +106,7 @@
 .isn-dialog-theme .modal-footer .btn-primary:enabled:hover {
     background: var(--isn-dialog-primary-strong) !important;
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(15, 118, 110, .22);
+    box-shadow: var(--isn-dialog-primary-shadow);
 }
 
 .isn-dialog-theme .modal-footer .btn-primary:disabled {

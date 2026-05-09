@@ -48,7 +48,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   function createStorekeeperDialog(opts, extraClasses = '') {
     const d = new frappe.ui.Dialog(opts);
     if (d && d.$wrapper) {
-      d.$wrapper.addClass(`isn-dialog-theme sk-dialog${extraClasses ? ' ' + extraClasses : ''}`);
+      const classes = ['isn-dialog-theme', 'sk-dialog', extraClasses].filter(Boolean).join(' ');
+      d.$wrapper.addClass(classes);
     }
     return d;
   }

@@ -663,7 +663,7 @@
 }
 
 .qh-record-dialog .qh-child-table tbody tr:nth-child(even) td {
-    background: rgba(15, 118, 110, 0.03);
+    background: var(--isn-dialog-primary-soft-alt);
 }
 
 .qh-child-table th,
@@ -684,7 +684,7 @@
 .qh-record-dialog .qh-child-input:focus,
 .qh-record-dialog .qh-child-table .form-control:focus {
     border-color: var(--isn-dialog-primary);
-    box-shadow: 0 0 0 .2rem rgba(15, 118, 110, 0.12);
+    box-shadow: var(--isn-dialog-focus-shadow);
 }
 
 .qh-child-textarea {
