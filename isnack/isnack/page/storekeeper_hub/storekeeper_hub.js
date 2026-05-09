@@ -390,6 +390,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     state.src_warehouse = src_wh.get_value();
     state.posting_date = posting_date.get_value() || '';
     load_buckets();
+    load_pending_returns();
     load_staged();
     load_manual_entries();
     load_pallets();
@@ -403,6 +404,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   // it is removed when the page is destroyed (next on_page_load) since
   // the closure goes with it. ------------------------------------------
   if (frappe.realtime && frappe.realtime.on) {
+    frappe.realtime.on('isnack_pending_end_shift_return_changed', () => {
+      if ($('.pending-returns').length) load_pending_returns();
+    });
     frappe.realtime.on('isnack_pending_mr_changed', () => {
       // Only react if the page is still in the DOM.
       if ($('.pending-mrs').length) load_pending_mrs();
@@ -957,6 +961,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const $staged  = $hub.find('.staged');
   const $manual  = $hub.find('.manual-se');
   const $pallets = $hub.find('.pallets');
+  const $pendingReturns = $hub.find('.pending-returns');
+  const $pendingReturnCount = $('#pending-return-count');
   const $pendingMrs = $hub.find('.pending-mrs');
   const $pendingMrCount = $('#pending-mr-count');
 
@@ -1805,6 +1811,95 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       `).find('.cell:last').append(open_btn).end());
     });
     if (!$pallets.children().length) $pallets.append('<div class="muted">No pallets in the last 24h</div>');
+  }
+
+  // ---------- Pending End Shift Returns ----------
+  async function load_pending_returns(){
+    if (!$pendingReturns.length) return;
+    $pendingReturns.empty().append('<div class="muted">Loading…</div>');
+    let rows = [];
+    try {
+      const r = await frappe.call({
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_pending_end_shift_returns'
+      });
+      rows = r.message || [];
+    } catch (e) {
+      $pendingReturns.empty().append('<div class="muted">Failed to load pending end-shift returns.</div>');
+      $pendingReturnCount.text('');
+      return;
+    }
+
+    $pendingReturns.empty();
+    $pendingReturnCount.text(rows.length ? `(${rows.length})` : '');
+
+    if (!rows.length) {
+      $pendingReturns.append('<div class="muted">No pending end-shift returns.</div>');
+      return;
+    }
+
+    rows.forEach((row) => {
+      const submitted = [row.posting_date ? frappe.datetime.str_to_user(row.posting_date) : '', row.posting_time || '']
+        .filter(Boolean)
+        .join(' ');
+      const $r = $(`
+        <div class="hub-row pending-return-row" data-stock-entry="${frappe.utils.escape_html(row.name)}">
+          <div class="pending-return-head">
+            <div class="pending-return-id">
+              ${frappe.utils.escape_html(row.name)}
+            </div>
+            <div class="pending-return-qty">
+              <b>${fmt_qty(row.total_qty)}</b><br>
+              <span class="muted xsmall">${__('Qty')}</span>
+            </div>
+          </div>
+          <div class="pending-return-meta muted small">
+            ${__('To')} ${frappe.utils.escape_html(row.to_warehouse || __('(not set)'))}
+            ${row.item_count ? ` · ${__('Items')}: ${frappe.utils.escape_html(String(row.item_count))}` : ''}
+            ${row.remarks ? `<div>${frappe.utils.escape_html(row.remarks)}</div>` : ''}
+          </div>
+          <div class="pending-return-foot">
+            <div class="muted xsmall">
+              ${submitted ? `${__('Submitted')} ${frappe.utils.escape_html(submitted)}` : ''}
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-xs btn-default pending-return-open" title="Open Stock Entry">Open</button>
+              <button class="btn btn-xs btn-primary pending-return-received" title="Mark received by storekeeper">Received</button>
+            </div>
+          </div>
+        </div>
+      `);
+
+      $r.find('.pending-return-open').on('click', () => frappe.set_route('Form', 'Stock Entry', row.name));
+      $r.find('.pending-return-received').on('click', () => {
+        frappe.confirm(
+          __('Mark End Shift Return {0} as received by the storekeeper?', [row.name]),
+          async () => {
+            const $btn = $r.find('.pending-return-received');
+            $btn.prop('disabled', true);
+            try {
+              const resp = await frappe.call({
+                method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.mark_end_shift_return_received',
+                args: { stock_entry: row.name },
+                freeze: true,
+                freeze_message: __('Updating End Shift Return…')
+              });
+              const already_received = !!(resp && resp.message && resp.message.already_received);
+              frappe.show_alert({
+                message: already_received
+                  ? __('End Shift Return {0} was already marked as received.', [row.name])
+                  : __('End Shift Return {0} marked as received.', [row.name]),
+                indicator: already_received ? 'orange' : 'green'
+              });
+              load_pending_returns();
+            } catch (err) {
+              $btn.prop('disabled', false);
+            }
+          }
+        );
+      });
+
+      $pendingReturns.append($r);
+    });
   }
 
   // ---------- Pending Material Requests ----------

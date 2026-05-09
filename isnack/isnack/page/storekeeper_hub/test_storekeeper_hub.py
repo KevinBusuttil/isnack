@@ -9,6 +9,8 @@ from unittest.mock import patch, MagicMock
 import frappe
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     get_items_per_stock_entry,
+    get_pending_end_shift_returns,
+    mark_end_shift_return_received,
     _normalize_batch_expiry_date,
     print_combined_pallet_labels,
 )
@@ -334,6 +336,74 @@ class TestNormalizeBatchExpiryDate(unittest.TestCase):
     def test_rejects_malformed_date_strings(self, _throw):
         with self.assertRaisesRegex(frappe.ValidationError, "Invalid Expiry Date"):
             _normalize_batch_expiry_date("31/31/2026", item_code="ITEM-001", batch_no="BATCH-001")
+
+
+class TestPendingEndShiftReturns(unittest.TestCase):
+    @patch("frappe.db.sql")
+    def test_get_pending_end_shift_returns_coerces_numeric_fields(self, mock_sql):
+        mock_sql.return_value = [
+            {
+                "name": "MAT-STE-2026-00001",
+                "to_warehouse": "Returns - TEST",
+                "posting_date": "2026-05-09",
+                "posting_time": "12:00:00",
+                "remarks": "End Shift Return",
+                "item_count": "2",
+                "total_qty": "14.5",
+            }
+        ]
+
+        result = get_pending_end_shift_returns()
+
+        self.assertEqual(result[0]["name"], "MAT-STE-2026-00001")
+        self.assertEqual(result[0]["item_count"], 2)
+        self.assertEqual(result[0]["total_qty"], 14.5)
+
+    @patch("frappe.db.sql")
+    def test_get_pending_end_shift_returns_ignores_factory_line_filter(self, mock_sql):
+        get_pending_end_shift_returns(factory_line="Line 1")
+
+        mock_sql.assert_called_once()
+        query = mock_sql.call_args[0][0]
+        params = mock_sql.call_args[0][1]
+        self.assertNotIn("custom_factory_line", query)
+        self.assertEqual(params, {})
+
+    @patch("frappe.publish_realtime")
+    @patch("frappe.get_doc")
+    def test_mark_end_shift_return_received_sets_flag(self, mock_get_doc, mock_publish):
+        se = MagicMock()
+        se.name = "MAT-STE-2026-00001"
+        se.docstatus = 1
+        se.custom_is_end_shift_return = 1
+        se.custom_return_received_by_storekeeper = 0
+        mock_get_doc.return_value = se
+
+        result = mark_end_shift_return_received(se.name)
+
+        se.db_set.assert_called_once_with("custom_return_received_by_storekeeper", 1, update_modified=True)
+        mock_publish.assert_called_once_with(
+            event="isnack_pending_end_shift_return_changed",
+            message={"stock_entry": se.name},
+            after_commit=True,
+        )
+        self.assertEqual(result["stock_entry"], se.name)
+
+    @patch("frappe.publish_realtime")
+    @patch("frappe.get_doc")
+    def test_mark_end_shift_return_received_is_idempotent(self, mock_get_doc, mock_publish):
+        se = MagicMock()
+        se.name = "MAT-STE-2026-00001"
+        se.docstatus = 1
+        se.custom_is_end_shift_return = 1
+        se.custom_return_received_by_storekeeper = 1
+        mock_get_doc.return_value = se
+
+        result = mark_end_shift_return_received(se.name)
+
+        se.db_set.assert_not_called()
+        mock_publish.assert_not_called()
+        self.assertTrue(result["already_received"])
 
 
 if __name__ == '__main__':

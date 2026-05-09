@@ -270,8 +270,9 @@ Click **End Shift Return** to return all remaining WIP inventory at end of shift
 3. A table shows each item with its available qty, a **Return Qty** input, and a batch badge.
 4. Use the **Select All** checkbox or per-row checkboxes to bulk-clear quantities, or enter individual quantities.
 5. A summary footer shows item count and total quantity.
-6. Click **Post Return** — the server creates a `Material Transfer` SE from WIP Warehouse → Return Warehouse (or Staging Warehouse if no return warehouse configured), tagged with `custom_is_end_shift_return = 1`.
+6. Click **Post Return** — the server creates a `Material Transfer` SE from WIP Warehouse → Return Warehouse (or Staging Warehouse if no return warehouse configured), tagged with `custom_is_end_shift_return = 1` and `custom_return_received_by_storekeeper = 0`.
 7. A Material Return Note is printed automatically (via QZ Tray or browser dialog).
+8. The Stock Entry appears in **Storekeeper Hub → Pending End Shift Returns** until the storekeeper clicks **Received**, which sets `custom_return_received_by_storekeeper = 1`.
 
 ---
 

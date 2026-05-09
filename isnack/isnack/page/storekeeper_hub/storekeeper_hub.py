@@ -3,7 +3,7 @@ import copy
 from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
+from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate, cint
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -1878,6 +1878,99 @@ def _normalize_batch_expiry_date(expiry_date=None, item_code=None, batch_no=None
 
 
 # ============================================================================
+# Pending End Shift Returns (Storekeeper acknowledgement flow)
+# ============================================================================
+
+_PENDING_END_SHIFT_RETURN_REALTIME_EVENT = "isnack_pending_end_shift_return_changed"
+
+
+@frappe.whitelist()
+def get_pending_end_shift_returns(factory_line: str | None = None):
+    """List submitted End Shift Return Stock Entries still awaiting storekeeper acknowledgement.
+
+    `factory_line` is intentionally ignored so pending returns behave as a
+    storekeeper-wide inbox queue.
+    """
+
+    conditions = [
+        "se.docstatus = 1",
+        "coalesce(se.custom_is_end_shift_return, 0) = 1",
+        "coalesce(se.custom_return_received_by_storekeeper, 0) = 0",
+    ]
+
+    rows = frappe.db.sql(
+        f"""
+        select
+            se.name,
+            se.to_warehouse,
+            se.posting_date,
+            se.posting_time,
+            se.remarks,
+            count(sed.name) as item_count,
+            coalesce(sum(sed.qty), 0) as total_qty
+        from `tabStock Entry` se
+        left join `tabStock Entry Detail` sed on sed.parent = se.name
+        where {" and ".join(conditions)}
+        group by
+            se.name,
+            se.to_warehouse,
+            se.posting_date,
+            se.posting_time,
+            se.remarks
+        order by se.posting_date desc, se.posting_time desc, se.creation desc
+        limit 200
+        """,
+        {},
+        as_dict=True,
+    )
+
+    return [
+        {
+            "name": row.get("name"),
+            "to_warehouse": row.get("to_warehouse"),
+            "posting_date": row.get("posting_date"),
+            "posting_time": row.get("posting_time"),
+            "remarks": row.get("remarks"),
+            "item_count": cint(row.get("item_count") or 0),
+            "total_qty": float(row.get("total_qty") or 0),
+        }
+        for row in rows
+    ]
+
+
+@frappe.whitelist()
+def mark_end_shift_return_received(stock_entry: str):
+    """Mark a submitted End Shift Return Stock Entry as received by the Storekeeper."""
+    stock_entry = (stock_entry or "").strip()
+    if not stock_entry:
+        frappe.throw(_("Missing Stock Entry"))
+
+    se = frappe.get_doc("Stock Entry", stock_entry)
+    if se.docstatus != 1:
+        frappe.throw(_("Stock Entry {0} is not submitted").format(se.name))
+    if not cint(getattr(se, "custom_is_end_shift_return", 0)):
+        frappe.throw(_("Stock Entry {0} is not an End Shift Return").format(se.name))
+    if cint(getattr(se, "custom_return_received_by_storekeeper", 0)):
+        return {"ok": True, "stock_entry": se.name, "already_received": True}
+
+    se.db_set("custom_return_received_by_storekeeper", 1, update_modified=True)
+
+    try:
+        frappe.publish_realtime(
+            event=_PENDING_END_SHIFT_RETURN_REALTIME_EVENT,
+            message={"stock_entry": se.name},
+            after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Failed to publish pending end shift return acknowledgement",
+        )
+
+    return {"ok": True, "stock_entry": se.name}
+
+
+# ============================================================================
 # Pending Material Requests (operator-initiated "Request More Material" flow)
 # ============================================================================
 
@@ -1957,7 +2050,6 @@ def get_pending_material_requests(factory_line: str | None = None,
             mr.transaction_date,
             mr.creation,
             mr.owner             as operator,
-            mr.notes             as reason,
             mri.name             as mri,
             mri.item_code,
             mri.item_name,
@@ -1979,6 +2071,27 @@ def get_pending_material_requests(factory_line: str | None = None,
     )
 
     transferred = _mri_transferred_map([r["mri"] for r in rows])
+    mr_names = list({r["mr"] for r in rows})
+    reasons_by_mr: dict = {}
+    if mr_names:
+        comment_rows = frappe.db.sql(
+            """
+            select reference_name, content, creation
+            from `tabComment`
+            where comment_type = 'Comment'
+              and reference_doctype = 'Material Request'
+              and reference_name in %(names)s
+            order by creation desc
+            """,
+            {"names": tuple(mr_names)},
+            as_dict=True,
+        )
+        for c in comment_rows:
+            # keep only the most recent per MR (rows are sorted desc)
+            reasons_by_mr.setdefault(
+                c["reference_name"],
+                frappe.utils.strip_html_tags(c["content"] or "").strip(),
+            )
 
     out = []
     for r in rows:
@@ -2001,7 +2114,7 @@ def get_pending_material_requests(factory_line: str | None = None,
             "transaction_date": r.get("transaction_date"),
             "creation": r.get("creation"),
             "operator": r.get("operator"),
-            "reason": r.get("reason"),
+            "reason": reasons_by_mr.get(r["mr"]) or None,
             "item_code": r.get("item_code"),
             "item_name": r.get("item_name"),
             "uom": r.get("uom"),

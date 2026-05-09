@@ -1592,13 +1592,15 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
         "qty": qty,
         "schedule_date": mr.schedule_date,
     })
-    if reason:
-        mr.notes = reason
     mr.flags.ignore_permissions = True
     mr.insert()
     # Submit so the request is immediately actionable (visible to the
     # Storekeeper Hub Pending Requests panel, which only lists submitted MRs).
     mr.submit()
+    if reason:
+        # Material Request has no 'notes' field; persist the operator's reason
+        # as a Comment so it is visible in the timeline and queryable later.
+        mr.add_comment("Comment", reason)
 
     # Notify any live Storekeeper Hub sessions so they refresh their
     # Pending Requests panel without polling. Listeners are scoped on the
@@ -3764,6 +3766,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se.set_stock_entry_type()
     se.custom_factory_line = line
     se.custom_is_end_shift_return = 1
+    se.custom_return_received_by_storekeeper = 0
     se.remarks = "End Shift Return — WIP return for line {}".format(line)
     
     for it in items_list:
@@ -3792,6 +3795,18 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se.flags.ignore_permissions = True
     se.insert()
     se.submit()
+
+    try:
+        frappe.publish_realtime(
+            event="isnack_pending_end_shift_return_changed",
+            message={"stock_entry": se.name, "factory_line": line},
+            after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Failed to publish pending end shift return update",
+        )
     
     return {"ok": True, "stock_entry": se.name}
 
