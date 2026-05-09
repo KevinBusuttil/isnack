@@ -413,6 +413,14 @@
   color: #075985;
 }
 
+.storekeeper-hub .staged .chip.mr-fulfilment {
+  background: #fff3d6;   /* amber - same vocabulary as Pending Requests */
+  border-color: #fbbf24;
+  color: #78350f;
+  font-weight: 700;
+  letter-spacing: .25px;
+}
+
 /* --- Right column cards: keep original stacked text, pin actions bottom-right --- */
 
 /* Undo any previous grid/flex on these rows */

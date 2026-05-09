@@ -1671,6 +1671,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const in_picklist_badge = se.in_picklist
         ? '<span class="chip in-picklist">' + __('In Picklist') + '</span>'
         : '';
+      const mr_badge = se.is_mr_fulfilment
+        ? `<span class="chip mr-fulfilment" title="${__('Fulfils an operator Material Request')}">${__('MR')}</span>`
+        : '';
 
       const $row = $(`
         <div class="hub-row staged-row ${is_selected ? 'selected' : ''}" data-name="${se.name}">
@@ -1678,7 +1681,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             <div class="staged-header">
               <input type="checkbox" class="pick-transfer" ${is_selected ? 'checked' : ''} />
               <div class="staged-main">
-                <b>${frappe.utils.escape_html(se.name)}</b> ${in_picklist_badge}<br>
+                <b>${frappe.utils.escape_html(se.name)}</b> ${in_picklist_badge} ${mr_badge}<br>
                 <span class="muted">${frappe.utils.escape_html(info || '')}</span>
               </div>
             </div>

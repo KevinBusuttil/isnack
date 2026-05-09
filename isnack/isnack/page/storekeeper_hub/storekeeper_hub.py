@@ -703,8 +703,15 @@ def get_recent_transfers(
 ):
     """Material Transfers for Manufacture.
 
-    If posting_date is given, filter by Work Orders whose Production Plan has that posting_date.
-    Otherwise, fallback to "last N hours" based on se.modified.
+    If posting_date is given, filter by Work Orders whose Production Plan has
+    that posting_date. Otherwise, fallback to "last N hours" based on
+    se.modified.
+
+    Material Request fulfilments (Stock Entries with at least one detail row
+    referencing a Material Request) are *always* included when recent enough,
+    regardless of the posting_date filter, because the operator-initiated
+    Request More flow may target Work Orders that aren't on the day's
+    Production Plan and the storekeeper still needs visibility on them.
     """
     factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
@@ -722,12 +729,25 @@ def get_recent_transfers(
         )
         params.extend([factory_line, factory_line])
 
+    # Recency window applied to MR-fulfilment SEs even when posting_date is
+    # set; keeps the panel bounded.
+    since = add_to_date(now_datetime(), hours=-int(hours))
+    mr_fulfilment_clause = (
+        "exists ("
+        "  select 1 from `tabStock Entry Detail` sed_mr"
+        "  where sed_mr.parent = se.name and sed_mr.material_request is not null"
+        ")"
+    )
+
     if posting_date:
         joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
-        conditions.append("pp.posting_date = %s")
-        params.append(posting_date)
+        # Either the WO matches the day's Production Plan, OR the SE is an
+        # MR fulfilment we want to surface anyway (within the recency window).
+        conditions.append(
+            f"(pp.posting_date = %s or ({mr_fulfilment_clause} and se.modified >= %s))"
+        )
+        params.extend([posting_date, since])
     else:
-        since = add_to_date(now_datetime(), hours=-int(hours))
         conditions.append("se.modified >= %s")
         params.append(since)
 
@@ -738,7 +758,8 @@ def get_recent_transfers(
             se.posting_time,
             se.to_warehouse,
             se.remarks,
-            se.work_order
+            se.work_order,
+            case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment
         from `tabStock Entry` se
         {' '.join(joins)}
         where {' and '.join(conditions)}
