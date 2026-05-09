@@ -1594,6 +1594,9 @@ def request_material(item_code, qty, reason=None, job_card: Optional[str] = None
     })
     mr.flags.ignore_permissions = True
     mr.insert()
+    # Submit so the request is immediately actionable (visible to the
+    # Storekeeper Hub Pending Requests panel, which only lists submitted MRs).
+    mr.submit()
     if reason:
         # Material Request has no 'notes' field; persist the operator's reason
         # as a Comment so it is visible in the timeline and queryable later.
