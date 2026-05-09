@@ -19,6 +19,8 @@
     --isn-dialog-warning-bg: #fff3d6;
     --isn-dialog-warning-border: #fbbf24;
     --isn-dialog-warning-text: #78350f;
+    --isn-dialog-warning-hover-bg: #fde7a8;
+    --isn-dialog-warning-hover-border: #e0a71f;
     --isn-dialog-success-bg: #f0fdf4;
     --isn-dialog-success-border: #86efac;
     --isn-dialog-success-text: #166534;

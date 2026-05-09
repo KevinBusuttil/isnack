@@ -934,8 +934,8 @@
 }
 
 .po-receipt-dialog .po-row-batch-split-btn:hover{
-  background: #fde7a8;
-  border-color: #e0a71f;
+  background: var(--isn-dialog-warning-hover-bg);
+  border-color: var(--isn-dialog-warning-hover-border);
   color: var(--isn-dialog-warning-text);
 }
 

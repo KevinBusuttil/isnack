@@ -45,7 +45,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return parseFloat(n.toFixed(3));
   };
 
-  function skDialog(opts, extraClasses = '') {
+  function createStorekeeperDialog(opts, extraClasses = '') {
     const d = new frappe.ui.Dialog(opts);
     if (d && d.$wrapper) {
       d.$wrapper.addClass(`isn-dialog-theme sk-dialog${extraClasses ? ' ' + extraClasses : ''}`);
@@ -444,7 +444,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    const d = skDialog({
+    const d = createStorekeeperDialog({
       title: __('Generate Picklist'),
       size: 'extra-large',
       fields: [
@@ -625,7 +625,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    const d = skDialog({
+    const d = createStorekeeperDialog({
       title: __('Print Pallet Labels'),
       size: 'extra-large',
       fields: [
@@ -1327,7 +1327,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         const available_batches = r.message;
         
         // Create dialog
-        const d = skDialog({
+        const d = createStorekeeperDialog({
           title: __('Select Batches for {0}', [item_code]),
           size: 'large',
           fields: [
@@ -1981,7 +1981,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const default_src = state.src_warehouse || '';
     const itemHasBatch = (row.item_code || '');
 
-    const d = skDialog({
+    const d = createStorekeeperDialog({
       title: __('Stage Material Request {0}', [row.mr]),
       fields: [
         {
@@ -2092,7 +2092,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    po_receipt_dialog = skDialog({
+    po_receipt_dialog = createStorekeeperDialog({
       title: __('PO Receipt'),
       size: 'extra-large',
       static: true,
@@ -2526,7 +2526,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
 
     const title_item = row_doc.item_code || row_doc.item_name || __('Item');
-    const dialog = skDialog({
+    const dialog = createStorekeeperDialog({
       title: __('Batches for {0}', [title_item]),
       size: 'large',
       fields: [
