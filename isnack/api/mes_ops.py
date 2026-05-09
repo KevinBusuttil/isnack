@@ -3763,6 +3763,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se.set_stock_entry_type()
     se.custom_factory_line = line
     se.custom_is_end_shift_return = 1
+    se.custom_return_received_by_storekeeper = 0
     se.remarks = "End Shift Return — WIP return for line {}".format(line)
     
     for it in items_list:
@@ -3791,6 +3792,18 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se.flags.ignore_permissions = True
     se.insert()
     se.submit()
+
+    try:
+        frappe.publish_realtime(
+            event="isnack_pending_end_shift_return_changed",
+            message={"stock_entry": se.name, "factory_line": line},
+            after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Failed to publish pending end shift return update",
+        )
     
     return {"ok": True, "stock_entry": se.name}
 
