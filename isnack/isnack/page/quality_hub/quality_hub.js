@@ -559,11 +559,12 @@ isnack.quality_hub.QualityHub = class {
         const item_field = dialog.get_field("item_code");
         if (item_field && item_field.df) {
             const existing_onchange = item_field.df.onchange;
-            item_field.df.onchange = () => {
-                if (existing_onchange) {
-                    existing_onchange();
-                }
+            item_field.df.onchange = (...args) => {
+                const result = existing_onchange
+                    ? existing_onchange.apply(item_field, args)
+                    : undefined;
                 dialog.set_value("batch_no", "");
+                return result;
             };
         }
     }
