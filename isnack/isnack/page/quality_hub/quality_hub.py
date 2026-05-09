@@ -266,14 +266,14 @@ def create_qc_record(doctype, payload=None, submit=False):
         if fieldname in allowed_parent_fields:
             doc_data[fieldname] = value
 
-    if not doc_data.get("status"):
-        doc_data["status"] = "Submitted" if cint(submit) else "Draft"
+    if not doc_data.get("status") and not cint(submit):
+        doc_data["status"] = "Draft"
 
     doc = frappe.get_doc(doc_data)
 
     child_meta = frappe.get_meta(child_doctype)
     allowed_child_fields = {
-        df.fieldname for df in child_meta.fields if df.fieldname and df.fieldtype != "Table"
+        df.fieldname for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
     }
 
     appended_rows = 0
@@ -286,7 +286,7 @@ def create_qc_record(doctype, payload=None, submit=False):
             for fieldname, value in row.items()
             if fieldname in allowed_child_fields
         }
-        if _contains_data(clean_row):
+        if _is_non_empty_row(clean_row):
             doc.append(child_fieldname, clean_row)
             appended_rows += 1
 
@@ -308,7 +308,7 @@ def create_qc_record(doctype, payload=None, submit=False):
     }
 
 
-def _contains_data(row):
+def _is_non_empty_row(row):
     for value in row.values():
         if value in (None, "", []):
             continue

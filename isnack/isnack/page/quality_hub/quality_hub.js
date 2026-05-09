@@ -664,6 +664,10 @@ isnack.quality_hub.QualityHub = class {
         $wrapper.find(".qh-child-delete").on("click", (e) => {
             const index = Number($(e.currentTarget).data("row-index"));
             if (dialog.__child_rows.length <= (config.min_rows || 1)) {
+                frappe.show_alert({
+                    message: __("Minimum row count reached. Row cleared instead."),
+                    indicator: "orange",
+                });
                 dialog.__child_rows[index] = this.make_empty_child_row(config);
             } else {
                 dialog.__child_rows.splice(index, 1);
@@ -712,11 +716,11 @@ isnack.quality_hub.QualityHub = class {
                 ? ["", "1", "2", "3", "4", "5"]
                 : (field.options || "").split("\n");
             const options_html = options
-                .map((option, index) => {
+                .map((option) => {
                     const current_value =
                         value === null || value === undefined ? "" : `${value}`;
                     const selected = `${option}` === current_value ? "selected" : "";
-                    const is_placeholder_option = option === "" && index === 0;
+                    const is_placeholder_option = option === "";
                     const option_label = is_placeholder_option ? __("Select") : option;
                     return `<option value="${frappe.utils.escape_html(option)}" ${selected}>${frappe.utils.escape_html(option_label)}</option>`;
                 })
@@ -777,7 +781,8 @@ isnack.quality_hub.QualityHub = class {
         }
 
         if (field.fieldtype === "Int") {
-            return parseInt(value, 10);
+            const parsed = parseInt(value, 10);
+            return Number.isNaN(parsed) ? "" : parsed;
         }
 
         if (field.fieldtype === "Float" || field.fieldtype === "Rating") {
