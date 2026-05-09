@@ -1,5 +1,194 @@
 frappe.provide("isnack.quality_hub");
 
+isnack.quality_hub.DIALOG_RECORD_CONFIG = {
+    "QC Puffs Extruder Record": {
+        child_table_field: "readings",
+        child_label: __("Readings"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+            { fieldname: "screw_speed_rpm", fieldtype: "Float", label: __("Screw Speed (RPM)") },
+            { fieldname: "barrel_temp_zone_1", fieldtype: "Float", label: __("Barrel Temp Zone 1 (°C)") },
+            { fieldname: "barrel_temp_zone_2", fieldtype: "Float", label: __("Barrel Temp Zone 2 (°C)") },
+            { fieldname: "barrel_temp_zone_3", fieldtype: "Float", label: __("Barrel Temp Zone 3 (°C)") },
+            { fieldname: "die_pressure", fieldtype: "Float", label: __("Die Pressure (bar)") },
+            { fieldname: "moisture_content", fieldtype: "Float", label: __("Moisture Content (%)") },
+            { fieldname: "product_density", fieldtype: "Float", label: __("Product Density") },
+            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
+    "QC Rice Extruder Record": {
+        child_table_field: "readings",
+        child_label: __("Readings"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+            { fieldname: "screw_speed_rpm", fieldtype: "Float", label: __("Screw Speed (RPM)") },
+            { fieldname: "barrel_temp_zone_1", fieldtype: "Float", label: __("Barrel Temp Zone 1 (°C)") },
+            { fieldname: "barrel_temp_zone_2", fieldtype: "Float", label: __("Barrel Temp Zone 2 (°C)") },
+            { fieldname: "barrel_temp_zone_3", fieldtype: "Float", label: __("Barrel Temp Zone 3 (°C)") },
+            { fieldname: "die_pressure", fieldtype: "Float", label: __("Die Pressure (bar)") },
+            { fieldname: "moisture_content", fieldtype: "Float", label: __("Moisture Content (%)") },
+            { fieldname: "product_density", fieldtype: "Float", label: __("Product Density") },
+            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
+    "QC Frying Line Record": {
+        child_table_field: "readings",
+        child_label: __("Readings"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+            { fieldname: "oil_temperature", fieldtype: "Float", label: __("Oil Temperature (°C)") },
+            { fieldname: "oil_ffa", fieldtype: "Float", label: __("Oil FFA") },
+            { fieldname: "oil_tpm", fieldtype: "Float", label: __("Oil TPM") },
+            { fieldname: "product_temperature", fieldtype: "Float", label: __("Product Temp (°C)") },
+            { fieldname: "product_moisture", fieldtype: "Float", label: __("Product Moisture (%)") },
+            { fieldname: "oil_change_flag", fieldtype: "Check", label: __("Oil Changed") },
+            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
+    "QC Oven Record": {
+        child_table_field: "readings",
+        child_label: __("Readings"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+            { fieldname: "zone_1_temp", fieldtype: "Float", label: __("Zone 1 Temp (°C)") },
+            { fieldname: "zone_2_temp", fieldtype: "Float", label: __("Zone 2 Temp (°C)") },
+            { fieldname: "zone_3_temp", fieldtype: "Float", label: __("Zone 3 Temp (°C)") },
+            { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed") },
+            { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
+            { fieldname: "colour_value", fieldtype: "Float", label: __("Colour Value") },
+            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
+    "QC Tasting Record": {
+        child_table_field: "scores",
+        child_label: __("Scores"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
+            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
+            { fieldname: "pass_threshold", fieldtype: "Float", label: __("Pass Threshold"), default: 3.0 },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "taster_name", fieldtype: "Data", label: __("Taster Name") },
+            { fieldname: "appearance_score", fieldtype: "Rating", label: __("Appearance") },
+            { fieldname: "colour_score", fieldtype: "Rating", label: __("Colour") },
+            { fieldname: "aroma_score", fieldtype: "Rating", label: __("Aroma") },
+            { fieldname: "taste_score", fieldtype: "Rating", label: __("Taste") },
+            { fieldname: "texture_score", fieldtype: "Rating", label: __("Texture") },
+            { fieldname: "overall_score", fieldtype: "Rating", label: __("Overall") },
+            { fieldname: "comments", fieldtype: "Small Text", label: __("Comments") },
+        ],
+    },
+    "QC Metal Detector Log": {
+        child_table_field: "tests",
+        child_label: __("Tests"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "metal_detector_id", fieldtype: "Data", label: __("Metal Detector ID") },
+            { fieldname: "detector_make_model", fieldtype: "Data", label: __("Make/Model") },
+            { fieldname: "corrective_action", fieldtype: "Small Text", label: __("Corrective Action") },
+            { fieldname: "last_calibration_date", fieldtype: "Date", label: __("Last Calibration Date") },
+            { fieldname: "next_calibration_date", fieldtype: "Date", label: __("Next Calibration Date") },
+            { fieldname: "calibration_certificate", fieldtype: "Attach", label: __("Calibration Certificate") },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "test_time", fieldtype: "Time", label: __("Test Time") },
+            { fieldname: "test_piece_type", fieldtype: "Select", label: __("Test Piece Type"), options: "\nFe\nNon-Fe\nStainless" },
+            { fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)") },
+            { fieldname: "detected", fieldtype: "Check", label: __("Detected (Pass)") },
+            { fieldname: "sensitivity_setting", fieldtype: "Data", label: __("Sensitivity Setting") },
+            { fieldname: "test_remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
+    "QC Weight Check": {
+        child_table_field: "samples",
+        child_label: __("Samples"),
+        min_rows: 1,
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
+            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
+            { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)") },
+            { fieldname: "tu1_limit", fieldtype: "Float", label: __("TU1 Limit (g)") },
+            { fieldname: "tu2_limit", fieldtype: "Float", label: __("TU2 Limit (g)") },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+        child_fields: [
+            { fieldname: "sample_no", fieldtype: "Int", label: __("Sample No") },
+            { fieldname: "gross_weight", fieldtype: "Float", label: __("Gross Weight (g)") },
+            { fieldname: "tare_weight", fieldtype: "Float", label: __("Tare Weight (g)") },
+        ],
+    },
+};
+
 frappe.pages["quality-hub"].on_page_load = function (wrapper) {
     isnack.quality_hub.page = new isnack.quality_hub.QualityHub(wrapper);
 };
@@ -18,6 +207,7 @@ isnack.quality_hub.QualityHub = class {
 
         this.active_tab = "monitor";
         this.active_process_sub = "puffs";
+        this.active_pkg_sub = "packaging";
         this.make_layout();
         this.bind_tabs();
         this.start_clock();
@@ -268,7 +458,7 @@ isnack.quality_hub.QualityHub = class {
         // New record buttons
         this.$container.on("click", ".qh-new-record", (e) => {
             const doctype = $(e.currentTarget).data("doctype");
-            frappe.new_doc(doctype);
+            this.open_new_record(doctype);
         });
 
         // Filter apply
@@ -295,6 +485,334 @@ isnack.quality_hub.QualityHub = class {
             }
         });
         return filters;
+    }
+
+    open_new_record(doctype) {
+        const config = isnack.quality_hub.DIALOG_RECORD_CONFIG[doctype];
+        if (!config) {
+            frappe.new_doc(doctype);
+            return;
+        }
+
+        const dialog = new frappe.ui.Dialog({
+            title: __("New {0}", [doctype]),
+            size: "extra-large",
+            fields: [
+                ...config.parent_fields,
+                {
+                    fieldtype: "HTML",
+                    fieldname: "child_table_editor",
+                },
+            ],
+            primary_action_label: __("Save Draft"),
+            primary_action: () => this.handle_dialog_save(dialog, doctype, false),
+        });
+
+        dialog.__config = config;
+        dialog.__child_rows = this.make_initial_child_rows(config);
+        dialog.show();
+        dialog.$wrapper.addClass("qh-record-dialog");
+        this.setup_dialog_secondary_action(dialog, doctype);
+        this.render_child_editor(dialog, doctype);
+    }
+
+    setup_dialog_secondary_action(dialog, doctype) {
+        const $secondary = dialog.get_secondary_btn();
+        $secondary
+            .removeClass("hide")
+            .text(__("Save & Submit"))
+            .off("click")
+            .on("click", () => this.handle_dialog_save(dialog, doctype, true));
+    }
+
+    handle_dialog_save(dialog, doctype, submit) {
+        const values = dialog.get_values();
+        if (!values) return;
+
+        const config = dialog.__config;
+        const child_rows = this.get_non_empty_child_rows(dialog);
+        if (!child_rows.length) {
+            frappe.msgprint(__("Add at least one row in {0}.", [config.child_label]));
+            return;
+        }
+
+        const payload = {
+            ...values,
+            [config.child_table_field]: child_rows,
+        };
+
+        this.save_dialog_record({ dialog, doctype, payload, submit });
+    }
+
+    save_dialog_record({ dialog, doctype, payload, submit }) {
+        const action_label = submit ? __("Saving and submitting") : __("Saving");
+        frappe.call({
+            method: "isnack.isnack.page.quality_hub.quality_hub.create_qc_record",
+            freeze: true,
+            freeze_message: `${action_label}...`,
+            args: {
+                doctype,
+                payload,
+                submit: submit ? 1 : 0,
+            },
+            callback: (r) => {
+                if (!r.message) return;
+
+                dialog.hide();
+                this.reload_active_tab_records();
+                frappe.show_alert({
+                    message: __("{0} created", [r.message.name]),
+                    indicator: submit ? "green" : "blue",
+                });
+            },
+        });
+    }
+
+    reload_active_tab_records() {
+        if (this.active_tab === "receiving") {
+            this.load_records("receiving", this.get_filters("receiving"));
+        } else if (this.active_tab === "process") {
+            this.load_records("process", this.get_filters("process"));
+        } else if (this.active_tab === "tasting") {
+            this.load_records("tasting", this.get_filters("tasting"));
+        } else if (this.active_tab === "pkg_weight") {
+            this.load_records("pkg_weight", this.get_filters("pkg_weight"));
+        } else if (this.active_tab === "metal") {
+            this.load_metal_tab();
+        }
+        this.refresh_data(false);
+    }
+
+    make_initial_child_rows(config) {
+        const rows = [];
+        const row_count = Math.max(config.min_rows || 1, 1);
+        for (let index = 0; index < row_count; index++) {
+            rows.push(this.make_empty_child_row(config));
+        }
+        return rows;
+    }
+
+    make_empty_child_row(config) {
+        const row = {};
+        (config.child_fields || []).forEach((field) => {
+            if (field.default !== undefined) {
+                row[field.fieldname] =
+                    typeof field.default === "function" ? field.default() : field.default;
+            } else {
+                row[field.fieldname] = field.fieldtype === "Check" ? 0 : "";
+            }
+        });
+        return row;
+    }
+
+    render_child_editor(dialog, doctype) {
+        const config = dialog.__config || isnack.quality_hub.DIALOG_RECORD_CONFIG[doctype];
+        const $wrapper = $(dialog.get_field("child_table_editor").wrapper);
+        const rows = dialog.__child_rows || [];
+        const headers = (config.child_fields || [])
+            .map((field) => `<th>${frappe.utils.escape_html(field.label)}</th>`)
+            .join("");
+        const row_html = rows
+            .map((row, index) => {
+                const cells = config.child_fields
+                    .map((field) => `<td>${this.render_child_input(field, row[field.fieldname], index)}</td>`)
+                    .join("");
+
+                return `
+                    <tr data-row-index="${index}">
+                        ${cells}
+                        <td class="qh-child-row-actions">
+                            <button type="button" class="btn btn-xs btn-default qh-child-duplicate" data-row-index="${index}">
+                                <i class="fa fa-copy"></i>
+                            </button>
+                            <button type="button" class="btn btn-xs btn-default qh-child-delete" data-row-index="${index}">
+                                <i class="fa fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            })
+            .join("");
+
+        $wrapper.html(`
+            <div class="qh-child-editor">
+                <div class="qh-child-toolbar">
+                    <div class="qh-child-toolbar-label">${frappe.utils.escape_html(config.child_label)}</div>
+                    <button type="button" class="btn btn-sm btn-default qh-child-add">
+                        <i class="fa fa-plus"></i> ${__("Add Row")}
+                    </button>
+                </div>
+                <div class="qh-child-table-wrap">
+                    <table class="qh-table qh-child-table">
+                        <thead>
+                            <tr>
+                                ${headers}
+                                <th>${__("Actions")}</th>
+                            </tr>
+                        </thead>
+                        <tbody>${row_html}</tbody>
+                    </table>
+                </div>
+            </div>
+        `);
+
+        $wrapper.find(".qh-child-add").on("click", () => {
+            dialog.__child_rows.push(this.make_empty_child_row(config));
+            this.render_child_editor(dialog, doctype);
+        });
+
+        $wrapper.find(".qh-child-delete").on("click", (e) => {
+            const index = Number($(e.currentTarget).data("row-index"));
+            if (dialog.__child_rows.length <= (config.min_rows || 1)) {
+                frappe.show_alert({
+                    message: __("Minimum row count reached. Row cleared instead."),
+                    indicator: "orange",
+                });
+                dialog.__child_rows[index] = this.make_empty_child_row(config);
+            } else {
+                dialog.__child_rows.splice(index, 1);
+            }
+            this.render_child_editor(dialog, doctype);
+        });
+
+        $wrapper.find(".qh-child-duplicate").on("click", (e) => {
+            const index = Number($(e.currentTarget).data("row-index"));
+            const cloned_row = JSON.parse(JSON.stringify(dialog.__child_rows[index]));
+            dialog.__child_rows.splice(index + 1, 0, cloned_row);
+            this.render_child_editor(dialog, doctype);
+        });
+
+        $wrapper.find(".qh-child-input").on("input change", (e) => {
+            const $input = $(e.currentTarget);
+            const row_index = Number($input.data("row-index"));
+            const fieldname = $input.data("fieldname");
+            const field = config.child_fields.find((item) => item.fieldname === fieldname);
+            if (!field) return;
+            dialog.__child_rows[row_index][fieldname] = this.get_input_value($input, field);
+        });
+    }
+
+    render_child_input(field, value, row_index) {
+        const escaped_fieldname = frappe.utils.escape_html(field.fieldname);
+        const escaped_label = frappe.utils.escape_html(field.label);
+
+        if (field.fieldtype === "Check") {
+            return `
+                <label class="qh-child-check">
+                    <input
+                        type="checkbox"
+                        class="qh-child-input"
+                        data-row-index="${row_index}"
+                        data-fieldname="${escaped_fieldname}"
+                        ${value ? "checked" : ""}
+                    />
+                    <span>${escaped_label}</span>
+                </label>
+            `;
+        }
+
+        if (field.fieldtype === "Select" || field.fieldtype === "Rating") {
+            const options = field.fieldtype === "Rating"
+                ? ["", "1", "2", "3", "4", "5"]
+                : (field.options || "").split("\n");
+            const options_html = options
+                .map((option) => {
+                    const current_value =
+                        value === null || value === undefined ? "" : `${value}`;
+                    const selected = `${option}` === current_value ? "selected" : "";
+                    const is_placeholder_option = option === "";
+                    const option_label = is_placeholder_option ? __("Select") : option;
+                    return `<option value="${frappe.utils.escape_html(option)}" ${selected}>${frappe.utils.escape_html(option_label)}</option>`;
+                })
+                .join("");
+
+            return `
+                <select
+                    class="form-control qh-child-input"
+                    data-row-index="${row_index}"
+                    data-fieldname="${escaped_fieldname}">
+                    ${options_html}
+                </select>
+            `;
+        }
+
+        if (field.fieldtype === "Small Text") {
+            return `
+                <textarea
+                    class="form-control qh-child-input qh-child-textarea"
+                    data-row-index="${row_index}"
+                    data-fieldname="${escaped_fieldname}"
+                    rows="2"
+                    placeholder="${escaped_label}">${frappe.utils.escape_html(value || "")}</textarea>
+            `;
+        }
+
+        const type_map = {
+            Int: "number",
+            Float: "number",
+            Time: "time",
+            Date: "date",
+        };
+        const input_type = type_map[field.fieldtype] || "text";
+        const step_attr = field.fieldtype === "Float" ? 'step="any"' : "";
+        const display_value = value === null || value === undefined ? "" : value;
+
+        return `
+            <input
+                type="${input_type}"
+                class="form-control qh-child-input"
+                data-row-index="${row_index}"
+                data-fieldname="${escaped_fieldname}"
+                placeholder="${escaped_label}"
+                value="${frappe.utils.escape_html(display_value)}"
+                ${step_attr}
+            />
+        `;
+    }
+
+    get_input_value($input, field) {
+        if (field.fieldtype === "Check") {
+            return $input.is(":checked") ? 1 : 0;
+        }
+
+        const value = $input.val();
+        if (value === "" || value === null || value === undefined) {
+            return "";
+        }
+
+        if (field.fieldtype === "Int") {
+            const parsed = parseInt(value, 10);
+            return Number.isNaN(parsed) ? "" : parsed;
+        }
+
+        if (field.fieldtype === "Float" || field.fieldtype === "Rating") {
+            return Number(value);
+        }
+
+        return value;
+    }
+
+    get_non_empty_child_rows(dialog) {
+        const config = dialog.__config;
+        return (dialog.__child_rows || [])
+            .map((row) => {
+                const clean_row = {};
+                config.child_fields.forEach((field) => {
+                    clean_row[field.fieldname] = row[field.fieldname];
+                });
+                return clean_row;
+            })
+            .filter((row) => this.child_row_has_values(row, config.child_fields));
+    }
+
+    child_row_has_values(row, fields) {
+        return fields.some((field) => {
+            const value = row[field.fieldname];
+            if (field.fieldtype === "Check") {
+                return !!value;
+            }
+            return value !== "" && value !== null && value !== undefined;
+        });
     }
 
     show_tab(tab) {

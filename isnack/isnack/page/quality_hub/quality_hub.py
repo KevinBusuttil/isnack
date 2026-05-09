@@ -1,4 +1,5 @@
 import frappe
+from frappe.utils import cint
 from frappe.utils import now_datetime, add_to_date, today
 
 
@@ -93,6 +94,37 @@ QC_DOCTYPES = {
     "QCG": "QC Packaging Check",
     "QCH": "QC Metal Detector Log",
     "QCI": "QC Weight Check",
+}
+
+QC_DIALOG_CONFIG = {
+    "QC Puffs Extruder Record": {
+        "child_table_field": "readings",
+        "child_doctype": "QC Extruder Reading",
+    },
+    "QC Rice Extruder Record": {
+        "child_table_field": "readings",
+        "child_doctype": "QC Extruder Reading",
+    },
+    "QC Frying Line Record": {
+        "child_table_field": "readings",
+        "child_doctype": "QC Frying Reading",
+    },
+    "QC Oven Record": {
+        "child_table_field": "readings",
+        "child_doctype": "QC Oven Reading",
+    },
+    "QC Tasting Record": {
+        "child_table_field": "scores",
+        "child_doctype": "QC Tasting Score",
+    },
+    "QC Metal Detector Log": {
+        "child_table_field": "tests",
+        "child_doctype": "QC Metal Detector Test",
+    },
+    "QC Weight Check": {
+        "child_table_field": "samples",
+        "child_doctype": "QC Weight Sample",
+    },
 }
 
 
@@ -203,3 +235,82 @@ def get_qc_records(doctype, filters=None, limit=20):
     )
 
     return records
+
+
+@frappe.whitelist()
+def create_qc_record(doctype, payload=None, submit=False):
+    """Create supported QC records, including child-table rows, from Quality Hub dialogs."""
+    if doctype not in QC_DIALOG_CONFIG:
+        frappe.throw(f"Dialog creation is not supported for {doctype}.")
+
+    config = QC_DIALOG_CONFIG[doctype]
+    data = frappe.parse_json(payload) if payload else {}
+    if not isinstance(data, dict):
+        frappe.throw("Payload must be a JSON object.")
+
+    meta = frappe.get_meta(doctype)
+    child_fieldname = config["child_table_field"]
+    child_doctype = config["child_doctype"]
+    child_rows = data.pop(child_fieldname, []) or []
+
+    if not isinstance(child_rows, list):
+        frappe.throw(f"{frappe.bold(child_fieldname)} must be a list of rows.")
+
+    allowed_parent_fields = {
+        df.fieldname for df in meta.fields if df.fieldtype != "Table" and df.fieldname
+    }
+    allowed_parent_fields.add("doctype")
+
+    doc_data = {"doctype": doctype}
+    for fieldname, value in data.items():
+        if fieldname in allowed_parent_fields:
+            doc_data[fieldname] = value
+
+    if not doc_data.get("status") and not cint(submit):
+        doc_data["status"] = "Draft"
+
+    doc = frappe.get_doc(doc_data)
+
+    child_meta = frappe.get_meta(child_doctype)
+    allowed_child_fields = {
+        df.fieldname for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
+    }
+
+    appended_rows = 0
+    for row in child_rows:
+        if not isinstance(row, dict):
+            frappe.throw("Each child row must be a JSON object.")
+
+        clean_row = {
+            fieldname: value
+            for fieldname, value in row.items()
+            if fieldname in allowed_child_fields
+        }
+        if _is_non_empty_row(clean_row):
+            doc.append(child_fieldname, clean_row)
+            appended_rows += 1
+
+    if not appended_rows:
+        label = meta.get_label(child_fieldname) or child_fieldname.replace("_", " ").title()
+        frappe.throw(f"At least one row is required in {frappe.bold(label)}.")
+
+    doc.insert()
+    if cint(submit):
+        doc.submit()
+
+    return {
+        "name": doc.name,
+        "doctype": doc.doctype,
+        "docstatus": doc.docstatus,
+        "record_date": getattr(doc, "record_date", None),
+        "shift": getattr(doc, "shift", None),
+        "overall_status": getattr(doc, "overall_status", None),
+    }
+
+
+def _is_non_empty_row(row):
+    for value in row.values():
+        if value in (None, "", []):
+            continue
+        return True
+    return False
