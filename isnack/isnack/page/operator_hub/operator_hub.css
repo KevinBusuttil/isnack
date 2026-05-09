@@ -567,7 +567,13 @@
    .form-section). Keep them visually grouped with the theme. */
 .op-dialog .form-section .section-head{
   color: var(--isn-dialog-title);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: .78rem;
+  letter-spacing: .3px;
   border-bottom-color: var(--isn-dialog-primary-soft-strong);
+  padding-bottom: .25rem;
+  margin-bottom: .5rem;
 }
 
 /* Primary CTA — single canonical teal. Per-dialog rules can still override. */
@@ -575,6 +581,8 @@
   background: var(--isn-dialog-primary) !important;
   border-color: var(--isn-dialog-primary-strong) !important;
   color: #ffffff !important;
+  font-weight: 600;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
 .op-dialog .modal-footer .btn-primary:enabled:hover{
   background: var(--isn-dialog-primary-strong) !important;
