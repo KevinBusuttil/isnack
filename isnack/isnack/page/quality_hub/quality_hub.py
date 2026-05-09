@@ -97,6 +97,7 @@ QC_DOCTYPES = {
 }
 
 QC_DIALOG_CONFIG = {
+    "QC Receiving Record": {},
     "QC Puffs Extruder Record": {
         "child_table_field": "readings",
         "child_doctype": "QC Extruder Reading",
@@ -249,12 +250,13 @@ def create_qc_record(doctype, payload=None, submit=False):
         frappe.throw("Payload must be a JSON object.")
 
     meta = frappe.get_meta(doctype)
-    child_fieldname = config["child_table_field"]
-    child_doctype = config["child_doctype"]
-    child_rows = data.pop(child_fieldname, []) or []
-
-    if not isinstance(child_rows, list):
-        frappe.throw(f"{frappe.bold(child_fieldname)} must be a list of rows.")
+    child_fieldname = config.get("child_table_field")
+    child_doctype = config.get("child_doctype")
+    child_rows = []
+    if child_fieldname:
+        child_rows = data.pop(child_fieldname, []) or []
+        if not isinstance(child_rows, list):
+            frappe.throw(f"{frappe.bold(child_fieldname)} must be a list of rows.")
 
     allowed_parent_fields = {
         df.fieldname for df in meta.fields if df.fieldtype != "Table" and df.fieldname
@@ -271,28 +273,29 @@ def create_qc_record(doctype, payload=None, submit=False):
 
     doc = frappe.get_doc(doc_data)
 
-    child_meta = frappe.get_meta(child_doctype)
-    allowed_child_fields = {
-        df.fieldname for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
-    }
-
-    appended_rows = 0
-    for row in child_rows:
-        if not isinstance(row, dict):
-            frappe.throw("Each child row must be a JSON object.")
-
-        clean_row = {
-            fieldname: value
-            for fieldname, value in row.items()
-            if fieldname in allowed_child_fields
+    if child_fieldname:
+        child_meta = frappe.get_meta(child_doctype)
+        allowed_child_fields = {
+            df.fieldname for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
         }
-        if _is_non_empty_row(clean_row):
-            doc.append(child_fieldname, clean_row)
-            appended_rows += 1
 
-    if not appended_rows:
-        label = meta.get_label(child_fieldname) or child_fieldname.replace("_", " ").title()
-        frappe.throw(f"At least one row is required in {frappe.bold(label)}.")
+        appended_rows = 0
+        for row in child_rows:
+            if not isinstance(row, dict):
+                frappe.throw("Each child row must be a JSON object.")
+
+            clean_row = {
+                fieldname: value
+                for fieldname, value in row.items()
+                if fieldname in allowed_child_fields
+            }
+            if _is_non_empty_row(clean_row):
+                doc.append(child_fieldname, clean_row)
+                appended_rows += 1
+
+        if not appended_rows:
+            label = meta.get_label(child_fieldname) or child_fieldname.replace("_", " ").title()
+            frappe.throw(f"At least one row is required in {frappe.bold(label)}.")
 
     doc.insert()
     if cint(submit):
