@@ -3,7 +3,7 @@ import copy
 from decimal import Decimal, ROUND_CEILING
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate
+from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate, cint
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -1875,6 +1875,106 @@ def _normalize_batch_expiry_date(expiry_date=None, item_code=None, batch_no=None
                 expiry_text, item_code or _("Unknown"), batch_no or _("Unknown")
             )
         )
+
+
+# ============================================================================
+# Pending End Shift Returns (Storekeeper acknowledgement flow)
+# ============================================================================
+
+_PENDING_END_SHIFT_RETURN_REALTIME_EVENT = "isnack_pending_end_shift_return_changed"
+
+
+@frappe.whitelist()
+def get_pending_end_shift_returns(factory_line: str | None = None):
+    """List submitted End Shift Return Stock Entries still awaiting storekeeper acknowledgement."""
+    factory_line = _normalize_factory_line(factory_line)
+
+    conditions = [
+        "se.docstatus = 1",
+        "coalesce(se.custom_is_end_shift_return, 0) = 1",
+        "coalesce(se.custom_return_received_by_storekeeper, 0) = 0",
+    ]
+    params = {}
+    if factory_line:
+        conditions.append("se.custom_factory_line = %(factory_line)s")
+        params["factory_line"] = factory_line
+
+    rows = frappe.db.sql(
+        f"""
+        select
+            se.name,
+            se.custom_factory_line as factory_line,
+            se.to_warehouse,
+            se.posting_date,
+            se.posting_time,
+            se.creation,
+            se.owner,
+            se.remarks,
+            count(sed.name) as item_count,
+            coalesce(sum(sed.qty), 0) as total_qty
+        from `tabStock Entry` se
+        left join `tabStock Entry Detail` sed on sed.parent = se.name
+        where {" and ".join(conditions)}
+        group by
+            se.name,
+            se.custom_factory_line,
+            se.to_warehouse,
+            se.posting_date,
+            se.posting_time,
+            se.creation,
+            se.owner,
+            se.remarks
+        order by se.posting_date desc, se.posting_time desc, se.creation desc
+        limit 200
+        """,
+        params,
+        as_dict=True,
+    )
+
+    return [
+        {
+            "name": row.get("name"),
+            "factory_line": row.get("factory_line"),
+            "to_warehouse": row.get("to_warehouse"),
+            "posting_date": row.get("posting_date"),
+            "posting_time": row.get("posting_time"),
+            "creation": row.get("creation"),
+            "owner": row.get("owner"),
+            "remarks": row.get("remarks"),
+            "item_count": cint(row.get("item_count") or 0),
+            "total_qty": float(row.get("total_qty") or 0),
+        }
+        for row in rows
+    ]
+
+
+@frappe.whitelist()
+def mark_end_shift_return_received(stock_entry: str):
+    """Mark a submitted End Shift Return Stock Entry as received by the Storekeeper."""
+    stock_entry = (stock_entry or "").strip()
+    if not stock_entry:
+        frappe.throw(_("Missing Stock Entry"))
+
+    se = frappe.get_doc("Stock Entry", stock_entry)
+    if se.docstatus != 1:
+        frappe.throw(_("Stock Entry {0} is not submitted").format(se.name))
+    if not cint(getattr(se, "custom_is_end_shift_return", 0)):
+        frappe.throw(_("Stock Entry {0} is not an End Shift Return").format(se.name))
+    if cint(getattr(se, "custom_return_received_by_storekeeper", 0)):
+        return {"ok": True, "stock_entry": se.name, "already_received": True}
+
+    se.db_set("custom_return_received_by_storekeeper", 1, update_modified=True)
+
+    try:
+        frappe.publish_realtime(
+            event=_PENDING_END_SHIFT_RETURN_REALTIME_EVENT,
+            message={"stock_entry": se.name, "factory_line": getattr(se, "custom_factory_line", None)},
+            after_commit=True,
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "stock_entry": se.name}
 
 
 # ============================================================================
