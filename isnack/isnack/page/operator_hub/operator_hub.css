@@ -556,6 +556,8 @@
 }
 .op-dialog .modal-header .modal-title{
   color: var(--isn-dialog-title);
+  font-weight: 700;
+  letter-spacing: .15px;
 }
 
 /* Body padding */
@@ -571,7 +573,7 @@
   text-transform: uppercase;
   font-size: .78rem;
   letter-spacing: .3px;
-  border-bottom-color: var(--isn-dialog-primary-soft-strong);
+  border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
   padding-bottom: .25rem;
   margin-bottom: .5rem;
 }
@@ -586,6 +588,7 @@
 }
 .op-dialog .modal-footer .btn-primary:enabled:hover{
   background: var(--isn-dialog-primary-strong) !important;
+  transform: translateY(-1px);
   box-shadow: var(--isn-dialog-primary-shadow);
 }
 .op-dialog .modal-footer .btn-primary:disabled{
