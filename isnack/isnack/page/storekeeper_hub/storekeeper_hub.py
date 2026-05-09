@@ -703,8 +703,15 @@ def get_recent_transfers(
 ):
     """Material Transfers for Manufacture.
 
-    If posting_date is given, filter by Work Orders whose Production Plan has that posting_date.
-    Otherwise, fallback to "last N hours" based on se.modified.
+    If posting_date is given, filter by Work Orders whose Production Plan has
+    that posting_date. Otherwise, fallback to "last N hours" based on
+    se.modified.
+
+    Material Request fulfilments (Stock Entries with at least one detail row
+    referencing a Material Request) are *always* included when recent enough,
+    regardless of the posting_date filter, because the operator-initiated
+    Request More flow may target Work Orders that aren't on the day's
+    Production Plan and the storekeeper still needs visibility on them.
     """
     factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
@@ -722,12 +729,25 @@ def get_recent_transfers(
         )
         params.extend([factory_line, factory_line])
 
+    # Recency window applied to MR-fulfilment SEs even when posting_date is
+    # set; keeps the panel bounded.
+    since = add_to_date(now_datetime(), hours=-int(hours))
+    mr_fulfilment_clause = (
+        "exists ("
+        "  select 1 from `tabStock Entry Detail` sed_mr"
+        "  where sed_mr.parent = se.name and sed_mr.material_request is not null"
+        ")"
+    )
+
     if posting_date:
         joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
-        conditions.append("pp.posting_date = %s")
-        params.append(posting_date)
+        # Either the WO matches the day's Production Plan, OR the SE is an
+        # MR fulfilment we want to surface anyway (within the recency window).
+        conditions.append(
+            f"(pp.posting_date = %s or ({mr_fulfilment_clause} and se.modified >= %s))"
+        )
+        params.extend([posting_date, since])
     else:
-        since = add_to_date(now_datetime(), hours=-int(hours))
         conditions.append("se.modified >= %s")
         params.append(since)
 
@@ -738,7 +758,8 @@ def get_recent_transfers(
             se.posting_time,
             se.to_warehouse,
             se.remarks,
-            se.work_order
+            se.work_order,
+            case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment
         from `tabStock Entry` se
         {' '.join(joins)}
         where {' and '.join(conditions)}
@@ -1865,6 +1886,45 @@ def _mr_realtime_room() -> str:
     return "isnack_storekeeper_hub"
 
 
+# Statuses that mean the MR has reached a terminal/completed state and must
+# not appear as "pending" anywhere on the hub. This is the source of truth
+# regardless of which numeric field ERPNext updates internally for a given
+# request type (ordered_qty / received_qty / transferred_qty / etc.).
+_MR_TERMINAL_STATUSES = (
+    "Stopped",
+    "Cancelled",
+    "Transferred",
+    "Issued",
+    "Received",
+    "Manufactured",
+)
+
+
+def _mri_transferred_map(mri_names: list[str]) -> dict:
+    """Return {mri_name: total qty} actually transferred against each
+    Material Request Item via submitted Stock Entries. This is the
+    authoritative remaining-qty calculation: ERPNext updates different
+    numeric fields on the MR Item depending on the MR's purpose, so
+    relying on a single field (e.g. received_qty) is unreliable for
+    Material Transfer requests."""
+    if not mri_names:
+        return {}
+    rows = frappe.db.sql(
+        """
+        select sed.material_request_item as mri,
+               coalesce(sum(sed.qty), 0) as qty
+        from `tabStock Entry Detail` sed
+        join `tabStock Entry` se on se.name = sed.parent
+        where se.docstatus = 1
+          and sed.material_request_item in %(names)s
+        group by sed.material_request_item
+        """,
+        {"names": tuple(mri_names)},
+        as_dict=True,
+    )
+    return {r["mri"]: float(r.get("qty") or 0) for r in rows}
+
+
 @frappe.whitelist()
 def get_pending_material_requests(factory_line: str | None = None,
                                   source_warehouse: str | None = None):
@@ -1873,9 +1933,10 @@ def get_pending_material_requests(factory_line: str | None = None,
     Filters:
       - material_request_type = 'Material Transfer'
       - docstatus = 1 (submitted)
-      - status not in ('Stopped','Cancelled')
+      - mr.status not in terminal/completed statuses
       - linked to a Work Order whose status is not 'Completed'
-      - row-level remaining > 0
+      - row-level remaining > 0 (computed from submitted Stock Entry
+        Detail references, not from any MR-Item numeric field)
       - optional factory_line (resolved via WO.custom_factory_line or BOM default)
 
     Returns one row per *Material Request Item* with all the detail the
@@ -1887,6 +1948,7 @@ def get_pending_material_requests(factory_line: str | None = None,
         """
         select
             mr.name              as mr,
+            mr.status            as mr_status,
             mr.work_order        as work_order,
             wo.production_item   as production_item,
             wo.item_name         as wo_item_name,
@@ -1899,23 +1961,23 @@ def get_pending_material_requests(factory_line: str | None = None,
             mri.item_code,
             mri.item_name,
             mri.uom,
-            mri.qty              as requested_qty,
-            mri.received_qty,
-            mri.ordered_qty
+            mri.qty              as requested_qty
         from `tabMaterial Request` mr
         join `tabMaterial Request Item` mri on mri.parent = mr.name
         left join `tabWork Order` wo on wo.name = mr.work_order
         left join `tabBOM` bom on bom.name = wo.bom_no
         where mr.docstatus = 1
           and mr.material_request_type = 'Material Transfer'
-          and mr.status not in ('Stopped','Cancelled')
+          and mr.status not in %(terminal)s
           and (wo.status is null or wo.status != 'Completed')
         order by mr.creation desc
         limit 200
         """,
+        {"terminal": _MR_TERMINAL_STATUSES},
         as_dict=True,
     )
 
+    transferred = _mri_transferred_map([r["mri"] for r in rows])
     mr_names = list({r["mr"] for r in rows})
     reasons_by_mr: dict = {}
     if mr_names:
@@ -1944,13 +2006,14 @@ def get_pending_material_requests(factory_line: str | None = None,
         if factory_line and line != factory_line:
             continue
         requested = float(r.get("requested_qty") or 0)
-        received = float(r.get("received_qty") or 0)
-        remaining = max(requested - received, 0)
+        already = float(transferred.get(r["mri"], 0) or 0)
+        remaining = max(requested - already, 0)
         if remaining <= 0:
             continue
         out.append({
             "mr": r["mr"],
             "mri": r["mri"],
+            "mr_status": r.get("mr_status"),
             "work_order": r.get("work_order"),
             "wo_item_name": r.get("wo_item_name"),
             "production_item": r.get("production_item"),
@@ -1963,7 +2026,7 @@ def get_pending_material_requests(factory_line: str | None = None,
             "item_name": r.get("item_name"),
             "uom": r.get("uom"),
             "requested": requested,
-            "received": received,
+            "received": already,
             "remaining": remaining,
         })
     return out
@@ -1979,7 +2042,7 @@ def fulfil_material_request(material_request: str,
     Material Transfer Stock Entry from `source_warehouse` to the WO's
     staging-or-WIP warehouse. Setting `material_request` and
     `material_request_item` on the detail row makes ERPNext auto-update
-    the MR's received quantity, eventually marking it Transferred.
+    the MR's qty fields and eventually flip its status to Transferred.
     """
     if not material_request:
         frappe.throw(_("Missing Material Request"))
@@ -1995,8 +2058,12 @@ def fulfil_material_request(material_request: str,
     mr = frappe.get_doc("Material Request", material_request)
     if mr.docstatus != 1:
         frappe.throw(_("Material Request {0} is not submitted").format(mr.name))
-    if mr.status in ("Stopped", "Cancelled"):
-        frappe.throw(_("Material Request {0} is {1}").format(mr.name, mr.status))
+    if mr.status in _MR_TERMINAL_STATUSES:
+        frappe.throw(
+            _("Material Request {0} is already {1} - cannot stage again.").format(
+                mr.name, mr.status
+            )
+        )
     if mr.material_request_type != "Material Transfer":
         frappe.throw(_("Only Material Transfer Material Requests can be staged here"))
     if not mr.work_order:
@@ -2007,8 +2074,11 @@ def fulfil_material_request(material_request: str,
         frappe.throw(_("Material Request Item {0} not found on {1}").format(
             material_request_item, mr.name))
 
+    # Authoritative remaining: requested - sum(submitted SE detail qty linked
+    # to this MR Item). Avoids drift when ERPNext writes to ordered_qty /
+    # received_qty / transferred_qty depending on request type.
     requested = float(mri.qty or 0)
-    already = float(mri.received_qty or 0)
+    already = float(_mri_transferred_map([mri.name]).get(mri.name, 0) or 0)
     remaining = max(requested - already, 0)
     if remaining <= 0:
         frappe.throw(_("This request line is already fulfilled."))
