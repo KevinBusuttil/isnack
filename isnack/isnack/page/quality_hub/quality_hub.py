@@ -259,7 +259,7 @@ def create_qc_record(doctype, payload=None, submit=False):
     allowed_parent_fields = {
         df.fieldname for df in meta.fields if df.fieldtype != "Table" and df.fieldname
     }
-    allowed_parent_fields.update({"doctype"})
+    allowed_parent_fields.add("doctype")
 
     doc_data = {"doctype": doctype}
     for fieldname, value in data.items():
