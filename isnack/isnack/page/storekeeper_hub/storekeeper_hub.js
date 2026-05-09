@@ -45,6 +45,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return parseFloat(n.toFixed(3));
   };
 
+  /**
+   * Create a Storekeeper Hub dialog with the shared isnack theme classes.
+   * @param {object} opts Dialog configuration passed to frappe.ui.Dialog.
+   * @param {string} extraClasses Additional wrapper classes for dialog-specific styling.
+   * @returns {frappe.ui.Dialog}
+   */
   function createStorekeeperDialog(opts, extraClasses = '') {
     const d = new frappe.ui.Dialog(opts);
     if (d && d.$wrapper) {

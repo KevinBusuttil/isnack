@@ -551,7 +551,7 @@
 
 /* Header: 3px teal stripe + soft teal-to-white gradient */
 .op-dialog .modal-header{
-  border-top-color: var(--isn-dialog-primary);
+  border-top: 3px solid var(--isn-dialog-primary);
   background: linear-gradient(135deg, var(--isn-dialog-primary-soft) 0%, #ffffff 68%);
 }
 .op-dialog .modal-header .modal-title{
