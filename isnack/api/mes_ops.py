@@ -3800,7 +3800,10 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
             after_commit=True,
         )
     except Exception:
-        pass
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Failed to publish pending end shift return update",
+        )
     
     return {"ok": True, "stock_entry": se.name}
 

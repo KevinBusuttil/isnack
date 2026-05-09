@@ -1972,7 +1972,10 @@ def mark_end_shift_return_received(stock_entry: str):
             after_commit=True,
         )
     except Exception:
-        pass
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Failed to publish pending end shift return acknowledgement",
+        )
 
     return {"ok": True, "stock_entry": se.name}
 
