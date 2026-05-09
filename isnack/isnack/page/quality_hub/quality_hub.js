@@ -541,7 +541,7 @@ isnack.quality_hub.QualityHub = class {
         dialog.__config = config;
         dialog.__child_rows = has_child_table ? this.make_initial_child_rows(config) : [];
         dialog.show();
-        dialog.$wrapper.addClass("qh-record-dialog");
+        dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
         if (has_child_table) {

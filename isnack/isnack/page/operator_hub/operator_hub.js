@@ -355,7 +355,7 @@ function init_operator_hub($root) {
   // `new frappe.ui.Dialog(...)` so the class is applied consistently.
   function opDialog(opts) {
     const d = new frappe.ui.Dialog(opts);
-    if (d && d.$wrapper) d.$wrapper.addClass('op-dialog');
+    if (d && d.$wrapper) d.$wrapper.addClass('isn-dialog-theme op-dialog');
     return d;
   }
 
