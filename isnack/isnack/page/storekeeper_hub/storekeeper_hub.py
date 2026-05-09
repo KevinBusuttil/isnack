@@ -1886,29 +1886,25 @@ _PENDING_END_SHIFT_RETURN_REALTIME_EVENT = "isnack_pending_end_shift_return_chan
 
 @frappe.whitelist()
 def get_pending_end_shift_returns(factory_line: str | None = None):
-    """List submitted End Shift Return Stock Entries still awaiting storekeeper acknowledgement."""
-    factory_line = _normalize_factory_line(factory_line)
+    """List submitted End Shift Return Stock Entries still awaiting storekeeper acknowledgement.
+
+    `factory_line` is intentionally ignored so pending returns behave as a
+    storekeeper-wide inbox queue.
+    """
 
     conditions = [
         "se.docstatus = 1",
         "coalesce(se.custom_is_end_shift_return, 0) = 1",
         "coalesce(se.custom_return_received_by_storekeeper, 0) = 0",
     ]
-    params = {}
-    if factory_line:
-        conditions.append("se.custom_factory_line = %(factory_line)s")
-        params["factory_line"] = factory_line
 
     rows = frappe.db.sql(
         f"""
         select
             se.name,
-            se.custom_factory_line as factory_line,
             se.to_warehouse,
             se.posting_date,
             se.posting_time,
-            se.creation,
-            se.owner,
             se.remarks,
             count(sed.name) as item_count,
             coalesce(sum(sed.qty), 0) as total_qty
@@ -1917,29 +1913,23 @@ def get_pending_end_shift_returns(factory_line: str | None = None):
         where {" and ".join(conditions)}
         group by
             se.name,
-            se.custom_factory_line,
             se.to_warehouse,
             se.posting_date,
             se.posting_time,
-            se.creation,
-            se.owner,
             se.remarks
         order by se.posting_date desc, se.posting_time desc, se.creation desc
         limit 200
         """,
-        params,
+        {},
         as_dict=True,
     )
 
     return [
         {
             "name": row.get("name"),
-            "factory_line": row.get("factory_line"),
             "to_warehouse": row.get("to_warehouse"),
             "posting_date": row.get("posting_date"),
             "posting_time": row.get("posting_time"),
-            "creation": row.get("creation"),
-            "owner": row.get("owner"),
             "remarks": row.get("remarks"),
             "item_count": cint(row.get("item_count") or 0),
             "total_qty": float(row.get("total_qty") or 0),
@@ -1968,7 +1958,7 @@ def mark_end_shift_return_received(stock_entry: str):
     try:
         frappe.publish_realtime(
             event=_PENDING_END_SHIFT_RETURN_REALTIME_EVENT,
-            message={"stock_entry": se.name, "factory_line": getattr(se, "custom_factory_line", None)},
+            message={"stock_entry": se.name},
             after_commit=True,
         )
     except Exception:

@@ -1820,8 +1820,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     let rows = [];
     try {
       const r = await frappe.call({
-        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_pending_end_shift_returns',
-        args: { factory_line: state.factory_line || null }
+        method: 'isnack.isnack.page.storekeeper_hub.storekeeper_hub.get_pending_end_shift_returns'
       });
       rows = r.message || [];
     } catch (e) {
@@ -1834,7 +1833,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     $pendingReturnCount.text(rows.length ? `(${rows.length})` : '');
 
     if (!rows.length) {
-      $pendingReturns.append('<div class="muted">No pending end-shift returns for this line.</div>');
+      $pendingReturns.append('<div class="muted">No pending end-shift returns.</div>');
       return;
     }
 
@@ -1854,7 +1853,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             </div>
           </div>
           <div class="pending-return-meta muted small">
-            ${row.factory_line ? `${__('Line')} ${frappe.utils.escape_html(row.factory_line)} · ` : ''}${__('To')} ${frappe.utils.escape_html(row.to_warehouse || __('(not set)'))}
+            ${__('To')} ${frappe.utils.escape_html(row.to_warehouse || __('(not set)'))}
             ${row.item_count ? ` · ${__('Items')}: ${frappe.utils.escape_html(String(row.item_count))}` : ''}
             ${row.remarks ? `<div>${frappe.utils.escape_html(row.remarks)}</div>` : ''}
           </div>
