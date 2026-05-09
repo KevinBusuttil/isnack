@@ -1884,12 +1884,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
                 freeze: true,
                 freeze_message: __('Updating End Shift Return…')
               });
-              const alreadyReceived = !!(resp && resp.message && resp.message.already_received);
+              const already_received = !!(resp && resp.message && resp.message.already_received);
               frappe.show_alert({
-                message: alreadyReceived
+                message: already_received
                   ? __('End Shift Return {0} was already marked as received.', [row.name])
                   : __('End Shift Return {0} marked as received.', [row.name]),
-                indicator: alreadyReceived ? 'orange' : 'green'
+                indicator: already_received ? 'orange' : 'green'
               });
               load_pending_returns();
             } catch (err) {
