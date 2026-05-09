@@ -673,7 +673,8 @@ isnack.quality_hub.QualityHub = class {
 
         $wrapper.find(".qh-child-duplicate").on("click", (e) => {
             const index = Number($(e.currentTarget).data("row-index"));
-            dialog.__child_rows.splice(index + 1, 0, { ...dialog.__child_rows[index] });
+            const cloned_row = JSON.parse(JSON.stringify(dialog.__child_rows[index]));
+            dialog.__child_rows.splice(index + 1, 0, cloned_row);
             this.render_child_editor(dialog, doctype);
         });
 
@@ -711,11 +712,12 @@ isnack.quality_hub.QualityHub = class {
                 ? ["", "1", "2", "3", "4", "5"]
                 : (field.options || "").split("\n");
             const options_html = options
-                .map((option) => {
+                .map((option, index) => {
                     const current_value =
                         value === null || value === undefined ? "" : `${value}`;
                     const selected = `${option}` === current_value ? "selected" : "";
-                    return `<option value="${frappe.utils.escape_html(option)}" ${selected}>${frappe.utils.escape_html(option || __("Select"))}</option>`;
+                    const option_label = option === "" && index === 0 ? __("Select") : option;
+                    return `<option value="${frappe.utils.escape_html(option)}" ${selected}>${frappe.utils.escape_html(option_label)}</option>`;
                 })
                 .join("");
 

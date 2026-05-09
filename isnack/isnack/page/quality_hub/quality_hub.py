@@ -96,7 +96,7 @@ QC_DOCTYPES = {
     "QCI": "QC Weight Check",
 }
 
-QC_DIALOG_DOCTYPES = {
+QC_DIALOG_CONFIG = {
     "QC Puffs Extruder Record": {
         "child_table_field": "readings",
         "child_doctype": "QC Extruder Reading",
@@ -240,10 +240,10 @@ def get_qc_records(doctype, filters=None, limit=20):
 @frappe.whitelist()
 def create_qc_record(doctype, payload=None, submit=False):
     """Create supported QC records, including child-table rows, from Quality Hub dialogs."""
-    if doctype not in QC_DIALOG_DOCTYPES:
+    if doctype not in QC_DIALOG_CONFIG:
         frappe.throw(f"Dialog creation is not supported for {doctype}.")
 
-    config = QC_DIALOG_DOCTYPES[doctype]
+    config = QC_DIALOG_CONFIG[doctype]
     data = frappe.parse_json(payload) if payload else {}
     if not isinstance(data, dict):
         frappe.throw("Payload must be a JSON object.")
