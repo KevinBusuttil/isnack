@@ -1,6 +1,33 @@
 frappe.provide("isnack.quality_hub");
 
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
+    "QC Receiving Record": {
+        parent_fields: [
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "supplier", fieldtype: "Link", label: __("Supplier"), options: "Supplier" },
+            { fieldname: "purchase_receipt", fieldtype: "Link", label: __("Purchase Receipt"), options: "Purchase Receipt" },
+            { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item", reqd: 1 },
+            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
+            { fieldname: "qty_received", fieldtype: "Float", label: __("Qty Received") },
+            { fieldname: "packaging_intact", fieldtype: "Check", label: __("Packaging Intact") },
+            { fieldname: "labelling_correct", fieldtype: "Check", label: __("Labelling Correct") },
+            { fieldname: "foreign_body_check", fieldtype: "Check", label: __("Foreign Body Check") },
+            { fieldname: "colour_acceptable", fieldtype: "Check", label: __("Colour Acceptable") },
+            { fieldname: "arrival_temperature", fieldtype: "Float", label: __("Arrival Temperature (°C)") },
+            { fieldname: "acceptable_range_min", fieldtype: "Float", label: __("Acceptable Range Min (°C)") },
+            { fieldname: "acceptable_range_max", fieldtype: "Float", label: __("Acceptable Range Max (°C)") },
+            { fieldname: "coa_received", fieldtype: "Check", label: __("COA Received") },
+            { fieldname: "coa_acceptable", fieldtype: "Check", label: __("COA Acceptable") },
+            { fieldname: "spec_sheet_matches", fieldtype: "Check", label: __("Spec Sheet Matches") },
+            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nAccepted\nConditionally Accepted\nRejected" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+        ],
+    },
     "QC Puffs Extruder Record": {
         child_table_field: "readings",
         child_label: __("Readings"),
@@ -494,26 +521,51 @@ isnack.quality_hub.QualityHub = class {
             return;
         }
 
+        const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
+        const fields = [...config.parent_fields];
+        if (has_child_table) {
+            fields.push({
+                fieldtype: "HTML",
+                fieldname: "child_table_editor",
+            });
+        }
+
         const dialog = new frappe.ui.Dialog({
             title: __("New {0}", [doctype]),
             size: "extra-large",
-            fields: [
-                ...config.parent_fields,
-                {
-                    fieldtype: "HTML",
-                    fieldname: "child_table_editor",
-                },
-            ],
+            fields,
             primary_action_label: __("Save Draft"),
             primary_action: () => this.handle_dialog_save(dialog, doctype, false),
         });
 
         dialog.__config = config;
-        dialog.__child_rows = this.make_initial_child_rows(config);
+        dialog.__child_rows = has_child_table ? this.make_initial_child_rows(config) : [];
         dialog.show();
         dialog.$wrapper.addClass("qh-record-dialog");
+        this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
-        this.render_child_editor(dialog, doctype);
+        if (has_child_table) {
+            this.render_child_editor(dialog, doctype);
+        }
+    }
+
+    setup_dialog_specific_behaviour(dialog, doctype) {
+        if (doctype !== "QC Receiving Record") return;
+
+        dialog.set_query("batch_no", () => ({
+            filters: { item: dialog.get_value("item_code") },
+        }));
+
+        const item_field = dialog.get_field("item_code");
+        if (item_field && item_field.df) {
+            const existing_onchange = item_field.df.onchange;
+            item_field.df.onchange = () => {
+                if (existing_onchange) {
+                    existing_onchange();
+                }
+                dialog.set_value("batch_no", "");
+            };
+        }
     }
 
     setup_dialog_secondary_action(dialog, doctype) {
@@ -530,16 +582,16 @@ isnack.quality_hub.QualityHub = class {
         if (!values) return;
 
         const config = dialog.__config;
-        const child_rows = this.get_non_empty_child_rows(dialog);
-        if (!child_rows.length) {
-            frappe.msgprint(__("Add at least one row in {0}.", [config.child_label]));
-            return;
+        const payload = { ...values };
+        const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
+        if (has_child_table) {
+            const child_rows = this.get_non_empty_child_rows(dialog);
+            if (!child_rows.length) {
+                frappe.msgprint(__("Add at least one row in {0}.", [config.child_label]));
+                return;
+            }
+            payload[config.child_table_field] = child_rows;
         }
-
-        const payload = {
-            ...values,
-            [config.child_table_field]: child_rows,
-        };
 
         this.save_dialog_record({ dialog, doctype, payload, submit });
     }
