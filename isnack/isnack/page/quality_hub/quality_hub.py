@@ -286,7 +286,7 @@ def create_qc_record(doctype, payload=None, submit=False):
             for fieldname, value in row.items()
             if fieldname in allowed_child_fields
         }
-        if _row_has_values(clean_row):
+        if _contains_data(clean_row):
             doc.append(child_fieldname, clean_row)
             appended_rows += 1
 
@@ -308,7 +308,7 @@ def create_qc_record(doctype, payload=None, submit=False):
     }
 
 
-def _row_has_values(row):
+def _contains_data(row):
     for value in row.values():
         if value in (None, "", []):
             continue

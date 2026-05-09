@@ -716,7 +716,8 @@ isnack.quality_hub.QualityHub = class {
                     const current_value =
                         value === null || value === undefined ? "" : `${value}`;
                     const selected = `${option}` === current_value ? "selected" : "";
-                    const option_label = option === "" && index === 0 ? __("Select") : option;
+                    const is_placeholder_option = option === "" && index === 0;
+                    const option_label = is_placeholder_option ? __("Select") : option;
                     return `<option value="${frappe.utils.escape_html(option)}" ${selected}>${frappe.utils.escape_html(option_label)}</option>`;
                 })
                 .join("");
