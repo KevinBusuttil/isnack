@@ -714,29 +714,119 @@
   border-bottom: none;
 }
 
-/* ---- PO Receipt Dialog — Professional unified theme ---- */
+/* =====================================
+   Storekeeper Hub — Shared Dialog Theme (.sk-dialog)
+   =====================================
+   Every Storekeeper Hub dialog opts in via `d.$wrapper.addClass('sk-dialog')`.
+   Dialog-specific styling layers on top via its own class
+   (.po-receipt-dialog, .stage-mr-dialog, etc.) and does not need to
+   redeclare the header or primary CTA. */
 
-/* Dialog title bar */
-.po-receipt-dialog .modal-header {
+.sk-dialog .modal-header{
   background: var(--cerulean-600);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
 }
-
-.po-receipt-dialog .modal-header .modal-title {
+.sk-dialog .modal-header .modal-title{
   color: #ffffff;
   font-weight: 700;
   font-size: 16px;
+  letter-spacing: .15px;
 }
-
-.po-receipt-dialog .modal-header .btn-modal-close {
-  color: rgba(255, 255, 255, 0.8);
+.sk-dialog .modal-header .btn-modal-close{
+  color: rgba(255,255,255,.85);
 }
-
-.po-receipt-dialog .modal-header .btn-modal-close:hover {
+.sk-dialog .modal-header .btn-modal-close:hover{
   color: #ffffff;
 }
 
+.sk-dialog .modal-body{
+  padding: 1rem 1.25rem;
+}
+
+.sk-dialog .modal-footer{
+  border-top: 1px solid var(--border-200, #e3e8ee);
+}
+
+/* Primary CTA — single canonical cerulean. Per-dialog rules can still override. */
+.sk-dialog .modal-footer .btn-primary{
+  background: var(--cerulean-600) !important;
+  border-color: var(--cerulean-700) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  padding: .4rem 1rem;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.sk-dialog .modal-footer .btn-primary:enabled:hover{
+  background: var(--cerulean-700) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,123,167,.3);
+}
+.sk-dialog .modal-footer .btn-primary:disabled{
+  background: #cbd5e1 !important;
+  border-color: #94a3b8 !important;
+  color: #475569 !important;
+  box-shadow: none !important;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* Secondary buttons stay neutral but consistent */
+.sk-dialog .modal-footer .btn-default,
+.sk-dialog .modal-footer .btn-secondary{
+  background: #f3f4f6 !important;
+  border-color: #cbd5e1 !important;
+  color: #1f2937 !important;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .sk-dialog .modal-footer .btn-primary{
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* =====================================
+   Stage Material Request Dialog
+   ===================================== */
+.stage-mr-dialog .modal-dialog{
+  max-width: 560px;
+}
+/* Header note rendered as the first HTML field */
+.stage-mr-dialog [data-fieldname="header"]{
+  background: var(--cerulean-100);
+  border-left: 4px solid var(--cerulean-500);
+  border-radius: 6px;
+  padding: .6rem .75rem;
+  margin-bottom: .75rem;
+}
+/* Source warehouse — slate-blue tint (orientation field) */
+.stage-mr-dialog [data-fieldname="source_warehouse"] .form-control,
+.stage-mr-dialog [data-fieldname="source_warehouse"] .link-btn{
+  background: #f0f5fa !important;
+  border-color: var(--cerulean-300) !important;
+}
+/* Qty — amber (key operator input) */
+.stage-mr-dialog [data-fieldname="qty"] .form-control{
+  background: #fff3d6 !important;
+  border-color: #fbbf24 !important;
+  color: #78350f !important;
+  font-weight: 600;
+}
+/* Batch — green when chosen, neutral when blank */
+.stage-mr-dialog [data-fieldname="batch_no"] .form-control,
+.stage-mr-dialog [data-fieldname="batch_no"] .link-btn{
+  background: #f0fdf4 !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+}
+
+/* ---- PO Receipt Dialog — Professional unified theme ---- */
+
+/* Header / footer / primary CTA are provided by .sk-dialog. The PO
+   Receipt dialog only declares its bespoke section + grid styling here. */
+/* Dialog title bar */
 /* Purchase Order section — subtle slate-blue tint */
 .po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-body {
   background: #f0f5fa;
@@ -798,11 +888,6 @@
 /* Alternating row tint for readability */
 .po-receipt-dialog .frappe-control[data-fieldname="items"] .rows .grid-row:nth-child(even) {
   background: #fafcfe;
-}
-
-/* Modal footer — light separator */
-.po-receipt-dialog .modal-footer {
-  border-top: 1px solid var(--border-200);
 }
 
 /* Hide row checkboxes in the PO Receipt items grid */

@@ -1947,6 +1947,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
       }
     });
+    d.$wrapper.addClass('sk-dialog stage-mr-dialog');
     d.show();
   }
 
@@ -2227,7 +2228,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
     });
 
-    po_receipt_dialog.$wrapper.addClass('po-receipt-dialog');
+    po_receipt_dialog.$wrapper.addClass('sk-dialog po-receipt-dialog');
 
     po_receipt_dialog.$wrapper.on('hide.bs.modal', () => {
       if (!po_receipt_dialog._resetting) {
