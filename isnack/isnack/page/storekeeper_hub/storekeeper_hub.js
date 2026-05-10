@@ -39,11 +39,26 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     return n.toFixed(3).replace(/\.?0+$/, '');
   };
 
-    const round_qty = (value) => {
+  const round_qty = (value) => {
     const n = parseFloat(value);
     if (isNaN(n)) return 0;
     return parseFloat(n.toFixed(3));
   };
+
+  /**
+   * Create a Storekeeper Hub dialog with the shared isnack theme classes.
+   * @param {object} opts Dialog configuration passed to frappe.ui.Dialog.
+   * @param {string} extraClasses Additional wrapper classes for dialog-specific styling.
+   * @returns {frappe.ui.Dialog}
+   */
+  function createStorekeeperDialog(opts, extraClasses = '') {
+    const d = new frappe.ui.Dialog(opts);
+    if (d && d.$wrapper) {
+      const classes = ['isn-dialog-theme', 'sk-dialog', extraClasses].filter(Boolean).join(' ');
+      d.$wrapper.addClass(classes);
+    }
+    return d;
+  }
 
   const fetch_item_details = async (item_code) => {
     const code = (item_code || '').trim();
@@ -436,7 +451,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    const d = new frappe.ui.Dialog({
+    const d = createStorekeeperDialog({
       title: __('Generate Picklist'),
       size: 'extra-large',
       fields: [
@@ -501,7 +516,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           console.error(e);
         }
       }
-    });
+    }, 'ppl-selector-dialog');
 
     d.show();
 
@@ -617,7 +632,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    const d = new frappe.ui.Dialog({
+    const d = createStorekeeperDialog({
       title: __('Print Pallet Labels'),
       size: 'extra-large',
       fields: [
@@ -712,7 +727,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           frappe.show_alert({ message: __('Failed to print combined labels'), indicator: 'red' });
         }
       }
-    });
+    }, 'ppl-selector-dialog');
 
     d.show();
 
@@ -1319,7 +1334,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         const available_batches = r.message;
         
         // Create dialog
-        const d = new frappe.ui.Dialog({
+        const d = createStorekeeperDialog({
           title: __('Select Batches for {0}', [item_code]),
           size: 'large',
           fields: [
@@ -1327,7 +1342,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               fieldtype: 'HTML',
               fieldname: 'batch_info',
               options: `
-                <div style="margin-bottom: 12px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                <div class="sk-batch-selection-summary">
                   <div><strong>${__('Item')}:</strong> ${frappe.utils.escape_html(item_code)}</div>
                   <div><strong>${__('Total Required Quantity')}:</strong> ${fmt_qty(total_qty)} ${frappe.utils.escape_html(cart_row.uom || '')}</div>
                 </div>
@@ -1387,7 +1402,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             d.hide();
             redraw_cart();
           }
-        });
+        }, 'batch-selection-dialog');
 
         d.show();
 
@@ -1403,14 +1418,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         // Issue 3: Show insufficient stock warning if needed
         if (insufficient_stock) {
           table_html += `
-            <div style="color: #d32f2f; background: #ffebee; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-weight: bold;">
+            <div class="sk-batch-selection-warning">
               ⚠️ Insufficient stock: Total available (${fmt_qty(total_available_qty)}) is less than required (${fmt_qty(total_qty)}) ${frappe.utils.escape_html(cart_row.uom || '')}
             </div>
           `;
         }
         
         table_html += `
-          <table class="table table-bordered" style="margin-top: 10px;">
+          <table class="table table-bordered sk-batch-selection-table">
             <thead>
               <tr>
                 <th style="width: 30%;">${__('Batch No')}</th>
@@ -1457,8 +1472,8 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="3" style="text-align: right;"><strong>${__('Total Assigned')}:</strong></td>
-                <td><span id="total-assigned">0</span> / ${fmt_qty(total_qty)} ${frappe.utils.escape_html(cart_row.uom || '')}</td>
+                <td colspan="3" class="sk-batch-selection-total-label"><strong>${__('Total Assigned')}:</strong></td>
+                <td><span id="total-assigned" class="sk-batch-selection-total">0</span> / ${fmt_qty(total_qty)} ${frappe.utils.escape_html(cart_row.uom || '')}</td>
               </tr>
             </tfoot>
           </table>
@@ -1475,11 +1490,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           $table_container.find('#total-assigned').text(fmt_qty(total));
           
           // Visual feedback
+          const $total = $table_container.find('#total-assigned');
           const diff = Math.abs(total - total_qty);
           if (diff < QTY_TOLERANCE) {
-            $table_container.find('#total-assigned').css('color', 'green');
+            $total.removeClass('sk-total-invalid').addClass('sk-total-valid');
           } else {
-            $table_container.find('#total-assigned').css('color', 'red');
+            $total.removeClass('sk-total-valid').addClass('sk-total-invalid');
           }
         };
 
@@ -1972,7 +1988,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     const default_src = state.src_warehouse || '';
     const itemHasBatch = (row.item_code || '');
 
-    const d = new frappe.ui.Dialog({
+    const d = createStorekeeperDialog({
       title: __('Stage Material Request {0}', [row.mr]),
       fields: [
         {
@@ -2044,8 +2060,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           }
         });
       }
-    });
-    d.$wrapper.addClass('sk-dialog stage-mr-dialog');
+    }, 'stage-mr-dialog');
     d.show();
   }
 
@@ -2084,7 +2099,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
 
-    po_receipt_dialog = new frappe.ui.Dialog({
+    po_receipt_dialog = createStorekeeperDialog({
       title: __('PO Receipt'),
       size: 'extra-large',
       static: true,
@@ -2324,9 +2339,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         }
       },
 
-    });
-
-    po_receipt_dialog.$wrapper.addClass('sk-dialog po-receipt-dialog');
+    }, 'po-receipt-dialog');
 
     po_receipt_dialog.$wrapper.on('hide.bs.modal', () => {
       if (!po_receipt_dialog._resetting) {
@@ -2490,7 +2503,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           <button type="button" class="btn btn-xs po-row-batch-split-btn"
             title="${__('Split quantities across batches')}"
             aria-label="${__('Split quantities across batches')}"
-            style="background-color: gold; color: #1f2933; border-color: #d4a017;">...</button>
+            >...</button>
         </span>
       `);
       controls.find('.po-row-batch-split-btn').attr('data-row-name', row.name || '');
@@ -2520,7 +2533,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
 
     const title_item = row_doc.item_code || row_doc.item_name || __('Item');
-    const dialog = new frappe.ui.Dialog({
+    const dialog = createStorekeeperDialog({
       title: __('Batches for {0}', [title_item]),
       size: 'large',
       fields: [
@@ -2591,34 +2604,34 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       },
       secondary_action_label: __('Cancel'),
       secondary_action: () => dialog.hide(),
-    });
+    }, 'po-batch-dialog');
 
     dialog.show();
 
     const render = () => {
       const totals = compute_po_receipt_batch_totals(working);
       const total_all = totals.accepted + totals.rejected;
-      const total_color = total_all > pending_qty + 0.0001
-        ? '#dc2626'
-        : (Math.abs(total_all - pending_qty) <= 0.0001 ? '#16a34a' : '#475569');
+      const total_state = total_all > pending_qty + 0.0001
+        ? 'po-batch-total-invalid'
+        : (Math.abs(total_all - pending_qty) <= 0.0001 ? 'po-batch-total-valid' : 'po-batch-total-neutral');
       const info_html = `
-        <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+        <div class="po-batch-summary">
           <div><strong>${__('Item')}:</strong> ${frappe.utils.escape_html(row_doc.item_code || '')} ${row_doc.item_name ? `- ${frappe.utils.escape_html(row_doc.item_name)}` : ''}</div>
           <div><strong>${__('UoM')}:</strong> ${frappe.utils.escape_html(row_doc.uom || '')}</div>
           <div><strong>${__('Pending Qty')}:</strong> ${fmt_qty(pending_qty)}</div>
           <div><strong>${__('Current Total Accepted')}:</strong> ${fmt_qty(totals.accepted)}</div>
           <div><strong>${__('Current Total Rejected')}:</strong> ${fmt_qty(totals.rejected)}</div>
-          <div><strong>${__('Current Total')}:</strong> <span style="color:${total_color};">${fmt_qty(total_all)}</span></div>
+          <div><strong>${__('Current Total')}:</strong> <span class="po-batch-total ${total_state}">${fmt_qty(total_all)}</span></div>
         </div>
       `;
       dialog.get_field('batch_info').$wrapper.html(info_html);
 
       const table_html = `
         <div>
-          <div style="margin-bottom: 8px;">
+          <div class="po-batch-toolbar">
             <button type="button" class="btn btn-sm btn-default po-batch-add-row">+ ${__('Add Batch')}</button>
           </div>
-          <table class="table table-bordered table-condensed">
+          <table class="table table-bordered table-condensed po-batch-table">
             <thead>
               <tr>
                 <th>${__('Batch No')}</th>

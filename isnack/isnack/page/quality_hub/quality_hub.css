@@ -609,6 +609,28 @@
     width: min(1400px, calc(100vw - 3rem));
 }
 
+.qh-record-dialog .qh-child-toolbar {
+    padding: 0.8rem 0.95rem;
+    border: 1px solid var(--isn-dialog-primary-soft-strong);
+    border-radius: 0.85rem;
+    background: var(--isn-dialog-primary-soft);
+}
+
+.qh-record-dialog .qh-child-toolbar-label {
+    color: var(--isn-dialog-title);
+}
+
+.qh-record-dialog .qh-child-add,
+.qh-record-dialog .qh-child-duplicate,
+.qh-record-dialog .qh-child-delete {
+    border-color: var(--isn-dialog-neutral-border);
+}
+
+.qh-record-dialog .qh-child-add {
+    color: var(--isn-dialog-primary-strong);
+    background: #ffffff;
+}
+
 .qh-child-editor {
     margin-top: 0.75rem;
 }
@@ -630,8 +652,18 @@
 .qh-child-table-wrap {
     max-height: 420px;
     overflow: auto;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--isn-dialog-border);
     border-radius: 0.75rem;
+}
+
+.qh-record-dialog .qh-child-table thead th {
+    background: var(--isn-dialog-primary-soft);
+    color: var(--isn-dialog-title);
+    border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
+}
+
+.qh-record-dialog .qh-child-table tbody tr:nth-child(even) td {
+    background: var(--isn-dialog-primary-soft-alt);
 }
 
 .qh-child-table th,
@@ -647,6 +679,12 @@
 
 .qh-child-table .form-control {
     min-height: 34px;
+}
+
+.qh-record-dialog .qh-child-input:focus,
+.qh-record-dialog .qh-child-table .form-control:focus {
+    border-color: var(--isn-dialog-primary);
+    box-shadow: var(--isn-dialog-focus-shadow);
 }
 
 .qh-child-textarea {

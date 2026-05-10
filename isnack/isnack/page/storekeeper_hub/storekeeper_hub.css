@@ -513,7 +513,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--cerulean-600);
+  background: var(--isn-dialog-primary);
   color: white;
   border-radius: 8px 8px 0 0;
   font-weight: 600;
@@ -530,7 +530,7 @@
 .ppl-se-list {
   max-height: 520px;
   overflow-y: auto;
-  border: 1px solid var(--cerulean-300);
+  border: 1px solid var(--isn-dialog-primary-soft-strong);
   border-top: none;
   border-radius: 0 0 8px 8px;
 }
@@ -542,7 +542,7 @@
 }
 
 .ppl-se-card {
-  border-bottom: 1px solid var(--cerulean-100);
+  border-bottom: 1px solid var(--isn-dialog-primary-soft);
   background: var(--card-bg);
   transition: background 0.15s;
 }
@@ -552,7 +552,7 @@
 }
 
 .ppl-se-card.ppl-se-selected {
-  background: #f0f9ff;
+  background: var(--isn-dialog-primary-soft-hover);
 }
 
 .ppl-se-card-header {
@@ -579,7 +579,7 @@
 
 .ppl-se-name {
   font-weight: 700;
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-size: 13px;
 }
 
@@ -590,7 +590,7 @@
 
 .ppl-se-remarks {
   font-size: 12px;
-  color: var(--cerulean-600);
+  color: var(--isn-dialog-primary);
   font-style: italic;
 }
 
@@ -605,12 +605,12 @@
 }
 
 .ppl-items-table th {
-  background: var(--cerulean-100);
-  color: var(--cerulean-700);
+  background: var(--isn-dialog-primary-soft);
+  color: var(--isn-dialog-title);
   padding: 4px 8px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 1px solid var(--cerulean-300);
+  border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
 }
 
 .ppl-items-table td {
@@ -625,7 +625,7 @@
 
 .ppl-item-code {
   font-family: monospace;
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-weight: 600;
 }
 
@@ -635,9 +635,9 @@
 
 .ppl-batch-badge {
   display: inline-block;
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
+  background: var(--isn-dialog-warning-bg);
+  color: var(--isn-dialog-warning-text);
+  border: 1px solid var(--isn-dialog-warning-border);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
@@ -646,9 +646,9 @@
 
 .ppl-qty-badge {
   display: inline-block;
-  background: #dcfce7;
-  color: #166534;
-  border: 1px solid #86efac;
+  background: var(--isn-dialog-success-bg);
+  color: var(--isn-dialog-success-text);
+  border: 1px solid var(--isn-dialog-success-border);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
@@ -682,17 +682,17 @@
 
 /* Apply button */
 .ppl-apply-btn {
-  background: var(--cerulean-100);
-  border: 1px solid var(--cerulean-500);
-  color: var(--cerulean-700);
+  background: var(--isn-dialog-primary-soft);
+  border: 1px solid var(--isn-dialog-primary);
+  color: var(--isn-dialog-title);
   font-weight: 600;
   border-radius: 6px;
   padding: 4px 16px;
 }
 
 .ppl-apply-btn:hover {
-  background: var(--cerulean-300);
-  border-color: var(--cerulean-600);
+  background: var(--isn-dialog-primary);
+  border-color: var(--isn-dialog-primary-strong);
   color: white;
 }
 
@@ -702,7 +702,7 @@
   font-weight: 700;
   letter-spacing: .02em;
   text-transform: uppercase;
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   margin: 0 0 8px 0;
 }
 
@@ -712,10 +712,10 @@
 }
 
 .ppl-grouped-table thead th {
-  background: var(--cerulean-100);
-  color: var(--cerulean-700);
+  background: var(--isn-dialog-primary-soft);
+  color: var(--isn-dialog-title);
   font-weight: 600;
-  border-bottom: 1px solid var(--cerulean-300);
+  border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
 }
 
 .ppl-grouped-table tbody tr:last-child td {
@@ -731,21 +731,19 @@
    redeclare the header or primary CTA. */
 
 .sk-dialog .modal-header{
-  background: var(--cerulean-600);
-  border-bottom: none;
+  background: linear-gradient(135deg, var(--isn-dialog-primary-soft) 0%, #ffffff 68%);
+  border-bottom-color: var(--isn-dialog-border);
   border-radius: 8px 8px 0 0;
 }
 .sk-dialog .modal-header .modal-title{
-  color: #ffffff;
-  font-weight: 700;
+  color: var(--isn-dialog-title);
   font-size: 16px;
-  letter-spacing: .15px;
 }
 .sk-dialog .modal-header .btn-modal-close{
-  color: rgba(255,255,255,.85);
+  color: rgba(15,91,86,.72);
 }
 .sk-dialog .modal-header .btn-modal-close:hover{
-  color: #ffffff;
+  color: var(--isn-dialog-primary-strong);
 }
 
 .sk-dialog .modal-body{
@@ -753,22 +751,19 @@
 }
 
 .sk-dialog .modal-footer{
-  border-top: 1px solid var(--border-200, #e3e8ee);
+  border-top: 1px solid var(--isn-dialog-border);
 }
 
 /* Primary CTA — single canonical cerulean. Per-dialog rules can still override. */
 .sk-dialog .modal-footer .btn-primary{
-  background: var(--cerulean-600) !important;
-  border-color: var(--cerulean-700) !important;
+  background: var(--isn-dialog-primary) !important;
+  border-color: var(--isn-dialog-primary-strong) !important;
   color: #ffffff !important;
-  font-weight: 600;
   padding: .4rem 1rem;
-  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
 .sk-dialog .modal-footer .btn-primary:enabled:hover{
-  background: var(--cerulean-700) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,123,167,.3);
+  background: var(--isn-dialog-primary-strong) !important;
+  box-shadow: var(--isn-dialog-primary-shadow);
 }
 .sk-dialog .modal-footer .btn-primary:disabled{
   background: #cbd5e1 !important;
@@ -803,8 +798,8 @@
 }
 /* Header note rendered as the first HTML field */
 .stage-mr-dialog [data-fieldname="header"]{
-  background: var(--cerulean-100);
-  border-left: 4px solid var(--cerulean-500);
+  background: var(--isn-dialog-primary-soft);
+  border-left: 4px solid var(--isn-dialog-primary);
   border-radius: 6px;
   padding: .6rem .75rem;
   margin-bottom: .75rem;
@@ -812,22 +807,22 @@
 /* Source warehouse — slate-blue tint (orientation field) */
 .stage-mr-dialog [data-fieldname="source_warehouse"] .form-control,
 .stage-mr-dialog [data-fieldname="source_warehouse"] .link-btn{
-  background: #f0f5fa !important;
-  border-color: var(--cerulean-300) !important;
+  background: var(--isn-dialog-info-bg) !important;
+  border-color: var(--isn-dialog-info-border) !important;
 }
 /* Qty — amber (key operator input) */
 .stage-mr-dialog [data-fieldname="qty"] .form-control{
-  background: #fff3d6 !important;
-  border-color: #fbbf24 !important;
-  color: #78350f !important;
+  background: var(--isn-dialog-warning-bg) !important;
+  border-color: var(--isn-dialog-warning-border) !important;
+  color: var(--isn-dialog-warning-text) !important;
   font-weight: 600;
 }
 /* Batch — green when chosen, neutral when blank */
 .stage-mr-dialog [data-fieldname="batch_no"] .form-control,
 .stage-mr-dialog [data-fieldname="batch_no"] .link-btn{
-  background: #f0fdf4 !important;
-  border-color: #86efac !important;
-  color: #166534 !important;
+  background: var(--isn-dialog-success-bg) !important;
+  border-color: var(--isn-dialog-success-border) !important;
+  color: var(--isn-dialog-success-text) !important;
 }
 
 /* ---- PO Receipt Dialog — Professional unified theme ---- */
@@ -837,15 +832,15 @@
 /* Dialog title bar */
 /* Purchase Order section — subtle slate-blue tint */
 .po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-body {
-  background: #f0f5fa;
-  border-left: 4px solid var(--cerulean-500);
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary);
   border-radius: 6px;
   padding: 12px 16px;
   margin-bottom: 4px;
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="po_section"] > .section-head {
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-weight: 700;
   font-size: 13px;
   text-transform: uppercase;
@@ -854,28 +849,28 @@
 
 /* Date of Receipt field — same slate-blue family, no amber */
 .po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] {
-  background: #f0f5fa;
-  border-left: 4px solid var(--cerulean-700);
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary-strong);
   border-radius: 6px;
   padding: 8px 12px;
   margin-top: 4px;
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="receipt_date"] .control-label {
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-weight: 700;
 }
 
 /* Items to Receive section — same slate-blue family, no green */
 .po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-body {
-  background: #f0f5fa;
-  border-left: 4px solid var(--cerulean-500);
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary);
   border-radius: 6px;
   padding: 12px 16px;
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="items_section"] > .section-head {
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-weight: 700;
   font-size: 13px;
   text-transform: uppercase;
@@ -884,11 +879,11 @@
 
 /* Grid header row — cerulean tinted for cohesion */
 .po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-heading-row {
-  background: var(--cerulean-100);
+  background: var(--isn-dialog-primary-soft);
 }
 
 .po-receipt-dialog .frappe-control[data-fieldname="items"] .grid-heading-row .static-area {
-  color: var(--cerulean-700);
+  color: var(--isn-dialog-title);
   font-weight: 600;
   font-size: 12px;
 }
@@ -932,6 +927,18 @@
   z-index: 2;
 }
 
+.po-receipt-dialog .po-row-batch-split-btn{
+  background: var(--isn-dialog-warning-bg);
+  color: var(--isn-dialog-warning-text);
+  border-color: var(--isn-dialog-warning-border);
+}
+
+.po-receipt-dialog .po-row-batch-split-btn:hover{
+  background: var(--isn-dialog-warning-hover-bg);
+  border-color: var(--isn-dialog-warning-hover-border);
+  color: var(--isn-dialog-warning-text);
+}
+
 /* In split mode, widen right padding to prevent the badge + button from overlapping input text */
 .po-receipt-dialog [data-fieldname="batch_no"].po-batch-split-active input[data-fieldname="batch_no"] {
   padding-right: 110px;
@@ -943,6 +950,76 @@
    position:relative). This ensures there is exactly one DOM mount point. */
 .po-receipt-dialog .po-row-batch-controls-anchor {
   display: contents;
+}
+
+.batch-selection-dialog .sk-batch-selection-summary,
+.po-batch-dialog .po-batch-summary{
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary);
+  border-radius: 8px;
+  color: var(--isn-dialog-neutral-text);
+}
+
+.batch-selection-dialog .sk-batch-selection-warning{
+  color: var(--isn-dialog-danger-text);
+  background: var(--isn-dialog-danger-bg);
+  border: 1px solid var(--isn-dialog-danger-border);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.batch-selection-dialog .sk-batch-selection-table,
+.po-batch-dialog .po-batch-table{
+  margin-top: 10px;
+}
+
+.batch-selection-dialog .sk-batch-selection-table thead th,
+.po-batch-dialog .po-batch-table thead th{
+  background: var(--isn-dialog-primary-soft);
+  color: var(--isn-dialog-title);
+  border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
+}
+
+.batch-selection-dialog .sk-batch-selection-table .batch-row:nth-child(even),
+.po-batch-dialog .po-batch-table tbody tr:nth-child(even){
+  background: var(--isn-dialog-primary-soft-alt);
+}
+
+.batch-selection-dialog .sk-batch-selection-table .batch-qty-input:focus,
+.po-batch-dialog .po-batch-table input:focus{
+  border-color: var(--isn-dialog-primary);
+  box-shadow: var(--isn-dialog-focus-shadow);
+}
+
+.batch-selection-dialog .sk-batch-selection-total-label{
+  text-align: right;
+}
+
+.batch-selection-dialog .sk-batch-selection-total,
+.po-batch-dialog .po-batch-total{
+  font-weight: 700;
+}
+
+.batch-selection-dialog .sk-total-valid,
+.po-batch-dialog .po-batch-total-valid{
+  color: var(--isn-dialog-success-text);
+}
+
+.batch-selection-dialog .sk-total-invalid,
+.po-batch-dialog .po-batch-total-invalid{
+  color: var(--isn-dialog-danger-text);
+}
+
+.po-batch-dialog .po-batch-total-neutral{
+  color: var(--isn-dialog-neutral-text);
+}
+
+.po-batch-dialog .po-batch-toolbar{
+  margin-bottom: 8px;
 }
 
 /* =====================================

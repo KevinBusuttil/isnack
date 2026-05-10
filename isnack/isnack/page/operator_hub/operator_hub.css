@@ -551,11 +551,11 @@
 
 /* Header: 3px teal stripe + soft teal-to-white gradient */
 .op-dialog .modal-header{
-  border-top: 3px solid #15b79e;
-  background: linear-gradient(135deg, #e7fbf7 0%, #ffffff 60%);
+  border-top: 3px solid var(--isn-dialog-primary);
+  background: linear-gradient(135deg, var(--isn-dialog-primary-soft) 0%, #ffffff 68%);
 }
 .op-dialog .modal-header .modal-title{
-  color: #0f766e;
+  color: var(--isn-dialog-title);
   font-weight: 700;
   letter-spacing: .15px;
 }
@@ -568,28 +568,28 @@
 /* Section break labels (Frappe renders Section Break as an h6 inside
    .form-section). Keep them visually grouped with the theme. */
 .op-dialog .form-section .section-head{
-  color: #0f766e;
+  color: var(--isn-dialog-title);
   font-weight: 700;
   text-transform: uppercase;
   font-size: .78rem;
   letter-spacing: .3px;
-  border-bottom: 1px solid #cdebe4;
+  border-bottom: 1px solid var(--isn-dialog-primary-soft-strong);
   padding-bottom: .25rem;
   margin-bottom: .5rem;
 }
 
 /* Primary CTA — single canonical teal. Per-dialog rules can still override. */
 .op-dialog .modal-footer .btn-primary{
-  background: #15b79e !important;
-  border-color: #109487 !important;
-  color: #053b37 !important;
+  background: var(--isn-dialog-primary) !important;
+  border-color: var(--isn-dialog-primary-strong) !important;
+  color: #ffffff !important;
   font-weight: 600;
   transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
 .op-dialog .modal-footer .btn-primary:enabled:hover{
-  background: #109487 !important;
+  background: var(--isn-dialog-primary-strong) !important;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(21,183,158,.3);
+  box-shadow: var(--isn-dialog-primary-shadow);
 }
 .op-dialog .modal-footer .btn-primary:disabled{
   background: #cbd5e1 !important;
@@ -613,43 +613,43 @@
    fieldname. ------------------------------------------------------- */
 .op-dialog .op-input-info,
 .op-dialog .op-input-info .form-control{
-  background: #e8f1ff !important;
-  border-color: #93c5fd !important;
-  color: #1e3a8a;
+  background: var(--isn-dialog-info-bg) !important;
+  border-color: var(--isn-dialog-info-border) !important;
+  color: var(--isn-dialog-info-text);
 }
 .op-dialog .op-input-key,
 .op-dialog .op-input-key .form-control{
-  background: #fff3d6 !important;
-  border-color: #fbbf24 !important;
-  color: #78350f;
+  background: var(--isn-dialog-warning-bg) !important;
+  border-color: var(--isn-dialog-warning-border) !important;
+  color: var(--isn-dialog-warning-text);
 }
 .op-dialog .op-input-good,
 .op-dialog .op-input-good .form-control{
-  background: #f0fdf4 !important;
-  border-color: #86efac !important;
-  color: #166534 !important;
+  background: var(--isn-dialog-success-bg) !important;
+  border-color: var(--isn-dialog-success-border) !important;
+  color: var(--isn-dialog-success-text) !important;
 }
 .op-dialog .op-input-bad,
 .op-dialog .op-input-bad .form-control{
-  background: #fff5f5 !important;
-  border-color: #fca5a5 !important;
-  color: #9f1239 !important;
+  background: var(--isn-dialog-danger-bg) !important;
+  border-color: var(--isn-dialog-danger-border) !important;
+  color: var(--isn-dialog-danger-text) !important;
 }
 .op-dialog .op-input-readonly,
 .op-dialog .op-input-readonly .form-control{
-  background: #f8fafc !important;
-  border-color: #cbd5e1 !important;
-  color: #334155 !important;
+  background: var(--isn-dialog-neutral-bg) !important;
+  border-color: var(--isn-dialog-neutral-border) !important;
+  color: var(--isn-dialog-neutral-text) !important;
 }
 
 /* Table headers inside Operator Hub dialogs — consistent teal look */
 .op-dialog .op-table thead tr,
 .op-dialog table.op-table thead tr{
-  background: #e7fbf7;
-  color: #0f766e;
+  background: var(--isn-dialog-primary-soft);
+  color: var(--isn-dialog-title);
 }
 .op-dialog .op-table thead th{
-  border-bottom: 2px solid #b8f1e6;
+  border-bottom: 2px solid var(--isn-dialog-primary-soft-strong);
   font-weight: 700;
   font-size: .82rem;
   text-transform: uppercase;
@@ -658,7 +658,7 @@
   white-space: nowrap;
 }
 .op-dialog .op-table tbody tr:nth-child(even){ background: #fbfdfd; }
-.op-dialog .op-table tbody tr:hover{ background: #f0fdf9; }
+.op-dialog .op-table tbody tr:hover{ background: var(--isn-dialog-primary-soft-hover); }
 
 /* Themed alerts inside dialogs (used by End WO consumption summary) */
 .op-dialog .op-alert{
@@ -669,19 +669,19 @@
   font-weight: 600;
 }
 .op-dialog .op-alert-good{
-  background: #f0fdf4;
-  border-color: #86efac;
-  color: #166534;
+  background: var(--isn-dialog-success-bg);
+  border-color: var(--isn-dialog-success-border);
+  color: var(--isn-dialog-success-text);
 }
 .op-dialog .op-alert-warn{
-  background: #fff3d6;
-  border-color: #fbbf24;
-  color: #78350f;
+  background: var(--isn-dialog-warning-bg);
+  border-color: var(--isn-dialog-warning-border);
+  color: var(--isn-dialog-warning-text);
 }
 .op-dialog .op-alert-bad{
-  background: #fff5f5;
-  border-color: #fca5a5;
-  color: #9f1239;
+  background: var(--isn-dialog-danger-bg);
+  border-color: var(--isn-dialog-danger-border);
+  color: var(--isn-dialog-danger-text);
 }
 
 /* Reduced motion */
