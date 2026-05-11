@@ -317,3 +317,86 @@ def _is_non_empty_row(row):
             continue
         return True
     return False
+
+
+@frappe.whitelist()
+def get_items_for_purchase_receipt(doctype, txt, searchfield, start, page_len, filters=None):
+    """Link field query: return items present in a given Purchase Receipt."""
+    import json
+
+    if isinstance(filters, str):
+        filters = json.loads(filters or "{}")
+    filters = filters or {}
+
+    purchase_receipt = filters.get("purchase_receipt")
+
+    conditions = []
+    params = {"start": int(start or 0), "page_len": int(page_len or 20)}
+
+    if purchase_receipt:
+        conditions.append("pri.parent = %(purchase_receipt)s")
+        params["purchase_receipt"] = purchase_receipt
+
+    if txt:
+        conditions.append("(pri.item_code LIKE %(txt)s OR pri.item_name LIKE %(txt)s)")
+        params["txt"] = f"%{txt}%"
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    return frappe.db.sql(
+        f"""
+        SELECT DISTINCT pri.item_code, pri.item_name
+        FROM `tabPurchase Receipt Item` pri
+        {where}
+        ORDER BY pri.item_code
+        LIMIT %(start)s, %(page_len)s
+        """,
+        params,
+    )
+
+
+@frappe.whitelist()
+def get_batches_for_receiving(doctype, txt, searchfield, start, page_len, filters=None):
+    """Link field query: return batches for a given Purchase Receipt (and optional item)."""
+    import json
+
+    if isinstance(filters, str):
+        filters = json.loads(filters or "{}")
+    filters = filters or {}
+
+    purchase_receipt = filters.get("purchase_receipt")
+    item_code = filters.get("item_code")
+
+    conditions = ["b.disabled = 0"]
+    params = {"start": int(start or 0), "page_len": int(page_len or 20)}
+
+    if purchase_receipt:
+        conditions.append(
+            "EXISTS ("
+            "SELECT 1 FROM `tabPurchase Receipt Item` pri"
+            " WHERE pri.parent = %(purchase_receipt)s"
+            " AND pri.batch_no = b.name"
+            ")"
+        )
+        params["purchase_receipt"] = purchase_receipt
+
+    if item_code:
+        conditions.append("b.item = %(item_code)s")
+        params["item_code"] = item_code
+
+    if txt:
+        conditions.append("b.name LIKE %(txt)s")
+        params["txt"] = f"%{txt}%"
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    return frappe.db.sql(
+        f"""
+        SELECT b.name, b.item
+        FROM `tabBatch` b
+        {where}
+        ORDER BY b.name
+        LIMIT %(start)s, %(page_len)s
+        """,
+        params,
+    )
