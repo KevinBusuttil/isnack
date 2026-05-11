@@ -241,6 +241,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Metal Detector Log": {
         child_table_field: "tests",
         child_label: __("Tests"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -275,6 +276,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Weight Check": {
         child_table_field: "samples",
         child_label: __("Samples"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
