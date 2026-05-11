@@ -118,6 +118,7 @@ QC_DIALOG_CONFIG = {
         "child_table_field": "scores",
         "child_doctype": "QC Tasting Score",
     },
+    "QC Packaging Check": {},
     "QC Metal Detector Log": {
         "child_table_field": "tests",
         "child_doctype": "QC Metal Detector Test",

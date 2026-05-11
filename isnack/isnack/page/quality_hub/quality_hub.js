@@ -177,6 +177,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Tasting Record": {
         child_table_field: "scores",
         child_label: __("Scores"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -205,6 +206,36 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "texture_score", fieldtype: "Rating", label: __("Texture") },
             { fieldname: "overall_score", fieldtype: "Rating", label: __("Overall") },
             { fieldname: "comments", fieldtype: "Small Text", label: __("Comments") },
+        ],
+    },
+    "QC Packaging Check": {
+        parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
+            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
+            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
+            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
+            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Packaging Material & Checks ─────────────────────────
+            { fieldname: "sb_packaging", fieldtype: "Section Break", label: __("Packaging Material & Checks") },
+            { fieldname: "film_type", fieldtype: "Data", label: __("Film Type") },
+            { fieldname: "film_batch", fieldtype: "Data", label: __("Film Batch") },
+            { fieldname: "print_quality_ok", fieldtype: "Check", label: __("Print Quality OK") },
+            { fieldname: "seal_integrity_ok", fieldtype: "Check", label: __("Seal Integrity OK") },
+            { fieldname: "cb_packaging", fieldtype: "Column Break" },
+            { fieldname: "label_correct", fieldtype: "Check", label: __("Label Correct") },
+            { fieldname: "artwork_matches", fieldtype: "Check", label: __("Artwork Matches") },
+            // ── Section: Usage & Outcome ─────────────────────────────────────
+            { fieldname: "sb_usage", fieldtype: "Section Break", label: __("Usage & Outcome") },
+            { fieldname: "qty_issued", fieldtype: "Float", label: __("Qty Issued") },
+            { fieldname: "qty_used", fieldtype: "Float", label: __("Qty Used") },
+            { fieldname: "qty_wasted", fieldtype: "Float", label: __("Qty Wasted") },
+            { fieldname: "qty_returned", fieldtype: "Float", label: __("Qty Returned") },
+            { fieldname: "cb_usage", fieldtype: "Column Break" },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
     },
     "QC Metal Detector Log": {
