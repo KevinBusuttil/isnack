@@ -584,7 +584,7 @@ isnack.quality_hub.QualityHub = class {
             if (config.child_table_field === "readings") {
                 fields.push({
                     fieldtype: "Section Break",
-                    fieldname: "sb_readings",
+                    fieldname: "section_break_readings",
                     label: config.child_label,
                 });
             }
