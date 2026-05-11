@@ -43,6 +43,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Puffs Extruder Record": {
         child_table_field: "readings",
         child_label: __("Readings"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -76,6 +77,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Rice Extruder Record": {
         child_table_field: "readings",
         child_label: __("Readings"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -109,6 +111,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Frying Line Record": {
         child_table_field: "readings",
         child_label: __("Readings"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -141,6 +144,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Oven Record": {
         child_table_field: "readings",
         child_label: __("Readings"),
+        child_in_dedicated_section: true,
         min_rows: 1,
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
@@ -581,10 +585,10 @@ isnack.quality_hub.QualityHub = class {
         const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
         const fields = [...config.parent_fields];
         if (has_child_table) {
-            if (config.child_table_field === "readings") {
+            if (config.child_in_dedicated_section) {
                 fields.push({
                     fieldtype: "Section Break",
-                    fieldname: "section_break_readings",
+                    fieldname: "section_break_child_editor",
                     label: config.child_label,
                 });
             }
