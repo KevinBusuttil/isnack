@@ -581,6 +581,13 @@ isnack.quality_hub.QualityHub = class {
         const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
         const fields = [...config.parent_fields];
         if (has_child_table) {
+            if (config.child_table_field === "readings") {
+                fields.push({
+                    fieldtype: "Section Break",
+                    fieldname: "sb_readings",
+                    label: config.child_label,
+                });
+            }
             fields.push({
                 fieldtype: "HTML",
                 fieldname: "child_table_editor",
