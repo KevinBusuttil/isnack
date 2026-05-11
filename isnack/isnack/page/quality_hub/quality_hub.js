@@ -521,15 +521,15 @@ isnack.quality_hub.QualityHub = class {
                     <div class="qh-panel">
                         <div class="qh-panel-title" style="margin-bottom:0.75rem">${__("Quick Links")}</div>
                         <div class="qh-quick-links">
-                            <a class="btn btn-sm btn-default qh-ql-blue" href="#List/QC Receiving Record">${__("Receiving Records")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Puffs Extruder Record">${__("Puffs Extruder")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Rice Extruder Record">${__("Rice Extruder")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Frying Line Record">${__("Frying Line")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-green" href="#List/QC Oven Record">${__("Oven Records")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-violet" href="#List/QC Tasting Record">${__("Tasting Records")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-teal" href="#List/QC Packaging Check">${__("Packaging Checks")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-amber" href="#List/QC Metal Detector Log">${__("Metal Detector Logs")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-teal" href="#List/QC Weight Check">${__("Weight Checks")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-blue qh-quick-link" href="#" data-doctype="QC Receiving Record">${__("Receiving Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Puffs Extruder Record">${__("Puffs Extruder")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Rice Extruder Record">${__("Rice Extruder")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Frying Line Record">${__("Frying Line")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Oven Record">${__("Oven Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-violet qh-quick-link" href="#" data-doctype="QC Tasting Record">${__("Tasting Records")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Packaging Check">${__("Packaging Checks")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="QC Metal Detector Log">${__("Metal Detector Logs")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Weight Check">${__("Weight Checks")}</a>
                         </div>
                     </div>
                 </div>
@@ -580,6 +580,15 @@ isnack.quality_hub.QualityHub = class {
         this.$container.on("click", ".qh-new-record", (e) => {
             const doctype = $(e.currentTarget).data("doctype");
             this.open_new_record(doctype);
+        });
+
+        // Quick links
+        this.$container.on("click", ".qh-quick-link", (e) => {
+            e.preventDefault();
+            const doctype = $(e.currentTarget).data("doctype");
+            if (doctype) {
+                frappe.set_route("List", doctype);
+            }
         });
 
         // Filter apply
