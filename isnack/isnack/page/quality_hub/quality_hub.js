@@ -3,27 +3,39 @@ frappe.provide("isnack.quality_hub");
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Receiving Record": {
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Supplier & Item ─────────────────────────────────────
+            { fieldname: "sb_supply", fieldtype: "Section Break", label: __("Supplier & Item") },
             { fieldname: "supplier", fieldtype: "Link", label: __("Supplier"), options: "Supplier" },
             { fieldname: "purchase_receipt", fieldtype: "Link", label: __("Purchase Receipt"), options: "Purchase Receipt" },
+            { fieldname: "cb_supply", fieldtype: "Column Break" },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item", reqd: 1 },
             { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
             { fieldname: "qty_received", fieldtype: "Float", label: __("Qty Received") },
+            // ── Section: Quality Checks ──────────────────────────────────────
+            { fieldname: "sb_quality", fieldtype: "Section Break", label: __("Quality Checks") },
             { fieldname: "packaging_intact", fieldtype: "Check", label: __("Packaging Intact") },
             { fieldname: "labelling_correct", fieldtype: "Check", label: __("Labelling Correct") },
             { fieldname: "foreign_body_check", fieldtype: "Check", label: __("Foreign Body Check") },
             { fieldname: "colour_acceptable", fieldtype: "Check", label: __("Colour Acceptable") },
+            { fieldname: "cb_quality", fieldtype: "Column Break" },
             { fieldname: "arrival_temperature", fieldtype: "Float", label: __("Arrival Temperature (°C)") },
             { fieldname: "acceptable_range_min", fieldtype: "Float", label: __("Acceptable Range Min (°C)") },
             { fieldname: "acceptable_range_max", fieldtype: "Float", label: __("Acceptable Range Max (°C)") },
+            // ── Section: Documentation & Outcome ────────────────────────────
+            { fieldname: "sb_docs", fieldtype: "Section Break", label: __("Documentation & Outcome") },
             { fieldname: "coa_received", fieldtype: "Check", label: __("COA Received") },
             { fieldname: "coa_acceptable", fieldtype: "Check", label: __("COA Acceptable") },
             { fieldname: "spec_sheet_matches", fieldtype: "Check", label: __("Spec Sheet Matches") },
+            { fieldname: "cb_docs", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nAccepted\nConditionally Accepted\nRejected" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -552,17 +564,70 @@ isnack.quality_hub.QualityHub = class {
     setup_dialog_specific_behaviour(dialog, doctype) {
         if (doctype !== "QC Receiving Record") return;
 
-        dialog.set_query("batch_no", () => ({
-            filters: { item: dialog.get_value("item_code") },
-        }));
+        // Filter purchase_receipt by selected supplier
+        dialog.set_query("purchase_receipt", () => {
+            const supplier = dialog.get_value("supplier");
+            const filters = { docstatus: 1 };
+            if (supplier) filters.supplier = supplier;
+            return { filters };
+        });
 
+        // Filter item_code to items contained in the selected purchase receipt
+        dialog.set_query("item_code", () => {
+            const purchase_receipt = dialog.get_value("purchase_receipt");
+            if (!purchase_receipt) return {};
+            return {
+                query: "isnack.isnack.page.quality_hub.quality_hub.get_items_for_purchase_receipt",
+                filters: { purchase_receipt },
+            };
+        });
+
+        // Filter batch_no by selected item (and purchase receipt when available)
+        dialog.set_query("batch_no", () => {
+            const purchase_receipt = dialog.get_value("purchase_receipt");
+            const item_code = dialog.get_value("item_code");
+            if (purchase_receipt) {
+                return {
+                    query: "isnack.isnack.page.quality_hub.quality_hub.get_batches_for_receiving",
+                    filters: { purchase_receipt, item_code: item_code || "" },
+                };
+            }
+            const filters = {};
+            if (item_code) filters.item = item_code;
+            return { filters };
+        });
+
+        // When supplier changes: clear purchase_receipt, item_code, batch_no
+        const supplier_field = dialog.get_field("supplier");
+        if (supplier_field && supplier_field.df) {
+            const orig = supplier_field.df.onchange;
+            supplier_field.df.onchange = (...args) => {
+                const result = orig ? orig.apply(supplier_field, args) : undefined;
+                dialog.set_value("purchase_receipt", "");
+                dialog.set_value("item_code", "");
+                dialog.set_value("batch_no", "");
+                return result;
+            };
+        }
+
+        // When purchase_receipt changes: clear item_code and batch_no
+        const pr_field = dialog.get_field("purchase_receipt");
+        if (pr_field && pr_field.df) {
+            const orig = pr_field.df.onchange;
+            pr_field.df.onchange = (...args) => {
+                const result = orig ? orig.apply(pr_field, args) : undefined;
+                dialog.set_value("item_code", "");
+                dialog.set_value("batch_no", "");
+                return result;
+            };
+        }
+
+        // When item_code changes: clear batch_no
         const item_field = dialog.get_field("item_code");
         if (item_field && item_field.df) {
-            const existing_onchange = item_field.df.onchange;
+            const orig = item_field.df.onchange;
             item_field.df.onchange = (...args) => {
-                const result = existing_onchange
-                    ? existing_onchange.apply(item_field, args)
-                    : undefined;
+                const result = orig ? orig.apply(item_field, args) : undefined;
                 dialog.set_value("batch_no", "");
                 return result;
             };
