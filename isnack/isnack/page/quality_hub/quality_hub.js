@@ -45,13 +45,19 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Outcome ───────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -72,13 +78,19 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Outcome ───────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -99,13 +111,19 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Outcome ───────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -125,13 +143,19 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Outcome ───────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -151,14 +175,20 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Scores"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Scoring ───────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Scoring") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
             { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "pass_threshold", fieldtype: "Float", label: __("Pass Threshold"), default: 3.0 },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -178,18 +208,24 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Tests"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Equipment ───────────────────────────────────────────
+            { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
             { fieldname: "metal_detector_id", fieldtype: "Data", label: __("Metal Detector ID") },
             { fieldname: "detector_make_model", fieldtype: "Data", label: __("Make/Model") },
-            { fieldname: "corrective_action", fieldtype: "Small Text", label: __("Corrective Action") },
             { fieldname: "last_calibration_date", fieldtype: "Date", label: __("Last Calibration Date") },
             { fieldname: "next_calibration_date", fieldtype: "Date", label: __("Next Calibration Date") },
+            { fieldname: "cb_equipment", fieldtype: "Column Break" },
             { fieldname: "calibration_certificate", fieldtype: "Attach", label: __("Calibration Certificate") },
+            { fieldname: "corrective_action", fieldtype: "Small Text", label: __("Corrective Action") },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
         child_fields: [
@@ -206,18 +242,27 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Samples"),
         min_rows: 1,
         parent_fields: [
+            // ── Section: Record Details ──────────────────────────────────────
+            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
+            { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            // ── Section: Product & Limits ────────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Limits") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
             { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
             { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)") },
+            { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "tu1_limit", fieldtype: "Float", label: __("TU1 Limit (g)") },
             { fieldname: "tu2_limit", fieldtype: "Float", label: __("TU2 Limit (g)") },
+            // ── Section: Outcome ─────────────────────────────────────────────
+            { fieldname: "sb_outcome", fieldtype: "Section Break", label: __("Outcome") },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
+            { fieldname: "cb_outcome", fieldtype: "Column Break" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
         child_fields: [
