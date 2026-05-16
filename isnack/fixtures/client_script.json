@@ -31,5 +31,16 @@
   "name": "Default PO Incoterm",
   "script": "frappe.ui.form.on('Purchase Order', {\n  supplier(frm) {\n    if (!frm.doc.supplier) return;\n    frappe.db.get_value('Supplier',\n      frm.doc.supplier,\n      'custom_default_incoterm',\n      (r) => {\n        if (r.custom_default_incoterm) {\n          frm.set_value('incoterm', r.custom_default_incoterm);\n        }\n        else {\n          frm.set_value('incoterm', '');\n        }\n        \n      }\n    );\n  }\n});\n",
   "view": "Form"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Item",
+  "enabled": 1,
+  "modified": "2026-05-16 18:05:00.000000",
+  "module": "Isnack",
+  "name": "Item Weight Per Unit Sync",
+  "script": "frappe.ui.form.on(\"Item\", {\n\tcustom_net_weight_per_unit: update_weight_per_unit,\n\tcustom_tare_weight_per_unit: update_weight_per_unit,\n\tvalidate: update_weight_per_unit\n});\n\nfunction update_weight_per_unit(frm) {\n\tconst net_weight = flt(frm.doc.custom_net_weight_per_unit);\n\tconst tare_weight = flt(frm.doc.custom_tare_weight_per_unit);\n\tconst total_weight = net_weight + tare_weight;\n\n\tif (flt(frm.doc.weight_per_unit) !== total_weight) {\n\t\tfrm.set_value(\"weight_per_unit\", total_weight);\n\t}\n}\n",
+  "view": "Form"
  }
 ]
