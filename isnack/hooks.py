@@ -157,6 +157,9 @@ doc_events = {
     "Batch": {
         "validate": "isnack.overrides.batch.validate_batch_spaces",
     },
+    "Item": {
+        "validate": "isnack.overrides.item.sync_weight_per_unit",
+    },
 }
 
 # doc_events = {
