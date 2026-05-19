@@ -1579,7 +1579,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       if (!row.has_batch_no) return false;
       // Item requires batch but has neither single batch nor multi-batch assigned
       const has_batches = row.batches && row.batches.length > 0;
-      const has_single_batch = row.batch_no && row.batch_no.trim();
+      const has_single_batch = row.batch_no && String(row.batch_no).trim();
       return !has_batches && !has_single_batch;
     });
     
