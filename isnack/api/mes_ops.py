@@ -3128,7 +3128,10 @@ def list_label_records(work_order: str):
     if not frappe.db.exists("DocType", "Label Record"):
         return []
 
-    # Query via child table to find labels linked to ANY of the work orders
+    # Query via child table to find labels linked to ANY of the work orders.
+    # Source rows tagged 'combined-into:%' represent labels that were merged
+    # into an aggregate record; skip them so operators can't re-select an
+    # already-consumed original (which would double-count its quantity).
     records = frappe.db.sql("""
         SELECT DISTINCT
             lr.name,
@@ -3142,6 +3145,9 @@ def list_label_records(work_order: str):
         INNER JOIN `tabLabel Record Source` lrs ON lrs.parent = lr.name
         WHERE lrs.source_doctype = 'Work Order'
             AND lrs.source_docname = %(work_order)s
+            AND (lrs.source_status IS NULL
+                 OR lrs.source_status = ''
+                 OR lrs.source_status NOT LIKE 'combined-into:%%')
         ORDER BY lr.creation DESC
         LIMIT 20
     """, {"work_order": work_order}, as_dict=True)
@@ -3373,11 +3379,26 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
             combined.append("sources", {
                 "source_doctype": src.source_doctype,
                 "source_docname": src.source_docname,
-                "source_status": getattr(src, "source_status", None),
             })
 
     combined.flags.ignore_permissions = True
     combined.insert()
+
+    # Mark every source row on the inputs as consumed by this combine so they
+    # stop appearing in Label History — otherwise an operator could pick an
+    # original plus the aggregate and double-count the original's quantity.
+    consumed_marker = f"combined-into:{combined.name}"
+    for rec in records:
+        for src in (rec.sources or []):
+            if not src.name:
+                continue
+            frappe.db.set_value(
+                "Label Record Source",
+                src.name,
+                "source_status",
+                consumed_marker,
+                update_modified=False,
+            )
 
     fs = _fs()
     target_printer = printer or getattr(fs, "default_label_printer", None)
@@ -3385,6 +3406,19 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
     first_source = combined.sources[0] if combined.sources else None
     source_doctype = first_source.source_doctype if first_source else None
     source_docname = first_source.source_docname if first_source else None
+
+    # Detect label flavor from the inputs' payload so we pass the same quantity
+    # query parameter the originating print path used (carton_qty vs pallet_qty),
+    # which is the only quantity the print format actually receives.
+    is_pallet_label = False
+    pallet_type = None
+    try:
+        first_payload = json.loads(first.payload) if first.payload else {}
+        if isinstance(first_payload, dict) and first_payload.get("pallet_type"):
+            is_pallet_label = True
+            pallet_type = first_payload.get("pallet_type")
+    except (TypeError, ValueError):
+        pass
 
     jobs = []
     print_urls = []
@@ -3398,11 +3432,16 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
         ))
 
     if source_doctype and source_docname:
-        print_urls.append(_generate_print_url(
+        url = _generate_print_url(
             source_doctype,
             source_docname,
             combined.label_template,
-        ))
+        )
+        if is_pallet_label:
+            url = f"{url}&pallet_qty={total_qty}&pallet_type={frappe.utils.quote(pallet_type or '')}"
+        else:
+            url = f"{url}&carton_qty={total_qty}"
+        print_urls.append(url)
 
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
 
