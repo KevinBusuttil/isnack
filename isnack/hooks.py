@@ -14,6 +14,7 @@ app_include_css = "/assets/isnack/css/isnack.css"
 app_include_js = [
     "/assets/isnack/js/isnack.js",
     "/assets/isnack/js/trial_balance.js",
+    "/assets/isnack/js/manual_line_pricing.js",
 ]
 
 # include js, css files in header of web template
@@ -33,6 +34,7 @@ web_include_css = "/assets/isnack/css/isnack-web.css"
 # include js in doctype views
 doctype_js = {
     "Sales Order" : "public/js/sales_order_proforma.js",
+    "Quotation": "public/js/quotation.js",
     "Purchase Order": "public/js/purchase_order.js",
     "Customer": "public/js/customer.js",
     "Supplier": "public/js/supplier.js",
