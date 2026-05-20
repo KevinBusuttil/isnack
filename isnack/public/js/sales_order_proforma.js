@@ -70,6 +70,27 @@ frappe.ui.form.on("Sales Order Item", {
 
             isnack_apply_manual_line_discount(frm, cdt, cdn, false);
         });
+    },
+
+    price_list_rate(frm, cdt, cdn) {
+        // ERPNext triggers this event after get_item_details / the item price
+        // lookup has populated the standard price_list_rate. Initialise the
+        // manual price list rate from it when the user has not set one yet,
+        // then let the user proceed with the normal manual flow.
+        const row = locals[cdt] && locals[cdt][cdn];
+        if (!row) {
+            return;
+        }
+
+        if (flt(row.price_list_rate) && !flt(row.custom_manual_price_list_rate)) {
+            row.custom_manual_price_list_rate = flt(
+                row.price_list_rate,
+                precision("custom_manual_price_list_rate", row)
+            );
+            frm.refresh_field("items");
+        }
+
+        isnack_apply_manual_line_discount(frm, cdt, cdn, false);
     }
 });
 
