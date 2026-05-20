@@ -332,7 +332,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const posting_date = frappe.ui.form.make_control({
     df: {
       fieldtype: 'Date',
-      label: 'Prod. Plan Posting Date',
+      label: 'WO Planned Start Date',
       fieldname: 'posting_date'
     },
     parent: $filters.find('.pallet-id'),   // reuse the same slot in the toolbar
