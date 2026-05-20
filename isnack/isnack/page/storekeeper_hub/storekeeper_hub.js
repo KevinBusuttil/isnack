@@ -1361,7 +1361,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             let total_assigned = 0;
 
             d.$wrapper.find('#batch-selection-table .batch-row').each(function() {
-              const batch_no = $(this).data('batch');
+              // Use attr() not data(): jQuery's .data() coerces a purely
+              // numeric batch code into a Number, which later breaks .trim().
+              const batch_no = $(this).attr('data-batch');
               const qty_input = $(this).find('.batch-qty-input');
               const qty = parseFloat(qty_input.val() || 0);
               
