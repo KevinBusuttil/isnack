@@ -3128,7 +3128,10 @@ def list_label_records(work_order: str):
     if not frappe.db.exists("DocType", "Label Record"):
         return []
 
-    # Query via child table to find labels linked to ANY of the work orders
+    # Query via child table to find labels linked to ANY of the work orders.
+    # Source rows tagged 'combined-into:%' represent labels that were merged
+    # into an aggregate record; skip them so operators can't re-select an
+    # already-consumed original (which would double-count its quantity).
     records = frappe.db.sql("""
         SELECT DISTINCT
             lr.name,
@@ -3142,6 +3145,9 @@ def list_label_records(work_order: str):
         INNER JOIN `tabLabel Record Source` lrs ON lrs.parent = lr.name
         WHERE lrs.source_doctype = 'Work Order'
             AND lrs.source_docname = %(work_order)s
+            AND (lrs.source_status IS NULL
+                 OR lrs.source_status = ''
+                 OR lrs.source_status NOT LIKE 'combined-into:%%')
         ORDER BY lr.creation DESC
         LIMIT 20
     """, {"work_order": work_order}, as_dict=True)
@@ -3273,6 +3279,185 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
         "enable_silent_printing": enable_silent_printing,
         "printer_name": target_printer
     }
+
+
+@frappe.whitelist()
+def combine_label_records(label_records, reason_code: Optional[str] = None, printer: Optional[str] = None):
+    """
+    Combine two or more Label Records into a single aggregated Label Record and
+    return a print URL for the merged label. Mirrors the Split flow in reverse:
+    Split keeps one record and prints N copies; Combine takes N records and
+    produces one new record with the summed quantity.
+
+    All input records must share the same item_code, label_template and batch_no.
+    The new record's `sources` child table is the deduplicated union of the
+    inputs' sources, so the combined label appears in Label History for every
+    Work Order that fed into it.
+
+    Args:
+        label_records: List (or JSON string) of Label Record names to combine.
+        reason_code:   Audit reason recorded on the new Label Print Job
+                       (defaults to 'combine').
+        printer:       Optional printer override for the Print Job audit row.
+
+    Returns:
+        dict with the same shape as print_label_record so the client can reuse
+        its print-handling code: label_record, jobs, print_urls, doctype,
+        docname, print_format, enable_silent_printing, printer_name, and the
+        list of combined source record names.
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    if not frappe.db.exists("DocType", "Label Record"):
+        frappe.throw(_("Label Record is not enabled."))
+
+    raw_names = label_records
+    if isinstance(raw_names, str):
+        raw_names = json.loads(raw_names)
+    if not isinstance(raw_names, (list, tuple)):
+        frappe.throw(_("label_records must be a list of Label Record names."))
+
+    # Preserve order while removing duplicates
+    seen = set()
+    names = []
+    for n in raw_names:
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        names.append(n)
+
+    if len(names) < 2:
+        frappe.throw(_("Select at least two Label Records to combine."))
+
+    records = [frappe.get_doc("Label Record", n) for n in names]
+
+    first = records[0]
+    for rec in records[1:]:
+        if (rec.item_code or "") != (first.item_code or ""):
+            frappe.throw(_("All selected labels must be for the same Item (got {0} and {1}).")
+                         .format(first.item_code, rec.item_code))
+        if (rec.label_template or "") != (first.label_template or ""):
+            frappe.throw(_("All selected labels must use the same Label Template (got {0} and {1}).")
+                         .format(first.label_template, rec.label_template))
+        if (rec.batch_no or "") != (first.batch_no or ""):
+            frappe.throw(_("All selected labels must share the same Batch (got {0} and {1}).")
+                         .format(first.batch_no or "-", rec.batch_no or "-"))
+
+    total_qty = sum(flt(rec.quantity) for rec in records)
+    if total_qty <= 0:
+        frappe.throw(_("Combined quantity must be greater than zero."))
+
+    is_print_format = frappe.db.exists("Print Format", first.label_template)
+
+    combined = frappe.new_doc("Label Record")
+    combined.label_template = first.label_template
+    combined.template_engine = first.template_engine or ("Jinja" if is_print_format else "Template")
+
+    payload_info = {
+        "combined_from": names,
+        "original_quantities": [flt(rec.quantity) for rec in records],
+        "reason_code": reason_code or "combine",
+    }
+    combined.payload = json.dumps(payload_info)
+    combined.payload_hash = hashlib.sha256(
+        f"combine_{first.label_template}_{first.item_code}_{first.batch_no or ''}_{total_qty}_{'|'.join(names)}".encode("utf-8")
+    ).hexdigest()
+
+    combined.quantity = total_qty
+    combined.item_code = first.item_code
+    combined.item_name = first.item_name
+    combined.batch_no = first.batch_no
+
+    # Union the source documents from every input record, preserving order
+    seen_sources = set()
+    for rec in records:
+        for src in (rec.sources or []):
+            key = (src.source_doctype, src.source_docname)
+            if not src.source_doctype or not src.source_docname or key in seen_sources:
+                continue
+            seen_sources.add(key)
+            combined.append("sources", {
+                "source_doctype": src.source_doctype,
+                "source_docname": src.source_docname,
+            })
+
+    combined.flags.ignore_permissions = True
+    combined.insert()
+
+    # Mark every source row on the inputs as consumed by this combine so they
+    # stop appearing in Label History — otherwise an operator could pick an
+    # original plus the aggregate and double-count the original's quantity.
+    consumed_marker = f"combined-into:{combined.name}"
+    for rec in records:
+        for src in (rec.sources or []):
+            if not src.name:
+                continue
+            frappe.db.set_value(
+                "Label Record Source",
+                src.name,
+                "source_status",
+                consumed_marker,
+                update_modified=False,
+            )
+
+    fs = _fs()
+    target_printer = printer or getattr(fs, "default_label_printer", None)
+
+    first_source = combined.sources[0] if combined.sources else None
+    source_doctype = first_source.source_doctype if first_source else None
+    source_docname = first_source.source_docname if first_source else None
+
+    # Detect label flavor from the inputs' payload so we pass the same quantity
+    # query parameter the originating print path used (carton_qty vs pallet_qty),
+    # which is the only quantity the print format actually receives.
+    is_pallet_label = False
+    pallet_type = None
+    try:
+        first_payload = json.loads(first.payload) if first.payload else {}
+        if isinstance(first_payload, dict) and first_payload.get("pallet_type"):
+            is_pallet_label = True
+            pallet_type = first_payload.get("pallet_type")
+    except (TypeError, ValueError):
+        pass
+
+    jobs = []
+    print_urls = []
+
+    if target_printer:
+        jobs.append(_create_label_print_job(
+            combined,
+            target_printer,
+            total_qty,
+            reason_code=reason_code or "combine",
+        ))
+
+    if source_doctype and source_docname:
+        url = _generate_print_url(
+            source_doctype,
+            source_docname,
+            combined.label_template,
+        )
+        if is_pallet_label:
+            url = f"{url}&pallet_qty={total_qty}&pallet_type={frappe.utils.quote(pallet_type or '')}"
+        else:
+            url = f"{url}&carton_qty={total_qty}"
+        print_urls.append(url)
+
+    enable_silent_printing = getattr(fs, "enable_silent_printing", False)
+
+    return {
+        "label_record": combined.name,
+        "combined_from": names,
+        "combined_quantity": total_qty,
+        "jobs": [job.name for job in jobs if job],
+        "print_urls": print_urls,
+        "doctype": source_doctype,
+        "docname": source_docname,
+        "print_format": combined.label_template,
+        "enable_silent_printing": enable_silent_printing,
+        "printer_name": target_printer,
+    }
+
 
 # ============================================================
 # Small helpers used by UI (replace client get_list)

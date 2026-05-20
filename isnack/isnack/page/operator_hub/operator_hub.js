@@ -1649,36 +1649,53 @@ function init_operator_hub($root) {
     const $box = d.fields_dict.labels_html.$wrapper;
     $box.html('<div class="text-muted">Loading labels…</div>');
 
-    try {
+    const rowsByName = new Map();
+
+    async function reloadHistory() {
+      $box.html('<div class="text-muted">Loading labels…</div>');
       const resp = await rpc('isnack.api.mes_ops.list_label_records', { work_order: state.current_wo });
       const rows = (resp && resp.message) || [];
+      rowsByName.clear();
+      rows.forEach((row) => rowsByName.set(row.name, row));
+
       if (!rows.length) {
         $box.html('<div class="text-muted">No labels recorded for this Work Order yet.</div>');
         return;
       }
 
-      const table = $(`
-        <div class="table-responsive">
-          <table class="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>Label</th>
-                <th>Qty</th>
-                <th>Item</th>
-                <th>Batch</th>
-                <th>Template</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      const container = $(`
+        <div>
+          <div class="d-flex align-items-center mb-2 lr-toolbar">
+            <button class="btn btn-sm btn-primary" data-action="combine" disabled>Combine Selected (0)</button>
+            <span class="text-muted small ms-2">Tick two or more rows that share Item, Batch and Template.</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th style="width:30px;"><input type="checkbox" data-action="select-all" /></th>
+                  <th>Label</th>
+                  <th>Qty</th>
+                  <th>Item</th>
+                  <th>Batch</th>
+                  <th>Template</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       `);
-      const $tbody = table.find('tbody');
+      const $tbody = container.find('tbody');
+      const $combineBtn = container.find('button[data-action="combine"]');
+      const $selectAll = container.find('input[data-action="select-all"]');
+
       rows.forEach((row) => {
         const $tr = $(`
           <tr>
+            <td><input type="checkbox" data-action="select-row" /></td>
             <td>${frappe.utils.escape_html(row.name)}</td>
             <td>${row.quantity ?? ''}</td>
             <td>${frappe.utils.escape_html(row.item_code || '')}</td>
@@ -1694,7 +1711,98 @@ function init_operator_hub($root) {
         $tr.data('row', row);
         $tbody.append($tr);
       });
-      $box.html(table);
+      $box.html(container);
+
+      function getSelectedRows() {
+        return $tbody.find('input[data-action="select-row"]:checked')
+          .map((_, el) => $(el).closest('tr').data('row'))
+          .get();
+      }
+
+      function refreshCombineState() {
+        const selected = getSelectedRows();
+        $combineBtn.text(`Combine Selected (${selected.length})`);
+        $combineBtn.prop('disabled', selected.length < 2);
+        const total = $tbody.find('input[data-action="select-row"]').length;
+        $selectAll.prop('checked', total > 0 && selected.length === total);
+      }
+
+      $tbody.on('change', 'input[data-action="select-row"]', refreshCombineState);
+      $selectAll.on('change', (e) => {
+        const checked = e.currentTarget.checked;
+        $tbody.find('input[data-action="select-row"]').prop('checked', checked);
+        refreshCombineState();
+      });
+
+      $combineBtn.on('click', async () => {
+        const selected = getSelectedRows();
+        if (selected.length < 2) return;
+
+        // Client-side guard so we surface mismatch errors before the RPC round-trip.
+        const first = selected[0];
+        const mismatch = selected.find(r =>
+          (r.item_code || '') !== (first.item_code || '') ||
+          (r.batch_no || '') !== (first.batch_no || '') ||
+          (r.label_template || '') !== (first.label_template || '')
+        );
+        if (mismatch) {
+          frappe.msgprint('Selected labels must share the same Item, Batch and Template.');
+          return;
+        }
+
+        const totalQty = selected.reduce((acc, r) => acc + (parseFloat(r.quantity) || 0), 0);
+        const namesHtml = selected
+          .map(r => `<li>${frappe.utils.escape_html(r.name)} — qty ${r.quantity ?? 0}</li>`)
+          .join('');
+
+        const combineDialog = opDialog({
+          title: `Combine ${selected.length} Labels`,
+          fields: [
+            { fieldtype: 'HTML', fieldname: 'preview',
+              options: `<div class="small">
+                          <div><b>Item:</b> ${frappe.utils.escape_html(first.item_code || '')}</div>
+                          <div><b>Batch:</b> ${frappe.utils.escape_html(first.batch_no || '-')}</div>
+                          <div><b>Template:</b> ${frappe.utils.escape_html(first.label_template || '')}</div>
+                          <div><b>Combined Qty:</b> ${totalQty}</div>
+                          <div class="mt-2"><b>Sources:</b><ul class="mb-0">${namesHtml}</ul></div>
+                        </div>` },
+            { label: 'Reason', fieldname: 'reason', fieldtype: 'Data', default: 'combine' }
+          ],
+          primary_action_label: 'Combine & Print',
+          primary_action: async (v) => {
+            setStatus('Combining labels…');
+            const result = await rpc('isnack.api.mes_ops.combine_label_records', {
+              label_records: selected.map(r => r.name),
+              reason_code: v.reason || 'combine'
+            });
+            combineDialog.hide();
+            const msg = result && result.message;
+            if (msg && msg.print_urls && msg.print_urls.length > 0) {
+              const enableSilent = msg.enable_silent_printing;
+              const printerName = msg.printer_name;
+              for (let idx = 0; idx < msg.print_urls.length; idx++) {
+                const url = msg.print_urls[idx];
+                if (idx > 0) {
+                  await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
+                }
+                await handleLabelPrint(url, enableSilent, printerName, `${msg.label_record} combined ${idx + 1}`);
+              }
+              const action = enableSilent ? 'sent to printer' : 'dialog(s) opened';
+              frappe.show_alert({
+                message: `Combined label ${msg.label_record} (${msg.combined_quantity}) ${action}`,
+                indicator: 'green'
+              });
+            } else if (msg && msg.label_record) {
+              frappe.show_alert({
+                message: `Combined label ${msg.label_record} created (no printer configured).`,
+                indicator: 'orange'
+              });
+            }
+            await reloadHistory();
+          }
+        });
+        combineDialog.show();
+      });
 
       $tbody.on('click', 'button[data-action]', async (e) => {
         const $btn = $(e.currentTarget);
@@ -1789,6 +1897,10 @@ function init_operator_hub($root) {
           splitDialog.show();
         }
       });
+    }
+
+    try {
+      await reloadHistory();
     } catch (e) {
       console.error(e);
       $box.html('<div class="text-danger">Failed to load label history.</div>');
@@ -1805,7 +1917,7 @@ function init_operator_hub($root) {
     await showPrintLabelDialog();
   });
 
-  // Label History — list, reprint, and split labels tied to current Work Order
+  // Label History — list, reprint, split, and combine labels tied to current Work Order
   $('#btn-label-history',$root).on('click', async () => {
     if (!state.current_wo || !state.current_emp || !state.current_is_fg) return;
     await showLabelHistoryDialog();
