@@ -278,7 +278,7 @@ def _filter_wos_by_factory_line(wos, factory_line):
 @frappe.whitelist()
 def get_queue(factory_line: str | None = None, posting_date: str | None = None):
     """Work Orders Not Started/In Process; normalized for UI; optional filter by Factory Section
-    (WO field or BOM default) and Production Plan posting_date.
+    (WO field or BOM default) and Work Order planned_start_date.
     """
     factory_line = _normalize_factory_line(factory_line)
     filters = {"status": ["in", ["Not Started", "In Process"]]}
@@ -286,17 +286,16 @@ def get_queue(factory_line: str | None = None, posting_date: str | None = None):
     if company:
         filters["company"] = company
 
-    # NEW: filter WOs by Production Plan posting_date, if provided
+    # Filter WOs by Work Order planned_start_date, if provided
     if posting_date:
-        pp_names = frappe.get_all(
-            "Production Plan",
-            filters={"posting_date": posting_date},
-            pluck="name",
-        )
-        if not pp_names:
-            # No Production Plans on that date => no WOs to return
-            return []
-        filters["production_plan"] = ["in", pp_names]
+        planned_date = getdate(posting_date)
+        filters["planned_start_date"] = [
+            "between",
+            [
+                f"{planned_date} 00:00:00",
+                f"{planned_date} 23:59:59",
+            ],
+        ]
 
     wos = frappe.get_all(
         "Work Order",
@@ -344,7 +343,7 @@ def get_queue(factory_line: str | None = None, posting_date: str | None = None):
 @frappe.whitelist()
 def get_buckets(factory_line: str | None = None, posting_date: str | None = None):
     """Group open WOs by BOM (same-BOM bucket), optionally filtered by Factory Section and
-    Production Plan posting_date.
+    Work Order planned_start_date.
     """
     factory_line = _normalize_factory_line(factory_line)
     filters = {"status": ["in", ["Not Started", "In Process"]]}
@@ -352,16 +351,16 @@ def get_buckets(factory_line: str | None = None, posting_date: str | None = None
     if company:
         filters["company"] = company
 
-    # NEW: filter WOs by Production Plan posting_date, if provided
+    # Filter WOs by Work Order planned_start_date, if provided
     if posting_date:
-        pp_names = frappe.get_all(
-            "Production Plan",
-            filters={"posting_date": posting_date},
-            pluck="name",
-        )
-        if not pp_names:
-            return []
-        filters["production_plan"] = ["in", pp_names]
+        planned_date = getdate(posting_date)
+        filters["planned_start_date"] = [
+            "between",
+            [
+                f"{planned_date} 00:00:00",
+                f"{planned_date} 23:59:59",
+            ],
+        ]
 
     wos = frappe.get_all(
         "Work Order",
