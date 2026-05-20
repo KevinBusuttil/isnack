@@ -114,13 +114,18 @@ def get_item_discounts(doc, row):
     2) Otherwise, fall back to the first two applicable rules in doc.pricing_rules.
 
     Returns frappe._dict with:
-      base_rate       : rate before discounts (prefer price_list_rate)
-      base_amount     : qty * base_rate
-      disc1_percent   : Tier 1 discount %
-      disc2_percent   : Tier 2 discount %
-      disc1_amount    : Tier 1 discount amount
-      disc2_amount    : Tier 2 discount amount
-      total           : line total after both tiers
+      base_rate         : rate before discounts (prefer price_list_rate)
+      base_amount       : qty * base_rate
+      disc1_percent     : Tier 1 discount %
+      disc2_percent     : Tier 2 discount %
+      disc1_amount      : Tier 1 discount amount (whole line)
+      disc2_amount      : Tier 2 discount amount (whole line)
+      disc1_per_unit    : Tier 1 discount amount per unit
+      disc2_per_unit    : Tier 2 discount amount per unit
+      discount_per_unit : Print Settings flag - True to show per-unit values
+      disc1_display     : disc1 per-unit or whole-line, per the flag above
+      disc2_display     : disc2 per-unit or whole-line, per the flag above
+      total             : line total after both tiers
     """
     base_rate = flt(getattr(row, "price_list_rate", 0) or getattr(row, "rate", 0) or 0)
     qty = flt(getattr(row, "qty", 0) or 0)
@@ -205,6 +210,16 @@ def get_item_discounts(doc, row):
         disc2_amount = (base_amount - disc1_amount) * disc2_percent / 100.0
         total = base_amount - disc1_amount - disc2_amount
 
+    # Per-unit discount values, and the display values that respect the
+    # "Show Item Discount Per Unit" Print Settings flag. The whole-line
+    # disc1_amount / disc2_amount are always returned unchanged so document
+    # totals (e.g. the "Discount Total" line) stay correct.
+    discount_per_unit = bool(
+        frappe.db.get_single_value("Print Settings", "custom_show_discount_per_unit")
+    )
+    disc1_per_unit = (disc1_amount / qty) if qty else 0.0
+    disc2_per_unit = (disc2_amount / qty) if qty else 0.0
+
     return frappe._dict(
         base_rate=base_rate,
         base_amount=base_amount,
@@ -212,5 +227,10 @@ def get_item_discounts(doc, row):
         disc2_percent=disc2_percent,
         disc1_amount=disc1_amount,
         disc2_amount=disc2_amount,
+        disc1_per_unit=disc1_per_unit,
+        disc2_per_unit=disc2_per_unit,
+        disc1_display=disc1_per_unit if discount_per_unit else disc1_amount,
+        disc2_display=disc2_per_unit if discount_per_unit else disc2_amount,
+        discount_per_unit=discount_per_unit,
         total=total,
     )
