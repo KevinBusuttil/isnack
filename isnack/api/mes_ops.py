@@ -2250,6 +2250,123 @@ def get_pallet_label_data(lines: str = None):
         "allowed_pallet_uoms": allowed_pallet_uoms
     }
 
+
+def _pallet_label_print_summary(work_orders: list) -> dict:
+    """
+    Summarise prior *pallet*-label prints for a set of Work Orders so the
+    reprint screen can show what was already printed.
+
+    Pallet-label prints are identified by their Label Record payload carrying a
+    "pallet_type" (set by print_pallet_label); plain carton-label records are
+    ignored.
+
+    Returns {"printed_wo_count": int, "label_count": int, "last_printed_on": datetime|None}.
+    """
+    summary = {"printed_wo_count": 0, "label_count": 0, "last_printed_on": None}
+    if not work_orders:
+        return summary
+
+    src_rows = frappe.get_all(
+        "Label Record Source",
+        filters={"source_doctype": "Work Order", "source_docname": ["in", work_orders]},
+        fields=["source_docname", "parent"],
+    )
+    if not src_rows:
+        return summary
+
+    parent_names = list({r["parent"] for r in src_rows})
+    records = frappe.get_all(
+        "Label Record",
+        filters={"name": ["in", parent_names]},
+        fields=["name", "payload", "creation"],
+    )
+
+    pallet_records = {}
+    for rec in records:
+        try:
+            payload = json.loads(rec.get("payload") or "{}")
+        except Exception:
+            payload = {}
+        if payload.get("pallet_type"):
+            pallet_records[rec["name"]] = rec["creation"]
+
+    if not pallet_records:
+        return summary
+
+    printed_wos = {r["source_docname"] for r in src_rows if r["parent"] in pallet_records}
+    summary["printed_wo_count"] = len(printed_wos)
+    summary["label_count"] = len(pallet_records)
+    summary["last_printed_on"] = max(pallet_records.values())
+    return summary
+
+
+@frappe.whitelist()
+def get_pallet_label_data_for_production_plan(production_plan: str):
+    """
+    Pallet label data for the closed (status Completed) Work Orders of a
+    Production Plan, grouped per production item. Data source for the
+    pallet-label reprint dialog on the Production Plan form.
+
+    Mirrors get_pallet_label_data but is scoped to a Production Plan instead of
+    a factory line + today, and adds a printed-status summary per item so the
+    production manager can see which pallet labels were already printed before
+    reprinting. Carton Qty is the produced quantity, summed across the WOs.
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    if not production_plan:
+        return {"items": [], "allowed_pallet_uoms": []}
+
+    work_orders = frappe.get_all(
+        "Work Order",
+        filters={"production_plan": production_plan, "status": "Completed"},
+        fields=["name", "production_item", "produced_qty"],
+        order_by="creation asc",
+    )
+
+    # Group by production_item
+    grouped = {}
+    for wo in work_orders:
+        item_code = wo["production_item"]
+        if item_code not in grouped:
+            grouped[item_code] = {"item_code": item_code, "work_orders": [], "qty": 0}
+        grouped[item_code]["work_orders"].append(wo["name"])
+        grouped[item_code]["qty"] += flt(wo.get("produced_qty", 0))
+
+    # Enrich with item details and printed status
+    items = []
+    for item_code, data in grouped.items():
+        item_details = frappe.db.get_value(
+            "Item", item_code, ["item_name", "description", "stock_uom"], as_dict=True
+        )
+        if not item_details:
+            continue
+        printed = _pallet_label_print_summary(data["work_orders"])
+        items.append({
+            "item_code": item_code,
+            "item_name": item_details.get("item_name", ""),
+            "description": item_details.get("description", ""),
+            "default_uom": item_details.get("stock_uom", ""),
+            "carton_qty": data["qty"],
+            "work_orders": data["work_orders"],
+            "total_wo_count": len(data["work_orders"]),
+            "printed_wo_count": printed["printed_wo_count"],
+            "label_count": printed["label_count"],
+            "last_printed_on": printed["last_printed_on"],
+        })
+
+    # Allowed pallet UOMs from Factory Settings
+    allowed_pallet_uoms = []
+    try:
+        fs = frappe.get_cached_doc("Factory Settings")
+        if hasattr(fs, "pallet_uom_options") and fs.pallet_uom_options:
+            allowed_pallet_uoms = [row.uom for row in fs.pallet_uom_options if row.uom]
+    except Exception:
+        pass
+
+    return {"items": items, "allowed_pallet_uoms": allowed_pallet_uoms}
+
+
 @frappe.whitelist()
 def get_pallet_conversion_factor(item_code: str, from_uom: str, to_uom: str):
     """
