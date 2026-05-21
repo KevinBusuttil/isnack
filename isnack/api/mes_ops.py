@@ -2192,7 +2192,7 @@ def get_pallet_label_data(lines: str = None):
     work_orders = frappe.get_all(
         "Work Order",
         filters=wo_filters,
-        fields=["name", "production_item", "qty"],
+        fields=["name", "production_item", "produced_qty"],
         order_by="creation asc",
     )
 
@@ -2213,7 +2213,9 @@ def get_pallet_label_data(lines: str = None):
                 "qty": 0
             }
         grouped[item_code]["work_orders"].append(wo["name"])
-        grouped[item_code]["qty"] += flt(wo.get("qty", 0))
+        # Carton Qty reflects the quantity actually produced, not the planned
+        # Work Order qty, so pallet labels match what was really palletised.
+        grouped[item_code]["qty"] += flt(wo.get("produced_qty", 0))
     
     # Enrich with item details
     items = []
