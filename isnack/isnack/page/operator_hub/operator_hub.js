@@ -398,7 +398,10 @@ function init_operator_hub($root) {
     // End Shift Return only requires operator and line (no work order needed)
     $('#btn-end-shift-return', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
-    $('#btn-label', $root).prop('disabled', !(enableLiveActions && state.current_lines.length));
+    // Print Label prints pallet labels for Work Orders closed today on the
+    // line — an end-of-day action, so it needs only operator + line, not a
+    // live/staged Work Order selection.
+    $('#btn-label', $root).prop('disabled', !(hasEmp && state.current_lines.length));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
 
     // End WO button: enabled when operator set + WO selected + WO allocated + not already ended
@@ -1580,7 +1583,7 @@ function init_operator_hub($root) {
     const allowedPalletUoms = palletData.allowed_pallet_uoms || [];
 
     if (!items.length) {
-      flashStatus('No ended FG work orders found for pallet labels', 'warning');
+      flashStatus('No work orders closed today for pallet labels', 'warning');
       return;
     }
 

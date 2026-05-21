@@ -2148,7 +2148,7 @@ def get_ended_work_orders(lines: str = None):
 @frappe.whitelist()
 def get_pallet_label_data(lines: str = None):
     """
-    Get pallet label data from ended Work Orders (FG items only).
+    Get pallet label data from Work Orders closed today (FG items only).
     Groups by production_item and returns summed quantities.
     
     Args:
@@ -2171,9 +2171,36 @@ def get_pallet_label_data(lines: str = None):
     """
     _require_roles(ROLES_OPERATOR)
     
-    # Get ended work orders using existing logic
-    ended_wos_result = get_ended_work_orders(lines)
-    work_orders = ended_wos_result.get("work_orders", [])
+    # Source: FG Work Orders closed (status Completed) today on the selected
+    # line(s). The client prints pallet labels after the daily production
+    # close, so only Work Orders closed today are aggregated.
+    today = frappe.utils.today()
+    wo_filters = {
+        "status": "Completed",
+        "actual_end_date": ["between", [today + " 00:00:00", today + " 23:59:59"]],
+    }
+
+    line_list = []
+    if lines:
+        try:
+            line_list = json.loads(lines) if isinstance(lines, str) else lines
+        except Exception:
+            line_list = []
+        if line_list:
+            wo_filters["custom_factory_line"] = ["in", line_list]
+
+    work_orders = frappe.get_all(
+        "Work Order",
+        filters=wo_filters,
+        fields=["name", "production_item", "qty"],
+        order_by="creation asc",
+    )
+
+    if lines and line_list:
+        work_orders = [
+            wo for wo in work_orders
+            if _line_for_work_order(wo["name"]) in line_list
+        ]
     
     # Group by production_item
     grouped = {}
