@@ -494,6 +494,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           return;
         }
 
+        // Open the print tab synchronously, inside the click gesture, so the
+        // browser popup blocker allows it. The URL is set once the server
+        // returns the new Picklist name.
+        const print_tab = window.open('', '_blank');
+
         d.hide();
         try {
           const r = await frappe.call({
@@ -506,13 +511,25 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             freeze_message: __('Generating picklist…')
           });
           if (r.message && r.message.name) {
+            const name = r.message.name;
+            const print_url = '/printview?doctype=Picklist'
+              + '&name=' + encodeURIComponent(name)
+              + '&format=Picklist&trigger_print=1';
+            if (print_tab) {
+              print_tab.location.href = print_url;
+            } else {
+              window.open(print_url, '_blank');
+            }
+            const record_link = `<a href="/app/picklist/${encodeURIComponent(name)}">${frappe.utils.escape_html(name)}</a>`;
             frappe.show_alert({
-              message: __('Picklist {0} created', [r.message.name]),
+              message: __('Picklist {0} created', [record_link]),
               indicator: 'green'
-            });
-            frappe.set_route('Form', 'Picklist', r.message.name);
+            }, 7);
+          } else if (print_tab) {
+            print_tab.close();
           }
         } catch (e) {
+          if (print_tab) print_tab.close();
           console.error(e);
         }
       }
