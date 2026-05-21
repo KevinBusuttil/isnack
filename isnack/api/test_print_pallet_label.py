@@ -64,7 +64,45 @@ class TestPrintPalletLabel(unittest.TestCase):
         self.assertEqual(len(result["print_urls"]), 3)
         self.assertIn("pallet_qty=2.5", result["print_url"])
         self.assertIn("pallet_type=EURO%201", result["print_url"])
-    
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    def test_print_pallet_label_carton_qty_distribution(self, mock_generate_url, mock_fs, mock_get_value, mock_exists, mock_require_roles):
+        """carton_qty is split per pallet: 1000 cartons / 15.385 pallets -> 15x65 + 1x25."""
+        mock_factory_settings = MagicMock()
+        mock_factory_settings.default_fg_label_print_format = "FG Pallet Label"
+        mock_factory_settings.enable_silent_printing = False
+        mock_factory_settings.default_label_printer = None
+        mock_fs.return_value = mock_factory_settings
+
+        def exists_side_effect(doctype, docname=None):
+            if doctype == "Work Order" and docname == "WO-001":
+                return True
+            if doctype == "Print Format" and docname == "FG Pallet Label":
+                return True
+            return False
+        mock_exists.side_effect = exists_side_effect
+
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.return_value = "http://example.com/printview?doctype=Work%20Order&name=WO-001"
+
+        result = print_pallet_label(
+            item_code="ITEM001",
+            pallet_qty=1000.0 / 65.0,
+            pallet_type="EURO 1",
+            work_orders='["WO-001"]',
+            template="FG Pallet Label",
+            carton_qty=1000,
+        )
+
+        urls = result["print_urls"]
+        self.assertEqual(len(urls), 16)
+        self.assertEqual(sum(1 for u in urls if "carton_qty=65&" in u), 15)
+        self.assertEqual(sum(1 for u in urls if "carton_qty=25&" in u), 1)
+
     @patch('isnack.api.mes_ops._require_roles')
     @patch('frappe.db.exists')
     @patch('frappe.db.get_value')

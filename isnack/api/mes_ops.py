@@ -3189,7 +3189,8 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
 
 @frappe.whitelist()
 def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str, 
-                       work_orders: str, template: Optional[str] = None):
+                       work_orders: str, template: Optional[str] = None,
+                       carton_qty: Optional[float] = None):
     """
     Create pallet label record and return print information for client-side printing.
     The label record is kept for audit trail, but printing happens on the client.
@@ -3200,6 +3201,9 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         pallet_type: Pallet UOM type (e.g., "EURO 1")
         work_orders: JSON string list of Work Order names
         template: Label template/print format name (defaults to Factory Settings)
+        carton_qty: Total cartons across the work orders. When provided, the
+            cartons are split across pallets so each label shows that pallet's
+            carton count instead of the full Work Order quantity.
     
     Returns:
         dict: Contains print_url, print_urls, doctype, docname, print_format, label_record, 
@@ -3252,6 +3256,7 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         # Store pallet info in payload
         payload_info = {
             "pallet_type": pallet_type,
+            "carton_qty": flt(carton_qty) or None,
             "work_orders": wo_list,
             "print_format": template if is_print_format else None
         }
@@ -3285,19 +3290,45 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
             print_job.flags.ignore_permissions = True
             print_job.insert()
     
-    # Generate print URL with pallet_qty and pallet_type as query parameters
-    # so the Print Format can access them
-    base_url = _generate_print_url("Work Order", first_work_order, template)
-    # Add pallet-specific parameters
-    print_url = f"{base_url}&pallet_qty={pallet_qty}&pallet_type={frappe.utils.quote(pallet_type)}"
-    
     # Get silent printing settings
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
     default_label_printer = getattr(fs, "default_label_printer", None)
-    
-    # Generate multiple print URLs based on pallet_qty (one per pallet)
-    num_copies = max(1, math.ceil(flt(pallet_qty)))
-    print_urls = [print_url] * num_copies
+
+    base_url = _generate_print_url("Work Order", first_work_order, template)
+    pallet_type_q = frappe.utils.quote(pallet_type)
+
+    def _fmt(n):
+        n = flt(n)
+        return int(n) if n == int(n) else n
+
+    # Split the cartons across pallets so each label shows the cartons on THAT
+    # pallet, not the full Work Order quantity. Full pallets carry
+    # ceil(carton_qty / pallet_qty) cartons; the last pallet carries the
+    # remainder. e.g. 1000 cartons over 15.385 pallets -> 15 labels of 65 + 1
+    # of 25. The FG print format reads carton_qty from the query string.
+    cq = flt(carton_qty)
+    quantities = []
+    if cq > 0 and flt(pallet_qty) > 0:
+        cartons_per_pallet = math.ceil(round(cq / flt(pallet_qty), 6))
+        if cartons_per_pallet > 0:
+            full_pallets = int(cq // cartons_per_pallet)
+            quantities = [cartons_per_pallet] * full_pallets
+            remainder = cq - full_pallets * cartons_per_pallet
+            if remainder > 1e-6:
+                quantities.append(remainder)
+
+    if quantities:
+        print_urls = [
+            f"{base_url}&carton_qty={_fmt(q)}&pallet_qty={pallet_qty}"
+            f"&pallet_type={pallet_type_q}"
+            for q in quantities
+        ]
+    else:
+        # No carton_qty supplied: keep legacy one-identical-URL-per-pallet.
+        legacy_url = f"{base_url}&pallet_qty={pallet_qty}&pallet_type={pallet_type_q}"
+        print_urls = [legacy_url] * max(1, math.ceil(flt(pallet_qty)))
+
+    print_url = print_urls[0]
     
     return {
         "success": True,
