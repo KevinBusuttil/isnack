@@ -723,6 +723,25 @@ def _has_recent_duplicate(work_order: str, raw_code: str, ttl_sec: Optional[int]
     cache.set_value(key, "1", expires_in_sec=ttl_sec or _scan_dup_ttl())
     return False
 
+def _scan_already_consumed(work_order: str, raw_code: str) -> bool:
+    """Pure check — unlike _has_recent_duplicate it does NOT set the cache key.
+
+    Used by the confirm-then-post scan flow so a cancelled or failed
+    confirmation never blocks the operator from re-scanning the same label.
+    """
+    if not raw_code:
+        return False
+    return bool(frappe.cache().get_value(_scan_cache_key(work_order, raw_code)))
+
+def _mark_scan_consumed(work_order: str, raw_code: str, ttl_sec: Optional[int] = None) -> None:
+    """Record that a raw scan was consumed, so a quick re-scan is rejected."""
+    if not raw_code:
+        return
+    frappe.cache().set_value(
+        _scan_cache_key(work_order, raw_code), "1",
+        expires_in_sec=ttl_sec or _scan_dup_ttl(),
+    )
+
 def _require_roles(roles: list[str]):
     if frappe.session.user == "Guest":
         frappe.throw(_("Login required"))
@@ -3601,12 +3620,26 @@ def get_materials_snapshot(work_order: str):
 
 @frappe.whitelist()
 def parse_scan(code: str):
+    """
+    Parse a scanned barcode into item/batch/qty without moving any stock.
+
+    The returned `barcode_qty` is the quantity embedded in the barcode (0 when
+    the barcode carries none). It is informational only — for an aggregated
+    Storekeeper label it may cover several Work Orders, so callers must NOT
+    consume it directly; the operator confirms the quantity to consume.
+    """
     out = _parse_gs1_or_basic(code or "")
     item_code = out.get("item_code")
     if not item_code:
         return {"ok": False, "msg": _("Cannot parse item from code")}
     uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-    return {"ok": True, "item_code": item_code, "batch_no": out.get("batch_no"), "uom": uom}
+    return {
+        "ok": True,
+        "item_code": item_code,
+        "batch_no": out.get("batch_no"),
+        "barcode_qty": flt(out.get("qty") or 0),
+        "uom": uom,
+    }
 
 @frappe.whitelist()
 def get_staging_batches(work_order: str, item_code: str):
@@ -3732,28 +3765,29 @@ def get_manual_load_item_context(work_order: str, item_code: str):
     }
 
 
-@frappe.whitelist()
-def manual_load_materials(work_order: str, items: str):
+def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
     """
-    Manually consume materials from WIP warehouse into a Work Order without barcode scanning.
+    Validate and post a single "Material Consumption for Manufacture" Stock
+    Entry for `work_order`, with one row per item in `items`.
 
-    items: JSON list of {"item_code": str, "batch_no": str|null, "qty": float}
+    Each item dict: {"item_code": str, "batch_no": str|None, "qty": float}.
 
-    Creates a single "Material Consumption for Manufacture" Stock Entry with one row per item.
+    Shared by manual_load_materials() and consume_scanned_material() so the
+    validation lives in exactly one place. Callers handle their own role checks.
+
+    Per-item validation: Work Order not ended, item exists, item belongs to the
+    WO BOM unless it is in a packaging group, and total consumption stays within
+    the material_overconsumption_threshold. The Stock Entry consumes from the
+    Work Order line WIP warehouse and is linked to the Work Order.
+
     Returns {"ok": True, "msg": str, "stock_entry": str}.
     """
-    _require_roles(ROLES_OPERATOR)
-
     if not work_order:
         frappe.throw(_("Missing work_order"))
 
     _assert_not_ended(work_order)
 
-    try:
-        item_list = json.loads(items) if isinstance(items, str) else items
-    except Exception:
-        item_list = []
-    if not item_list:
+    if not items:
         frappe.throw(_("No items provided"))
 
     wo = frappe.get_doc("Work Order", work_order)
@@ -3772,7 +3806,7 @@ def manual_load_materials(work_order: str, items: str):
     se.bom_no = wo.bom_no
     se.fg_completed_qty = flt(wo.qty) - flt(wo.produced_qty)
 
-    for it in item_list:
+    for it in items:
         item_code = (it.get("item_code") or "").strip()
         qty = float(it.get("qty") or 0)
         if not item_code or qty <= 0:
@@ -3848,6 +3882,74 @@ def manual_load_materials(work_order: str, items: str):
 
     count = len(se.items)
     return {"ok": True, "msg": _("Consumed {0} item(s)").format(count), "stock_entry": se.name}
+
+
+@frappe.whitelist()
+def manual_load_materials(work_order: str, items: str):
+    """
+    Manually consume materials from WIP warehouse into a Work Order without barcode scanning.
+
+    items: JSON list of {"item_code": str, "batch_no": str|null, "qty": float}
+
+    Creates a single "Material Consumption for Manufacture" Stock Entry with one row per item.
+    Returns {"ok": True, "msg": str, "stock_entry": str}.
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    try:
+        item_list = json.loads(items) if isinstance(items, str) else items
+    except Exception:
+        item_list = []
+
+    return _post_material_consumption_for_wo(work_order, item_list or [])
+
+
+@frappe.whitelist()
+def consume_scanned_material(work_order: str, item_code: str, qty,
+                             batch_no: str = None, raw_code: str = None):
+    """
+    Post a single confirmed scanned-material consumption against a Work Order.
+
+    The Operator Hub "Load Materials" scan flow parses a barcode, shows the
+    operator a quantity-confirmation dialog, then calls this method with the
+    operator-confirmed quantity.
+
+    IMPORTANT: the barcode quantity is never consumed here. A Storekeeper label
+    may carry an aggregate quantity staged for several Work Orders, so only the
+    confirmed `qty` is posted against this Work Order.
+
+    Validation/posting is shared with Manual Load via
+    _post_material_consumption_for_wo().
+
+    Returns {"ok": True, "msg": str, "stock_entry": str}.
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    item_code = (item_code or "").strip()
+    if not work_order or not item_code:
+        frappe.throw(_("Missing work_order or item_code"))
+
+    qty = flt(qty)
+    if qty <= 0:
+        frappe.throw(_("Quantity to consume must be greater than zero"))
+
+    _assert_not_ended(work_order)
+
+    # Duplicate guard: reject only a label already consumed for this WO. The
+    # cache key is set *after* a successful post (below), so a cancelled or
+    # failed confirmation never blocks a re-scan of the same label.
+    if _scan_already_consumed(work_order, raw_code):
+        frappe.throw(_("This label was already consumed for this Work Order"))
+
+    result = _post_material_consumption_for_wo(
+        work_order,
+        [{"item_code": item_code, "batch_no": (batch_no or "").strip() or None, "qty": qty}],
+    )
+
+    _mark_scan_consumed(work_order, raw_code)
+
+    result["msg"] = _("Consumed {0} of {1}").format(qty, item_code)
+    return result
 
 
 @frappe.whitelist()

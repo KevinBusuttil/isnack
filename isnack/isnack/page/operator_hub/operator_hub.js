@@ -15,10 +15,6 @@ function init_operator_hub($root) {
   // Scan history configuration constants
   const SCAN_CODE_MAX_LENGTH = 60;
   const SCAN_HISTORY_MAX_ENTRIES = 20;
-  // Pattern to extract item code from backend messages like "Consumed X unit of ITEM123" or "item ABC-XYZ"
-  const SCAN_ITEM_PATTERN = /(?:of|item)\s+([A-Z0-9_-]+)/i;
-  // Pattern to extract quantity from backend messages like "Consumed 12.5 Kg" or "consumed 1 Nos"
-  const SCAN_QTY_PATTERN = /consumed\s+([\d.]+)\s+(\w+)/i;
   // Delay between opening multiple print dialogs to prevent browser blocking
   const PRINT_DIALOG_DELAY_MS = 500;
 
@@ -687,9 +683,18 @@ function init_operator_hub($root) {
   const okTone  = new Audio('/assets/frappe/sounds/submit.mp3');
   const errTone = new Audio('/assets/frappe/sounds/cancel.mp3');
   const $scanStatus = $('#scan-status');
+  // True while a scanned-material quantity-confirmation dialog is open. The
+  // scan handler rejects new scans until the operator confirms or cancels.
+  let awaitingQtyConfirm = false;
 
   async function handleScanValue(raw) {
     if (!raw) return;
+
+    // Guard: a quantity-confirmation dialog is already open for a prior scan.
+    if (awaitingQtyConfirm) {
+      flashStatus('Finish the current quantity confirmation first', 'warning');
+      return;
+    }
     if (/^EMP:/i.test(raw)) {
       flashStatus('Use Set Operator to choose the operator', 'warning');
       return;
@@ -702,87 +707,220 @@ function init_operator_hub($root) {
       return;
     }
 
+    // Pause scanner focus mode so the quantity dialog keeps focus, and block
+    // further scans until the operator finishes confirming this one.
+    awaitingQtyConfirm = true;
+    setScanMode(false);
     setStatus('Processing scan…');
-    
-    // Add timestamp for this scan
-    const scanTime = new Date().toLocaleTimeString();
-    
-    rpc('isnack.api.mes_ops.scan_material', { work_order: state.current_wo, code: raw })
-      .then(async r => {
-        const { ok, msg } = r.message || {};
-        const safeMsg = msg || 'Scan processed';
-        frappe.show_alert({ message: safeMsg, indicator: ok ? 'green' : 'red' });
-        
-        // Update scan history in dialog if it exists
-        const $scanHistoryList = $('#scan-history-list');
-        if ($scanHistoryList.length > 0) {
-          // Remove "no scans yet" message if it exists
-          if ($scanHistoryList.find('.scan-history-empty').length > 0) {
-            $scanHistoryList.empty();
+
+    try {
+      await showScannedMaterialQtyDialog(raw);
+    } finally {
+      awaitingQtyConfirm = false;
+      setScanMode(true);
+      focus_scan();
+    }
+  }
+
+  // Render one scan-history row inside the open Load / Scan Materials dialog.
+  // entry.status is 'Success' | 'Failed' | 'Cancelled'.
+  function appendScanHistory(entry) {
+    const $list = $('#scan-history-list');
+    if (!$list.length) return;
+    $list.find('.scan-history-empty').remove();
+
+    const ok = entry.status === 'Success';
+    const cancelled = entry.status === 'Cancelled';
+    const statusClass = ok ? 'scan-success' : (cancelled ? 'scan-cancelled' : 'scan-failed');
+    const statusIcon  = ok ? '✓' : (cancelled ? '⊘' : '✗');
+    const badgeClass  = ok ? 'bg-success' : (cancelled ? 'bg-secondary' : 'bg-danger');
+
+    const rawCode = entry.raw || '';
+    const safeRaw = frappe.utils.escape_html(rawCode.substring(0, SCAN_CODE_MAX_LENGTH))
+      + (rawCode.length > SCAN_CODE_MAX_LENGTH ? '...' : '');
+    const uomSuffix = entry.uom ? ' ' + frappe.utils.escape_html(entry.uom) : '';
+
+    const rows = [];
+    if (entry.itemCode) {
+      rows.push('<div class="small mb-1"><strong>Item:</strong> ' + frappe.utils.escape_html(entry.itemCode) + '</div>');
+    }
+    if (entry.batchNo) {
+      rows.push('<div class="small mb-1"><strong>Batch:</strong> ' + frappe.utils.escape_html(entry.batchNo) + '</div>');
+    }
+    if (entry.barcodeQty != null) {
+      rows.push('<div class="small mb-1"><strong>Barcode Qty:</strong> ' + frappe.utils.escape_html(String(entry.barcodeQty)) + uomSuffix + '</div>');
+    }
+    if (entry.consumedQty != null) {
+      rows.push('<div class="small mb-1"><strong>Consumed Qty:</strong> ' + frappe.utils.escape_html(String(entry.consumedQty)) + uomSuffix + '</div>');
+    }
+
+    const $entry = $(`
+      <div class="scan-entry ${statusClass} mb-2 p-2">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+          <span class="badge ${badgeClass} me-2">${statusIcon} ${frappe.utils.escape_html(entry.status)}</span>
+          <span class="text-muted small">${frappe.utils.escape_html(entry.scanTime || '')}</span>
+        </div>
+        <div class="small mb-1"><strong>Raw Code:</strong> <code class="scan-code">${safeRaw}</code></div>
+        ${rows.join('')}
+        ${entry.message ? '<div class="small text-muted">' + frappe.utils.escape_html(entry.message) + '</div>' : ''}
+      </div>
+    `);
+
+    $list.prepend($entry);
+    if ($list.children().length > SCAN_HISTORY_MAX_ENTRIES) {
+      $list.children().last().remove();
+    }
+    $list.scrollTop(0);
+  }
+
+  // Parse a scanned barcode, fetch WO-specific material context, then open a
+  // quantity-confirmation dialog. Returns a Promise that resolves ONLY once
+  // that dialog is fully closed, so handleScanValue can safely resume the
+  // scanner afterwards.
+  function showScannedMaterialQtyDialog(raw) {
+    return new Promise((resolve) => {
+      const scanTime = new Date().toLocaleTimeString();
+
+      (async () => {
+        try {
+          const pr = await rpc('isnack.api.mes_ops.parse_scan', { code: raw });
+          const parsed = pr && pr.message;
+          if (!parsed || !parsed.ok) {
+            const msg = (parsed && parsed.msg) || 'Could not parse barcode';
+            appendScanHistory({ raw, status: 'Failed', message: msg, scanTime });
+            $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
+            flashStatus(msg, 'error');
+            try { errTone.play().catch(()=>{}); } catch(_) {}
+            resolve();
+            return;
           }
-          
-          // Parse the barcode to extract item info from backend response message
-          // Using configurable patterns to match various message formats
-          let itemInfo = 'Unknown';
-          let qtyInfo = '';
-          
-          // Try to extract item code from the message
-          const itemMatch = safeMsg.match(SCAN_ITEM_PATTERN);
-          if (itemMatch) {
-            itemInfo = itemMatch[1];
-          }
-          
-          // Try to extract quantity from message
-          const qtyMatch = safeMsg.match(SCAN_QTY_PATTERN);
-          if (qtyMatch) {
-            qtyInfo = `${qtyMatch[1]} ${qtyMatch[2]}`;
-          }
-          
-          // Create scan entry with proper styling
-          const statusClass = ok ? 'scan-success' : 'scan-failed';
-          const statusIcon = ok ? '✓' : '✗';
-          const statusText = ok ? 'Success' : 'Failed';
-          const badgeClass = ok ? 'bg-success' : 'bg-danger';
-          
-          const scanEntry = $(`
-            <div class="scan-entry ${statusClass} mb-2 p-2">
-              <div class="d-flex justify-content-between align-items-start mb-1">
-                <span class="badge ${badgeClass} me-2">${statusIcon} ${statusText}</span>
-                <span class="text-muted small">${scanTime}</span>
-              </div>
-              <div class="small mb-1">
-                <strong>Raw Code:</strong> <code class="scan-code">${frappe.utils.escape_html(raw.substring(0, SCAN_CODE_MAX_LENGTH))}${raw.length > SCAN_CODE_MAX_LENGTH ? '...' : ''}</code>
-              </div>
-              ${itemInfo !== 'Unknown' ? `<div class="small mb-1"><strong>Item:</strong> ${frappe.utils.escape_html(itemInfo)}</div>` : ''}
-              ${qtyInfo ? `<div class="small mb-1"><strong>Qty:</strong> ${frappe.utils.escape_html(qtyInfo)}</div>` : ''}
-              <div class="small text-muted">${frappe.utils.escape_html(safeMsg)}</div>
-            </div>
-          `);
-          
-          // Prepend to show newest first
-          $scanHistoryList.prepend(scanEntry);
-          
-          // Limit to configured max entries
-          if ($scanHistoryList.children().length > SCAN_HISTORY_MAX_ENTRIES) {
-            $scanHistoryList.children().last().remove();
-          }
-          
-          // Auto-scroll to show the newest entry
-          $scanHistoryList.scrollTop(0);
+
+          const ctxr = await rpc('isnack.api.mes_ops.get_manual_load_item_context', {
+            work_order: state.current_wo,
+            item_code: parsed.item_code
+          });
+          const ctx = (ctxr && ctxr.message) || {};
+
+          const availr = await rpc('isnack.api.mes_ops.get_batch_available_qty', {
+            work_order: state.current_wo,
+            item_code: parsed.item_code,
+            batch_no: parsed.batch_no || ''
+          });
+          const avail = (availr && availr.message) || {};
+
+          const itemCode     = parsed.item_code;
+          const batchNo      = parsed.batch_no || '';
+          const barcodeQty   = parseFloat(parsed.barcode_qty) || 0;
+          const uom          = parsed.uom || avail.uom || ctx.uom || '';
+          const requiredQty  = parseFloat(ctx.required_qty) || 0;
+          const consumedQty  = parseFloat(ctx.consumed_qty) || 0;
+          const remainingQty = parseFloat(ctx.remaining_qty) || 0;
+          const availableQty = parseFloat(avail.qty) || 0;
+          // Default to what this WO still needs, capped by WIP availability —
+          // never the (possibly aggregated) barcode quantity.
+          const defaultQty = Math.max(Math.min(remainingQty, availableQty), 0);
+
+          let consumed = false;
+          let settled = false;
+
+          const d = opDialog({
+            title: 'Confirm Quantity to Consume',
+            fields: [
+              { fieldtype: 'Section Break' },
+              { label: 'Item Code', fieldname: 'item_code_ro', fieldtype: 'Data', read_only: 1, default: itemCode },
+              { fieldtype: 'Column Break' },
+              { label: 'Batch No', fieldname: 'batch_no_ro', fieldtype: 'Data', read_only: 1, default: batchNo || '—' },
+              { fieldtype: 'Section Break', label: 'Quantities (' + (uom || 'stock UOM') + ')' },
+              { label: 'Barcode Qty', fieldname: 'barcode_qty_ro', fieldtype: 'Float', read_only: 1, default: barcodeQty },
+              { label: 'Required Qty', fieldname: 'required_qty_ro', fieldtype: 'Float', read_only: 1, default: requiredQty },
+              { label: 'Already Consumed Qty', fieldname: 'consumed_qty_ro', fieldtype: 'Float', read_only: 1, default: consumedQty },
+              { fieldtype: 'Column Break' },
+              { label: 'Remaining Qty', fieldname: 'remaining_qty_ro', fieldtype: 'Float', read_only: 1, default: remainingQty },
+              { label: 'Available Qty in WIP', fieldname: 'available_qty_ro', fieldtype: 'Float', read_only: 1, default: availableQty },
+              { fieldtype: 'Section Break' },
+              { label: 'Qty to Consume', fieldname: 'qty', fieldtype: 'Float', reqd: 1, default: defaultQty },
+            ],
+            primary_action_label: 'Consume',
+            primary_action: async () => {
+              const qty = parseFloat(d.get_value('qty')) || 0;
+              if (qty <= 0) { frappe.msgprint('Enter a quantity greater than zero'); return; }
+
+              d.disable_primary_action();
+              setStatus('Posting consumption…');
+              try {
+                const r = await rpc('isnack.api.mes_ops.consume_scanned_material', {
+                  work_order: state.current_wo,
+                  item_code: itemCode,
+                  batch_no: batchNo,
+                  qty: qty,
+                  raw_code: raw
+                });
+                const msg = (r && r.message && r.message.msg) || 'Material consumed';
+                consumed = true;
+                appendScanHistory({
+                  raw, status: 'Success', itemCode, batchNo, uom,
+                  barcodeQty, consumedQty: qty, message: msg, scanTime
+                });
+                alerts.length && alerts.addClass('d-none').text('');
+                $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
+                frappe.show_alert({ message: msg, indicator: 'green' });
+                flashStatus(msg, 'success');
+                try { okTone.play().catch(()=>{}); } catch(_) {}
+                if (state.current_wo) await load_materials_snapshot(state.current_wo);
+                d.hide();
+              } catch (e) {
+                const msg = (e && e.message) || 'Consumption failed';
+                appendScanHistory({
+                  raw, status: 'Failed', itemCode, batchNo, uom,
+                  barcodeQty, message: msg, scanTime
+                });
+                alerts.length && alerts.removeClass('d-none').text(msg);
+                $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
+                flashStatus(msg, 'error');
+                try { errTone.play().catch(()=>{}); } catch(_) {}
+                // Keep the dialog open so the operator can adjust and retry.
+                d.enable_primary_action();
+              }
+            }
+          });
+
+          d.set_secondary_action_label('Cancel');
+          d.set_secondary_action(() => d.hide());
+
+          // Resolve the outer Promise once — and only once — the dialog is
+          // fully closed (Consume success, Cancel, or corner close button).
+          const onClose = () => {
+            if (settled) return;
+            settled = true;
+            if (!consumed) {
+              appendScanHistory({
+                raw, status: 'Cancelled', itemCode, batchNo, uom,
+                barcodeQty, message: 'Confirmation cancelled — nothing consumed', scanTime
+              });
+              flashStatus('Scan cancelled — nothing consumed', 'warning');
+            }
+            resolve();
+          };
+          d.onhide = onClose;
+          d.$wrapper.on('hidden.bs.modal', onClose);
+
+          d.show();
+          // Keep the editable Qty field focused. The hidden scanner input is
+          // already paused (setScanMode(false)) so it cannot steal focus.
+          setTimeout(() => {
+            try {
+              const f = d.fields_dict.qty;
+              if (f && f.$input && f.$input.length) { f.$input.focus(); f.$input.select(); }
+            } catch (_) {}
+          }, 200);
+        } catch (e) {
+          const msg = (e && e.message) || 'Scan failed';
+          appendScanHistory({ raw, status: 'Failed', message: msg, scanTime });
+          try { errTone.play().catch(()=>{}); } catch(_) {}
+          resolve();
         }
-        
-        if (ok) {
-          alerts.length && alerts.addClass('d-none').text('');
-          $scanStatus.length && $scanStatus.text('Material').removeClass().addClass('badge bg-success');
-          flashStatus(safeMsg || 'Loaded material', 'success');
-          if (state.current_wo) await load_materials_snapshot(state.current_wo);
-          try { okTone.play().catch(()=>{}); } catch(_) {}
-        } else {
-          alerts.length && alerts.removeClass('d-none').text(safeMsg || 'Scan failed');
-          $scanStatus.length && $scanStatus.text('Error').removeClass().addClass('badge bg-danger');
-          flashStatus(safeMsg || 'Scan failed', 'error'); try { errTone.play().catch(()=>{}); } catch(_) {}
-        }
-      });
+      })();
+    });
   }
 
   scan.on('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const raw = scan.val().trim(); scan.val(''); handleScanValue(raw); } });

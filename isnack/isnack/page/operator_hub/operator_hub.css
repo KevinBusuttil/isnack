@@ -533,6 +533,10 @@
   border-left-color: #ef4444;
   background: #fef2f2;
 }
+.op-teal .scan-cancelled{
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
 .op-teal .scan-code{
   font-size: 0.85em;
   background: #ffffff;
