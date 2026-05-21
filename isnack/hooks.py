@@ -141,6 +141,7 @@ override_doctype_class = {
     "Production Plan": "isnack.overrides.production_plan.CustomProductionPlan",
     "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry",
     "Payment Reconciliation": "isnack.overrides.payment_reconciliation.CustomPaymentReconciliation",
+    "Landed Cost Voucher": "isnack.overrides.landed_cost_voucher.CustomLandedCostVoucher",
 }
 
 # Document Events
