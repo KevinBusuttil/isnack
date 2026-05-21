@@ -242,6 +242,7 @@ function init_operator_hub($root) {
     current_lines: migrateLineStorage(),
     current_emp: null,
     current_emp_name: null,
+    operator_locked: false,
     current_is_fg: false,
     current_wo_status: null,
     current_stage_status: null
@@ -480,7 +481,11 @@ function init_operator_hub($root) {
 
   // Choose operator
   $('#kiosk-choose-emp', $root).on('click', () => {
-    setScanMode(false);  // avoid hidden scanner stealing focus inside dialog    
+    if (state.operator_locked) {
+      flashStatus('Operator is linked to your account and cannot be changed', 'warning');
+      return;
+    }
+    setScanMode(false);  // avoid hidden scanner stealing focus inside dialog
     const d = opDialog({
       title: 'Set Operator',
       fields: [
@@ -502,9 +507,41 @@ function init_operator_hub($root) {
   });
 
   $('#kiosk-clear-emp', $root).on('click', () => {
+    if (state.operator_locked) {
+      flashStatus('Operator is linked to your account and cannot be cleared', 'warning');
+      return;
+    }
     state.current_emp = null; state.current_emp_name = null;
     $('#kiosk-emp-label').text('—'); refreshButtonStates(); flashStatus('Operator cleared', 'warning');
   });
+
+  // Operator binding: if the logged-in user is linked to an active Employee,
+  // auto-set the Operator field to that Employee and make it read-only. The
+  // backend enforces the same rule, so this is only a UX convenience.
+  function applyOperatorLock(employee, employee_name) {
+    state.operator_locked = true;
+    state.current_emp = employee;
+    state.current_emp_name = employee_name;
+    $('#kiosk-emp-label', $root).text(employee_name);
+    $('#kiosk-choose-emp', $root)
+      .prop('disabled', true)
+      .attr('title', 'Operator is linked to your user account');
+    $('#kiosk-clear-emp', $root)
+      .prop('disabled', true)
+      .attr('title', 'Operator is linked to your user account');
+    refreshButtonStates();
+  }
+
+  (function loadOperatorContext() {
+    frappe.call('isnack.api.mes_ops.get_operator_context')
+      .then(r => {
+        const ctx = r && r.message;
+        if (ctx && ctx.locked && ctx.employee) {
+          applyOperatorLock(ctx.employee, ctx.employee_name || ctx.employee);
+        }
+      })
+      .catch(err => console.error('Failed to load operator context', err));
+  })();
 
   // === Materials snapshot ===
   function fmt(n){ return (n==null) ? '-' : (Math.round(n*1000)/1000).toLocaleString(); }

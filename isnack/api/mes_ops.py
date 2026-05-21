@@ -520,10 +520,18 @@ def _get_user_line(user: str) -> Optional[str]:
     return line or None
 
 def _user_employee(user: str) -> Optional[str]:
-    emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    """Return the active Employee linked to a user, or None."""
+    if not user or user == "Guest":
+        return None
+    emp = frappe.db.get_value(
+        "Employee", {"user_id": user, "status": "Active"}, "name"
+    )
     if emp:
         return emp
-    return frappe.db.get_value("User", user, "employee")
+    fallback = frappe.db.get_value("User", user, "employee")
+    if fallback and frappe.db.get_value("Employee", fallback, "status") == "Active":
+        return fallback
+    return None
 
 def _employee_by_badge(badge: str) -> Optional[str]:
     if not badge:
@@ -537,9 +545,21 @@ def _employee_by_badge(badge: str) -> Optional[str]:
     return None
 
 def _employee_or_user_default(employee: Optional[str]) -> Optional[str]:
-    if employee:
-        return employee
-    return _user_employee(frappe.session.user)
+    """Resolve the operator for an Operator Hub action.
+
+    When the logged-in user is linked to an active Employee, that Employee
+    is authoritative: any conflicting client-supplied value is rejected.
+    This enforces the locked-operator rule server-side, so it does not rely
+    on the read-only behaviour of the front-end alone.
+    """
+    linked = _user_employee(frappe.session.user)
+    if linked:
+        if employee and employee != linked:
+            frappe.throw(
+                _("Your account is linked to Employee {0}; you cannot act as another operator.").format(linked)
+            )
+        return linked
+    return employee or None
 
 def _line_for_work_order(work_order: str) -> Optional[str]:
     """Prefer WO.factory_line/custom_factory_line, then BOM default, then first operation/workstation."""
@@ -823,6 +843,25 @@ def get_wo_banner(work_order):
 # ============================================================
 
 @frappe.whitelist()
+def get_operator_context():
+    """Operator binding for the current user.
+
+    When the logged-in user is linked to an active Employee, the Operator
+    Hub auto-selects that Employee and locks the Operator field. The same
+    binding is enforced server-side in `_employee_or_user_default`, so this
+    endpoint only drives the UI convenience.
+    """
+    emp = _user_employee(frappe.session.user)
+    if not emp:
+        return {"locked": False, "employee": None, "employee_name": None}
+    return {
+        "locked": True,
+        "employee": emp,
+        "employee_name": frappe.db.get_value("Employee", emp, "employee_name") or emp,
+    }
+
+
+@frappe.whitelist()
 def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None):
     emp = None
     if employee:
@@ -831,6 +870,11 @@ def resolve_employee(badge: Optional[str] = None, employee: Optional[str] = None
         emp = _employee_by_badge(badge)
     if not emp:
         return {"ok": False}
+    linked = _user_employee(frappe.session.user)
+    if linked and emp != linked:
+        frappe.throw(
+            _("Your account is linked to Employee {0}; you cannot select another operator.").format(linked)
+        )
     return {
         "ok": True,
         "employee": emp,
