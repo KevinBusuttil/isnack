@@ -210,6 +210,7 @@ async function isnack_show_pallet_label_dialog(frm) {
               item_code: row.item_code,
               pallet_qty: row.pallet_qty,
               pallet_type: row.pallet_type,
+              carton_qty: row.carton_qty,
               work_orders: JSON.stringify(row.work_orders || []),
               template: default_print_format,
             },
