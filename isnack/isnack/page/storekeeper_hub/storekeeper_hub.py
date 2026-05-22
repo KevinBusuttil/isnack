@@ -462,13 +462,17 @@ def get_available_batches(item_code: str, warehouse: str):
     details_map = {b.name: b for b in batch_details}
     
     # Combine qty data with batch details
+    today = getdate(nowdate())
     result = []
     for batch in batches:
         batch_no = batch.get('batch_no')
         qty = batch.get('qty', 0)
-        
+
         if qty > 0 and batch_no in details_map:
             details = details_map[batch_no]
+            # Skip expired batches (batches with no expiry date never expire)
+            if details.expiry_date and getdate(details.expiry_date) < today:
+                continue
             result.append({
                 'batch_id': batch_no,
                 'qty': qty,
