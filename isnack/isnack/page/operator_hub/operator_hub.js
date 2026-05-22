@@ -2434,16 +2434,6 @@ function init_operator_hub($root) {
         }
       });
     }
-    
-    // Auto-generate and pre-fill batch number
-    rpc('isnack.api.mes_ops.generate_next_batch_code')
-      .then(result => {
-        const batchCode = result.message || result;
-        d.set_value('batch_no', batchCode);
-      })
-      .catch(err => {
-        console.warn('Failed to auto-generate batch code', err);
-      });
   });
 
   // Initial
