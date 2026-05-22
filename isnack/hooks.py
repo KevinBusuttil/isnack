@@ -42,6 +42,7 @@ doctype_js = {
     "Production Plan": "public/js/production_plan.js",
     "Payment Reconciliation": "public/js/payment_reconciliation.js",
     "Sales Invoice": "public/js/sales_invoice.js",
+    "Delivery Note": "public/js/delivery_note.js",
 }
 doctype_list_js = {
     "Sales Invoice": "public/js/sales_invoice_list.js"
@@ -162,6 +163,9 @@ doc_events = {
     },
     "Item": {
         "validate": "isnack.overrides.item.sync_weight_per_unit",
+    },
+    "Delivery Note": {
+        "validate": "isnack.api.delivery_note_pallets.calculate_delivery_note_pallets",
     },
 }
 
