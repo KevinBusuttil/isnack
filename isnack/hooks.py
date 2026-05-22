@@ -166,6 +166,7 @@ doc_events = {
     },
     "Delivery Note": {
         "validate": "isnack.api.delivery_note_pallets.calculate_delivery_note_pallets",
+        "before_submit": "isnack.api.delivery_note_packing_slips.auto_create_packing_slips_before_submit",
     },
 }
 
