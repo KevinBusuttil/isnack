@@ -29,7 +29,7 @@ The Production Plan is the engine that drives everything. Without it, the Storek
                  ▼
 ┌─────────────────────────────────┐
 │        STOREKEEPER HUB          │
-│  Filter by Line & Posting Date  │
+│  Filter by Line & WO Start Date │
 │  Select WO bucket               │
 │  Build Consolidated Pick Cart   │
 │  Allocate & Create Transfers    │
@@ -72,7 +72,7 @@ The Production Plan is the engine that drives everything. Without it, the Storek
 
 Set the **Posting Date** to tomorrow's date (e.g., `2026-04-11`).
 
-> **⚠️ Warning:** The Posting Date is critical. The Storekeeper Hub filters Work Orders by this exact date. If the Posting Date is wrong, the Storekeeper will not see your Work Orders. Always double-check it before submitting.
+> **⚠️ Warning:** Make sure the date the line should run is correct. The Storekeeper Hub no longer filters by the Production Plan's Posting Date — it filters by each Work Order's **Planned Start Date** (set when the Work Orders are created, see Step 6). If that date is wrong, the Storekeeper will not see your Work Orders. Double-check the dates before submitting.
 
 #### Step 3 — Add items to the plan
 
@@ -115,11 +115,20 @@ When Work Orders are created successfully you'll see a confirmation. The system 
 Each Work Order:
 - Inherits the **BOM** from the Production Plan row.
 - Is linked back to **PP-2026-00042** via the `production_plan` field.
+- Carries a **Planned Start Date** (e.g., `2026-04-11`) — the date the Storekeeper Hub uses to filter Work Orders into its queue.
 - Has status **Not Started** and no allocation chip yet.
 
 #### Step 7 — Verify Work Orders were created
 
 On the submitted Production Plan, click **View → Work Orders** to see the list. Confirm that WO-2026-00101 and WO-2026-00102 appear with status `Not Started`.
+
+#### Reprinting pallet labels later (production manager)
+
+A submitted Production Plan carries a **Print Pallet Labels** button. This is a durable, manager-facing entry point — separate from the end-of-day Operator Hub flow — for reprinting pallet labels for the plan's **Completed** Work Orders.
+
+Click **Print Pallet Labels** on the Production Plan. A dialog lists each finished-goods item produced by the plan's Completed Work Orders, with its produced (carton) quantity, pallet type, and a **Printed** status showing whether labels were already generated (so reprints are deliberate). Adjust quantities if needed and click **Print Labels**.
+
+> **Note:** This dialog only reprints labels. It never moves stock or changes Work Orders.
 
 ---
 
@@ -140,7 +149,7 @@ Open **Storekeeper Hub** from the main menu. Set the three filters in the top to
 | Filter | Value (our example) | Why it matters |
 |--------|---------------------|----------------|
 | **Factory Section** | `Line A` | Shows only the WOs for Line A |
-| **Prod. Plan Posting Date** | `2026-04-11` | Matches the Production Plan's Posting Date |
+| **WO Planned Start Date** | `2026-04-11` | Matches each Work Order's **Planned Start Date** (not the Production Plan's Posting Date) |
 | **Source Warehouse** | `Raw Material Store - IS` | Where materials are picked from |
 
 Click **Refresh**. The left column now shows WO buckets for Line A dated 2026-04-11.
@@ -229,6 +238,8 @@ Click **Print Pallet Labels** in the toolbar to print combined pallet/staging la
 
 Click **Generate Picklist** → **Create Picklist** to produce a picking document for the warehouse team, listing exactly which items, batches, and quantities to pull from the shelves.
 
+The Picklist print view opens automatically in a new browser tab with the print dialog ready, so you can print it without leaving the Storekeeper Hub. A success toast links back to the created Picklist record if you need to open it again later.
+
 ---
 
 ## 4. Stage 3: Operator Hub — Producing Finished Goods
@@ -247,6 +258,8 @@ Open **Operator Hub** from the main menu.
 
 - Click **Set Line** → select `Line A`.
 - Click **Set Operator** → select your employee record (or scan your badge).
+
+> **Note:** If your user account is linked to an active Employee record, the **Operator** field is filled in automatically and locked when the hub loads — you can skip the **Set Operator** step. The field stays editable only for shared or unlinked accounts. The backend enforces the same binding, so a linked user can only act as their own Employee.
 
 The Work Order queue loads. You see:
 
@@ -276,11 +289,14 @@ As you feed raw materials into the machine, record each one:
 
 **Option A — Barcode scan (preferred)**
 
-Click **Load Materials**. The scan field is automatically focused. Scan the barcode on each sack or container. Each successful scan:
-- Validates the item against the BOM and configured allowed item groups.
-- Checks that you are not consuming more than 150% of the BOM requirement (configurable in Factory Settings).
-- Creates a **Material Consumption for Manufacture** Stock Entry.
-- Plays a success tone.
+Click **Load Materials**. The scan field is automatically focused. Scan the barcode on each sack or container. For each scan iSnack:
+
+1. Parses the barcode and validates the item against the BOM and configured allowed item groups.
+2. Opens a **quantity-confirmation dialog** showing the barcode's quantity alongside the Work Order's **Required** and **Remaining** quantities. Confirm or edit the quantity you actually want to consume against this Work Order, then click **Confirm**.
+3. Checks that the confirmed quantity does not push consumption above 150% of the BOM requirement (configurable in Factory Settings).
+4. Creates a **Material Consumption for Manufacture** Stock Entry for the confirmed quantity only and plays a success tone.
+
+> **Why confirm the quantity?** A storekeeper's staging label can carry an aggregate quantity staged for *several* Work Orders. The confirmation step ensures you consume only the portion that belongs to the Work Order you are running, instead of the whole label quantity. Scanner focus is paused while the dialog is open and resumes once you confirm or cancel — a cancelled or failed scan can simply be scanned again.
 
 **Option B — Manual Load**
 
@@ -375,13 +391,22 @@ Click **Submit**. The system:
 
 > **Tip — Batch code format:** iSnack uses a 7-character code `YYM-DDS`. Letters represent numbers: A=0, B=1 … J=9. Example: `CGB-151` → year 26 (`CG`), month Feb (`B`), day 15, batch sequence 1. So `CGB-151` = 26 February 15, first batch of the day.
 
-#### Step 9 — Print FG labels
+#### Step 9 — Print FG (pallet) labels
 
-After Close Production, click **Print Label** to print carton or pallet labels for the finished goods:
+Pallet labels are printed at the end of the day, after Close Production. Click **Print Label** in the Operator Hub action bar (grouped to the right of **End Shift Return** / **Close Production**):
 
-1. A dialog shows the produced item with quantity and pallet type.
-2. Confirm carton qty and pallet type.
-3. Click **Print Labels** — labels open automatically for printing (via QZ Tray if configured, or browser dialog).
+1. The dialog aggregates every Work Order **Completed today** on the selected line(s), summed per finished-goods item. **Print Label** needs only an Operator and Line set — it no longer requires a live Work Order, so it stays available *after* Close Production, which is when pallet labels are actually printed.
+2. **Carton Qty** defaults to the quantity actually **produced** (not the planned Work Order quantity). Confirm or adjust Carton Qty, Pallet Type, and Pallet Qty.
+3. Click **Print Labels**. iSnack distributes the cartons across pallets — full pallets each carry an equal share and the last pallet carries the remainder (e.g., 1000 cartons at 65 per pallet → 15 labels of 65 + 1 of 25). Each pallet gets its own label. Labels open automatically for printing (via QZ Tray if configured, or the browser dialog).
+
+#### Step 10 — (Optional) Adjust labels in Label History
+
+Click **Label History** to review and correct labels that have already been created:
+
+- **Split** a Label Record into smaller records — for example, when one printed label needs to be spread across several pallets.
+- **Combine** two or more Label Records into one. Combine works only when the selected records share the same **Item**, **Batch**, and **Template**; the merged record carries the summed quantity and the deduplicated union of source documents.
+
+Every split or combine is recorded as a Label Print Job audit row, so label changes stay traceable.
 
 ---
 
@@ -411,7 +436,7 @@ The table below summarises the entire flow for the Cheese Puffs example in a sin
 Check the two most common filter issues:
 
 1. **Factory Section** — make sure you have selected the correct line (e.g., `Line A`). If this field is blank, you will see WOs for all lines, which can be confusing on a busy day.
-2. **Prod. Plan Posting Date** — this must exactly match the **Posting Date** on the Production Plan. If the planner set the Posting Date to tomorrow but you have today's date in the filter, you will see nothing.
+2. **WO Planned Start Date** — this must exactly match the **Planned Start Date** on the Work Orders. The Storekeeper Hub filters Work Orders by their planned start date, *not* the Production Plan's Posting Date. If the filter date does not match the date the planner set on the Work Orders, you will see nothing.
 
 After correcting the filters, click **Refresh**.
 
