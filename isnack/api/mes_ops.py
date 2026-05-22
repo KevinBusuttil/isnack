@@ -161,6 +161,66 @@ def _get_consumed_materials_from_load(work_order: str) -> dict:
     return {row.item_code: row.total_qty for row in consumed}
 
 
+def _consumed_qty_by_batch(wo_list, item_code: str) -> dict:
+    """
+    Total qty consumed per batch via "Material Consumption for Manufacture"
+    Stock Entries for the given work orders and item.
+
+    Counts batches recorded directly on the Stock Entry Detail (sed.batch_no)
+    AND batches recorded via a Serial-and-Batch Bundle (ERPNext v15). Each
+    detail row is counted exactly once: the direct field is used when set,
+    the bundle is used only when the direct field is empty — so rows that
+    carry both (use_serial_batch_fields=1) are not double-counted.
+
+    Args:
+        wo_list: List of Work Order names
+        item_code: Item code
+
+    Returns:
+        dict: {batch_no: qty}. Rows with no batch are keyed under "".
+    """
+    if not wo_list or not item_code:
+        return {}
+
+    wo_placeholders = ", ".join(["%s"] * len(wo_list))
+    rows = frappe.db.sql(f"""
+        SELECT batch_no, COALESCE(SUM(consumed_qty), 0) AS consumed_qty FROM (
+            SELECT COALESCE(sed.batch_no, '') AS batch_no, sed.qty AS consumed_qty
+            FROM `tabStock Entry` se
+            JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+            WHERE se.docstatus = 1
+              AND se.work_order IN ({wo_placeholders})
+              AND se.purpose = 'Material Consumption for Manufacture'
+              AND sed.item_code = %s
+              AND sed.is_finished_item = 0
+              AND NOT (
+                  (sed.batch_no IS NULL OR sed.batch_no = '')
+                  AND sed.serial_and_batch_bundle IS NOT NULL
+                  AND sed.serial_and_batch_bundle != ''
+              )
+
+            UNION ALL
+
+            SELECT sbe.batch_no AS batch_no, ABS(sbe.qty) AS consumed_qty
+            FROM `tabStock Entry` se
+            JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+            JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = sed.serial_and_batch_bundle
+            WHERE se.docstatus = 1
+              AND se.work_order IN ({wo_placeholders})
+              AND se.purpose = 'Material Consumption for Manufacture'
+              AND sed.item_code = %s
+              AND sed.is_finished_item = 0
+              AND (sed.batch_no IS NULL OR sed.batch_no = '')
+              AND sed.serial_and_batch_bundle IS NOT NULL
+              AND sed.serial_and_batch_bundle != ''
+              AND sbe.batch_no IS NOT NULL AND sbe.batch_no != ''
+        ) combined
+        GROUP BY batch_no
+    """, tuple(wo_list + [item_code] + wo_list + [item_code]), as_dict=True)
+
+    return {row.batch_no: flt(row.consumed_qty) for row in rows}
+
+
 def _get_total_consumed_cost(work_order: str) -> float:
     """
     Get the total cost of materials already consumed via "Material Consumption for Manufacture"
@@ -2657,28 +2717,13 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
 
                 # Compute consumed qty per batch from Material Consumption for Manufacture
                 # Stock Entries for the ended work orders. This shows how much was already
-                # consumed via the LOAD button during production.
+                # consumed via the LOAD button during production. Counts batches recorded
+                # both directly and via Serial-and-Batch Bundles.
                 batch_map = {}
                 if found_batches:
-                    b_placeholders = ", ".join(["%s"] * len(found_batches))
-                    consumed_rows = frappe.db.sql(f"""
-                        SELECT sed.batch_no, COALESCE(SUM(sed.qty), 0) AS consumed_qty
-                        FROM `tabStock Entry` se
-                        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-                        WHERE se.docstatus = 1
-                          AND se.work_order IN ({wo_placeholders})
-                          AND se.purpose = 'Material Consumption for Manufacture'
-                          AND sed.item_code = %s
-                          AND sed.batch_no IN ({b_placeholders})
-                          AND sed.is_finished_item = 0
-                        GROUP BY sed.batch_no
-                    """, tuple(wo_list + [item_code] + found_batches), as_dict=True)
-                    for row in consumed_rows:
-                        if row.batch_no:
-                            batch_map[row.batch_no] = flt(row.consumed_qty)
-                    # Ensure every found batch appears in the map (default to 0)
+                    consumed_by_batch = _consumed_qty_by_batch(wo_list, item_code)
                     for bno in found_batches:
-                        batch_map.setdefault(bno, 0)
+                        batch_map[bno] = consumed_by_batch.get(bno, 0)
 
                 if batch_map:
                     for bno in sorted(batch_map):
@@ -2987,21 +3032,13 @@ def close_production(good_qty: float, reject_qty: float = 0,
                     if qty <= 0:
                         continue
 
-                    # Check how much was already consumed for this item (and batch) via LOAD
-                    already_consumed_pkg = frappe.db.sql("""
-                        SELECT COALESCE(SUM(sed.qty), 0) AS total_qty
-                        FROM `tabStock Entry` se
-                        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-                        WHERE se.docstatus = 1
-                          AND se.work_order = %s
-                          AND se.purpose = 'Material Consumption for Manufacture'
-                          AND sed.item_code = %s
-                          AND sed.is_finished_item = 0
-                    """ + (" AND sed.batch_no = %s" if pkg_batch_no else ""),
-                        (wo_name, item_code, pkg_batch_no) if pkg_batch_no else (wo_name, item_code),
-                        as_dict=True
-                    )
-                    already_consumed_pkg_qty = flt(already_consumed_pkg[0].total_qty) if already_consumed_pkg else 0
+                    # Check how much was already consumed for this item (and batch) via LOAD.
+                    # Counts batches recorded both directly and via Serial-and-Batch Bundles.
+                    consumed_by_batch = _consumed_qty_by_batch([wo_name], item_code)
+                    if pkg_batch_no:
+                        already_consumed_pkg_qty = flt(consumed_by_batch.get(pkg_batch_no, 0))
+                    else:
+                        already_consumed_pkg_qty = flt(sum(consumed_by_batch.values()))
                     remaining_pkg_qty = qty - already_consumed_pkg_qty
 
                     if remaining_pkg_qty > QTY_EPSILON:
