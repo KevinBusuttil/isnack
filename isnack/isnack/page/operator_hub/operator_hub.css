@@ -1028,45 +1028,63 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
 
 /* Header is provided by .op-dialog. */
 
-/* Ended WO list items — teal left-border accent + subtle teal-tinted background */
-.close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded{
-  border-left: 4px solid #15b79e !important;
-  background: #f0fdf9;
-  transition: background .1s ease;
+/* Ended Work Orders — compact chip row */
+.close-production-dialog .cp-wo-chips{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
 }
-.close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded:hover{
-  background: #e0faf4;
+.close-production-dialog .cp-wo-chip{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f0fdf9;
+  border: 1px solid #99f6e4;
+  border-left: 4px solid #15b79e;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #134e4a;
+}
+.close-production-dialog .cp-wo-chip-qty{
+  color: #0f766e;
+  background: #ccfbf1;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 /* Good Qty — green tint (positive output) */
-.close-production-dialog [data-fieldname="good_qty"] .form-control{
+.close-production-dialog [data-fieldname$="good_qty"] .form-control{
   background: #f0fdf4 !important;
   border-color: #86efac !important;
   color: #166534 !important;
 }
 
 /* Reject Qty — red/amber tint (waste) */
-.close-production-dialog [data-fieldname="reject_qty"] .form-control{
+.close-production-dialog [data-fieldname$="reject_qty"] .form-control{
   background: #fff5f5 !important;
   border-color: #fca5a5 !important;
   color: #9f1239 !important;
 }
 
 /* Batch No — amber highlight (key operator input) */
-.close-production-dialog [data-fieldname="batch_no"] .form-control{
+.close-production-dialog [data-fieldname$="batch_no"] .form-control{
   background: #fff3d6 !important;
   border-color: #fbbf24 !important;
 }
 
 /* Packaging qty fields — subtle blue tint */
-.close-production-dialog [data-fieldname^="pkg_"] .form-control{
+.close-production-dialog [data-fieldname*="_pkg_"] .form-control{
   background: #e8f1ff !important;
   border-color: #93c5fd !important;
 }
 
 /* Primary CTA + reduced-motion are provided by .op-dialog. */
 @media (prefers-reduced-motion: reduce){
-  .close-production-dialog [data-fieldname="ended_wo_list"] .border.rounded{
+  .close-production-dialog .cp-wo-chip{
     transition: none !important;
     animation: none !important;
   }

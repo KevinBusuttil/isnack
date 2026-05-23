@@ -2329,18 +2329,24 @@ function init_operator_hub($root) {
     const fields = [];
 
     productGroups.forEach((g, gIdx) => {
-      const sectionLabel = productGroups.length > 1
+      const titleSuffix = productGroups.length > 1
         ? `${g.item_name} (${g.production_item})`
-        : `Ended Work Orders — ${g.item_name}`;
-      fields.push({ fieldtype: 'Section Break', label: sectionLabel });
+        : g.item_name;
+
+      // Row 1: full-width WO list as compact chips.
+      fields.push({ fieldtype: 'Section Break', label: `Ended Work Orders — ${titleSuffix}` });
+      const chips = g.work_orders.map(wo =>
+        `<span class="cp-wo-chip"><strong>${frappe.utils.escape_html(wo.name)}</strong>`
+        + `<span class="cp-wo-chip-qty">Qty ${wo.qty}</span></span>`
+      ).join('');
       fields.push({
         fieldtype: 'HTML',
         fieldname: `g${gIdx}_wo_list`,
-        options: '<div class="mb-2">' + g.work_orders.map(wo =>
-          `<div class="border rounded p-2 mb-1"><strong>${wo.name}</strong> (Qty: ${wo.qty})</div>`
-        ).join('') + '</div>',
+        options: `<div class="cp-wo-chips">${chips}</div>`,
       });
 
+      // Row 2: production quantities — three aligned columns.
+      fields.push({ fieldtype: 'Section Break', label: 'Production Quantities' });
       fields.push({ label:'Total Good Qty',   fieldname:`g${gIdx}_good_qty`,   fieldtype:'Float', reqd:1, default: 0 });
       fields.push({ fieldtype: 'Column Break' });
       fields.push({ label:'Total Reject Qty', fieldname:`g${gIdx}_reject_qty`, fieldtype:'Float', default: 0 });
@@ -2353,22 +2359,30 @@ function init_operator_hub($root) {
         description: '3 letters + dash + 3 digits (e.g., CGB-151). Dash auto-inserted.',
       });
 
+      // Row 3: packaging — two columns to keep the dialog compact.
       if (g.packaging_items.length) {
-        fields.push({ fieldtype: 'Section Break', label: `${g.item_name} — Packaging Materials Used` });
+        fields.push({ fieldtype: 'Section Break', label: 'Packaging Materials Used' });
         fields.push({
           fieldtype: 'HTML',
           fieldname: `g${gIdx}_packaging_help`,
           options: `<div class="text-muted small mb-2">Enter total quantities of packaging materials used across this product's ended work orders.</div>`,
         });
         g.packaging_items.forEach((item, idx) => {
-          const batchLabel = item.batch_no ? ` [Batch: ${item.batch_no}]` : '';
-          const consumedLabel = item.consumed_qty != null ? ` (Consumed: ${item.consumed_qty})` : '';
+          const batchLabel = item.batch_no ? ` · Batch ${item.batch_no}` : '';
+          const uomLabel = item.stock_uom ? `UOM: ${item.stock_uom}` : '';
+          const consumedLabel = item.consumed_qty != null ? ` · Already consumed: ${item.consumed_qty}` : '';
+          if (idx > 0 && idx % 2 === 0) {
+            fields.push({ fieldtype: 'Section Break' });
+          }
+          if (idx % 2 === 1) {
+            fields.push({ fieldtype: 'Column Break' });
+          }
           fields.push({
             label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
             fieldname: `g${gIdx}_pkg_${idx}`,
             fieldtype: 'Float',
             default: 0,
-            description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${consumedLabel}`,
+            description: `${uomLabel}${consumedLabel}`,
           });
         });
       }
