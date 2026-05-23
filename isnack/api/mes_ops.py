@@ -2849,280 +2849,357 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
     
     return result
 
+def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
+    """Close one Work Order: book Manufacture Stock Entry, mark Completed."""
+    wo_name = wo_data["name"]
+    try:
+        wo = frappe.get_doc("Work Order", wo_name)
+        fg_wh = (
+            wo.fg_warehouse
+            or _default_line_target(wo_name)
+            or frappe.db.get_single_value("Stock Settings", "default_warehouse")
+        )
+        uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
+        wip_wh = wo.wip_warehouse or _default_line_wip(wo_name)
+        has_batch = bool(frappe.db.get_value("Item", wo.production_item, "has_batch_no"))
+
+        scrap_wh = None
+        if split["reject"] > 0:
+            scrap_wh = _default_line_scrap(wo_name)
+            if not scrap_wh:
+                line = _line_for_work_order(wo_name) or "?"
+                frappe.throw(_(
+                    "Scrap warehouse is not configured for line {0} (Work Order {1}). "
+                    "Set scrap_warehouse in Factory Settings → Line Warehouse Map before "
+                    "closing production with rejects."
+                ).format(line, wo_name))
+
+        # Create Manufacture Stock Entry
+        se = frappe.new_doc("Stock Entry")
+        se.company = wo.company
+        se.purpose = "Manufacture"
+        se.stock_entry_type = "Manufacture"
+        se.work_order = wo_name
+        se.to_warehouse = fg_wh
+        se.fg_completed_qty = split["good"]
+        se.from_bom = 1
+        se.bom_no = wo.bom_no
+
+        # Add finished item
+        finished_item = {
+            "item_code": wo.production_item,
+            "qty": split["good"],
+            "uom": uom,
+            "is_finished_item": 1,
+            "t_warehouse": fg_wh,
+        }
+        if batch_no:
+            _ensure_batch(wo.production_item, batch_no)
+            finished_item["batch_no"] = batch_no
+            finished_item["use_serial_batch_fields"] = 1
+        se.append("items", finished_item)
+
+        # Materials already consumed via LOAD button
+        consumed_from_load = _get_consumed_materials_from_load(wo_name)
+
+        # Scale BOM to total throughput (good + reject) so the inputs that went
+        # into rejected units are also consumed; otherwise they remain in WIP.
+        total_production_qty = split["good"] + split["reject"]
+
+        if wo.bom_no and total_production_qty > 0:
+            bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty)
+
+            for bom_item in bom_items:
+                item_code = bom_item["item_code"]
+                required_qty = bom_item["qty"]
+                already_consumed = consumed_from_load.get(item_code, 0)
+                remaining_qty = required_qty - already_consumed
+
+                if abs(remaining_qty) > QTY_EPSILON:
+                    if remaining_qty > 0:
+                        se.append("items", {
+                            "item_code": item_code,
+                            "qty": remaining_qty,
+                            "uom": bom_item["uom"],
+                            "s_warehouse": wip_wh,
+                            "is_finished_item": 0,
+                        })
+                    else:
+                        if required_qty > QTY_EPSILON:
+                            variance_pct = (abs(remaining_qty) / required_qty * 100)
+                        else:
+                            variance_pct = 0
+                        frappe.log_error(
+                            title="Material Over-Consumption",
+                            message=(
+                                f"Over-consumption detected for WO {wo_name}\n"
+                                f"Item: {item_code}\n"
+                                f"Required: {required_qty:.4f}\n"
+                                f"Consumed: {already_consumed:.4f}\n"
+                                f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                            ),
+                        )
+
+        # Packaging materials (only the portion not already consumed via LOAD)
+        if split["packaging"]:
+            for pkg_item in split["packaging"]:
+                item_code = pkg_item["item_code"]
+                qty = pkg_item["qty"]
+                # Must not shadow the outer parameter batch_no (Finished Goods batch).
+                pkg_batch_no = pkg_item.get("batch_no")
+                if qty <= 0:
+                    continue
+
+                consumed_by_batch = _consumed_qty_by_batch([wo_name], item_code)
+                if pkg_batch_no:
+                    already_consumed_pkg_qty = flt(consumed_by_batch.get(pkg_batch_no, 0))
+                else:
+                    already_consumed_pkg_qty = flt(sum(consumed_by_batch.values()))
+                remaining_pkg_qty = qty - already_consumed_pkg_qty
+
+                if remaining_pkg_qty > QTY_EPSILON:
+                    item_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
+                    row = {
+                        "item_code": item_code,
+                        "qty": remaining_pkg_qty,
+                        "uom": item_uom,
+                        "s_warehouse": wip_wh,
+                        "is_finished_item": 0,
+                    }
+                    if pkg_batch_no:
+                        row["batch_no"] = pkg_batch_no
+                        row["use_serial_batch_fields"] = 1
+                    se.append("items", row)
+                elif remaining_pkg_qty < -QTY_EPSILON:
+                    frappe.log_error(
+                        title="Packaging Over-Consumption",
+                        message=(
+                            f"Packaging item over-consumed for WO {wo_name}\n"
+                            f"Item: {item_code}" + (f" Batch: {pkg_batch_no}" if pkg_batch_no else "") + "\n"
+                            f"Entered: {qty:.4f}\n"
+                            f"Already consumed: {already_consumed_pkg_qty:.4f}"
+                        ),
+                    )
+
+        # Scrap row for rejected output. When the production item is
+        # batch-tracked the scrap row must carry the same batch_no as the
+        # finished item, otherwise ERPNext fails Stock Entry submission with
+        # "Batch No is required for Item …".
+        if split["reject"] > 0:
+            scrap_row = {
+                "item_code": wo.production_item,
+                "qty": split["reject"],
+                "uom": uom,
+                "is_scrap_item": 1,
+                "t_warehouse": scrap_wh,
+            }
+            if has_batch and batch_no:
+                scrap_row["batch_no"] = batch_no
+                scrap_row["use_serial_batch_fields"] = 1
+            se.append("items", scrap_row)
+
+        _apply_pre_consumed_cost_to_finished_item(se, wo_name, split["good"])
+
+        se.flags.ignore_permissions = True
+        se.insert()
+        se.submit()
+
+        if split["reject"] > 0:
+            current_rejects = float(wo.get("custom_rejects_qty") or 0)
+            wo.db_set("custom_rejects_qty", current_rejects + split["reject"], commit=False)
+
+        frappe.db.set_value(
+            "Work Order",
+            wo_name,
+            {
+                "status": "Completed",
+                "actual_end_date": frappe.utils.now_datetime(),
+                "custom_production_ended": 0,
+            },
+        )
+
+        wo.reload()
+        wo.add_comment("Info", _("Production closed: Good={0:.2f}, Rejects={1:.2f}").format(
+            split["good"], split["reject"]
+        ))
+        wo.flags.ignore_permissions = True
+        wo.save()
+    except frappe.ValidationError:
+        raise
+    except Exception as e:
+        frappe.log_error(
+            title="Close Production Error",
+            message=f"Failed to close production for {wo_name}: {str(e)}",
+        )
+        frappe.throw(_("Failed to close production for {0}: {1}").format(wo_name, str(e)))
+
+
 @frappe.whitelist()
-def close_production(good_qty: float, reject_qty: float = 0, 
-                     batch_no: str = None, packaging_usage: str = None, lines: str = None):
+def close_production(groups: str = None, lines: str = None,
+                     good_qty: float = None, reject_qty: float = 0,
+                     batch_no: str = None, packaging_usage: str = None):
     """
-    Close all ended work orders for the given lines.
-    
+    Close ended work orders for the given lines, grouped by finished product.
+
+    Each product is closed independently so that:
+      - good/reject totals only aggregate WOs of the same product,
+      - each product carries its own batch number,
+      - packaging is scoped to that product's BOMs.
+
     Args:
-        good_qty: Total good quantity produced (to be split)
-        reject_qty: Total reject quantity (to be split)
-        batch_no: Batch number for finished goods (ISNACK format: 3 letters + dash + 3 digits (e.g., CGB-151))
-        packaging_usage: JSON array of {"item_code": "...", "qty": ..., "batch_no": "..."} for packaging materials
-        lines: JSON array of line names to filter WOs
-    
-    Process:
-    1. Get ended WOs (custom_production_ended = 1)
-    2. Validate based on Factory Settings mode
-    3. Calculate proportional split for each WO
-    4. For each WO:
-       - Create Manufacture Stock Entry
-       - Post packaging consumption
-       - Set status = Completed
-       - Clear custom_production_ended
+        groups: JSON array, one entry per product:
+            [{
+                "production_item": str,
+                "good_qty": float,
+                "reject_qty": float,
+                "batch_no": "AAA-000",
+                "packaging_usage": [{"item_code", "qty", "batch_no"}, ...]
+            }, ...]
+        lines: JSON array of line names to scope ended-WO lookup.
+
+        good_qty/reject_qty/batch_no/packaging_usage: legacy single-product
+            signature, retained only so old clients keep working. New callers
+            should pass `groups`.
     """
     _require_roles(ROLES_OPERATOR)
 
-    good_qty = float(good_qty or 0)
-    reject_qty = float(reject_qty or 0)
-    
-    if good_qty <= 0:
-        frappe.throw(_("Good quantity must be greater than zero"))
-    if reject_qty < 0:
-        frappe.throw(_("Rejects cannot be negative"))
-    
-    # Validate batch number format if provided
-    if batch_no:
-        _validate_batch_code_format(batch_no)
-    
-    # Parse lines
     line_list = []
     if lines:
         try:
             line_list = json.loads(lines) if isinstance(lines, str) else lines
         except Exception:
             pass
-    
-    # Parse packaging usage
-    packaging_items = []
-    if packaging_usage:
+
+    group_list = []
+    if groups:
         try:
-            packaging_items = json.loads(packaging_usage) if isinstance(packaging_usage, str) else packaging_usage
+            group_list = json.loads(groups) if isinstance(groups, str) else groups
         except Exception:
-            packaging_items = []
-    
-    # Get ended work orders
-    filters = {
-        "custom_production_ended": 1,
-        "status": ["!=", "Completed"],
-    }
-    if line_list:
-        filters["custom_factory_line"] = ["in", line_list]
-    
-    ended_wos = frappe.get_all(
-        "Work Order",
-        filters=filters,
-        fields=["name", "qty", "production_item", "company", "bom_no", "fg_warehouse", "wip_warehouse", "custom_factory_line"],
-        order_by="creation asc"
-    )
+            frappe.throw(_("Invalid groups payload"))
+    elif good_qty is not None:
+        # Legacy single-product call: synthesize one group.
+        legacy_pkg = []
+        if packaging_usage:
+            try:
+                legacy_pkg = json.loads(packaging_usage) if isinstance(packaging_usage, str) else packaging_usage
+            except Exception:
+                legacy_pkg = []
+        group_list = [{
+            "production_item": None,  # resolved below from first ended WO
+            "good_qty": good_qty,
+            "reject_qty": reject_qty,
+            "batch_no": batch_no,
+            "packaging_usage": legacy_pkg,
+        }]
 
-    if line_list:
-        ended_wos = [
-            wo for wo in ended_wos
-            if _line_for_work_order(wo["name"]) in line_list
-        ]
-    
-    if not ended_wos:
-        frappe.throw(_("No ended work orders found for the specified lines"))
-    
-    # Validate based on Factory Settings
-    _validate_close_production(line_list, ended_wos)
-    
-    # Calculate proportional splits
-    splits = _calculate_proportional_split(ended_wos, good_qty, reject_qty, packaging_items)
-    
-    # Process each work order
+    if not group_list:
+        frappe.throw(_("No production groups provided"))
+
+    # Parse + validate each group; collect ended WOs.
+    prepared = []
+    all_ended_wos = []
+    seen_batch_per_item = {}
+
+    for g in group_list:
+        production_item = g.get("production_item")
+        good = float(g.get("good_qty") or 0)
+        reject = float(g.get("reject_qty") or 0)
+        bno = (g.get("batch_no") or "").strip() or None
+        pkg = g.get("packaging_usage") or []
+
+        if good <= 0:
+            label = production_item or _("(unspecified item)")
+            frappe.throw(_("Good quantity must be greater than zero for {0}").format(label))
+        if reject < 0:
+            frappe.throw(_("Rejects cannot be negative"))
+        if not bno:
+            label = production_item or _("(unspecified item)")
+            frappe.throw(_("Batch number is required for {0}").format(label))
+        _validate_batch_code_format(bno)
+
+        # Each finished item must own its batch_no. Two different items
+        # cannot share the same batch_id (it would clash on Batch.name).
+        if bno in seen_batch_per_item and production_item and seen_batch_per_item[bno] != production_item:
+            frappe.throw(_(
+                "Batch {0} is assigned to both {1} and {2}. "
+                "Each finished product needs a unique batch number."
+            ).format(bno, seen_batch_per_item[bno], production_item))
+        if production_item:
+            seen_batch_per_item[bno] = production_item
+
+        filters = {
+            "custom_production_ended": 1,
+            "status": ["!=", "Completed"],
+        }
+        if production_item:
+            filters["production_item"] = production_item
+        if line_list:
+            filters["custom_factory_line"] = ["in", line_list]
+
+        ended_wos = frappe.get_all(
+            "Work Order",
+            filters=filters,
+            fields=["name", "qty", "production_item", "company", "bom_no",
+                    "fg_warehouse", "wip_warehouse", "custom_factory_line"],
+            order_by="creation asc",
+        )
+        if line_list:
+            ended_wos = [
+                wo for wo in ended_wos
+                if _line_for_work_order(wo["name"]) in line_list
+            ]
+        if not ended_wos:
+            label = production_item or _("the specified lines")
+            frappe.throw(_("No ended work orders found for {0}").format(label))
+
+        # Legacy single-group call: backfill production_item for batch tracking.
+        if not production_item:
+            items_in_set = {wo["production_item"] for wo in ended_wos}
+            if len(items_in_set) > 1:
+                frappe.throw(_(
+                    "Multiple finished products are pending close ({0}). "
+                    "Use the per-product Close Production dialog so each gets its own batch."
+                ).format(", ".join(sorted(items_in_set))))
+            production_item = ended_wos[0]["production_item"]
+            seen_batch_per_item[bno] = production_item
+
+        # Pre-validate scrap warehouse before booking anything when rejects exist.
+        if reject > 0:
+            for wo_data in ended_wos:
+                if not _default_line_scrap(wo_data["name"]):
+                    line = _line_for_work_order(wo_data["name"]) or "?"
+                    frappe.throw(_(
+                        "Scrap warehouse is not configured for line {0} (Work Order {1}). "
+                        "Set scrap_warehouse in Factory Settings → Line Warehouse Map before "
+                        "closing production with rejects."
+                    ).format(line, wo_data["name"]))
+
+        prepared.append({
+            "production_item": production_item,
+            "good_qty": good,
+            "reject_qty": reject,
+            "batch_no": bno,
+            "packaging_items": pkg,
+            "ended_wos": ended_wos,
+        })
+        all_ended_wos.extend(ended_wos)
+
+    # Single Factory-Settings validation across everything being closed.
+    _validate_close_production(line_list, all_ended_wos)
+
     completed_wos = []
-    for wo_data in ended_wos:
-        wo_name = wo_data["name"]
-        split = splits[wo_name]
-        
-        try:
-            wo = frappe.get_doc("Work Order", wo_name)
-            fg_wh = (
-                wo.fg_warehouse
-                or _default_line_target(wo_name)
-                or frappe.db.get_single_value("Stock Settings", "default_warehouse")
-            )
-            uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
-            wip_wh = wo.wip_warehouse or _default_line_wip(wo_name)
-            
-            # Create Manufacture Stock Entry
-            se = frappe.new_doc("Stock Entry")
-            se.company = wo.company
-            se.purpose = "Manufacture"
-            se.stock_entry_type = "Manufacture"
-            se.work_order = wo_name
-            se.to_warehouse = fg_wh
-            se.fg_completed_qty = split["good"]
-            se.from_bom = 1
-            se.bom_no = wo.bom_no
-            
-            # Add finished item
-            finished_item = {
-                "item_code": wo.production_item,
-                "qty": split["good"],
-                "uom": uom,
-                "is_finished_item": 1,
-                "t_warehouse": fg_wh,
-            }
-            
-            # Add batch number if provided
-            if batch_no:
-                # Ensure batch exists
-                _ensure_batch(wo.production_item, batch_no)
-                finished_item["batch_no"] = batch_no
-                finished_item["use_serial_batch_fields"] = 1
-            
-            se.append("items", finished_item)
-            
-            # Get materials already consumed via LOAD button
-            consumed_from_load = _get_consumed_materials_from_load(wo_name)
-            
-            # Get BOM items scaled for production quantity
-            if wo.bom_no:
-                bom_items = _get_bom_items_for_quantity(wo.bom_no, split["good"])
-                
-                # Add remaining materials to consume (subtract what was already consumed via LOAD)
-                for bom_item in bom_items:
-                    item_code = bom_item["item_code"]
-                    required_qty = bom_item["qty"]
-                    already_consumed = consumed_from_load.get(item_code, 0)
-                    remaining_qty = required_qty - already_consumed
-                    
-                    # Use epsilon for floating point tolerance
-                    QTY_EPSILON = 0.0001
-                    if abs(remaining_qty) > QTY_EPSILON:
-                        if remaining_qty > 0:
-                            # Under-consumed: add remaining quantity
-                            se.append("items", {
-                                "item_code": item_code,
-                                "qty": remaining_qty,
-                                "uom": bom_item["uom"],
-                                "s_warehouse": wip_wh,
-                                "is_finished_item": 0,
-                            })
-                        else:
-                            # Over-consumed: log variance for tracking
-                            if required_qty > QTY_EPSILON:
-                                variance_pct = (abs(remaining_qty) / required_qty * 100)
-                            else:
-                                variance_pct = 0
-                            
-                            frappe.log_error(
-                                title="Material Over-Consumption",
-                                message=(
-                                    f"Over-consumption detected for WO {wo_name}\n"
-                                    f"Item: {item_code}\n"
-                                    f"Required: {required_qty:.4f}\n"
-                                    f"Consumed: {already_consumed:.4f}\n"
-                                    f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
-                                ),
-                            )
-            
-            # Add packaging materials (only the portion not already consumed via LOAD)
-            if split["packaging"]:
-                QTY_EPSILON = 0.0001
-                for pkg_item in split["packaging"]:
-                    item_code = pkg_item["item_code"]
-                    qty = pkg_item["qty"]
-                    # Must not shadow the outer function parameter batch_no (Finished Goods batch).
-                    pkg_batch_no = pkg_item.get("batch_no")
-                    if qty <= 0:
-                        continue
+    for entry in prepared:
+        splits = _calculate_proportional_split(
+            entry["ended_wos"], entry["good_qty"], entry["reject_qty"], entry["packaging_items"],
+        )
+        for wo_data in entry["ended_wos"]:
+            _close_single_wo(wo_data, splits[wo_data["name"]], entry["batch_no"])
+            completed_wos.append(wo_data["name"])
 
-                    # Check how much was already consumed for this item (and batch) via LOAD.
-                    # Counts batches recorded both directly and via Serial-and-Batch Bundles.
-                    consumed_by_batch = _consumed_qty_by_batch([wo_name], item_code)
-                    if pkg_batch_no:
-                        already_consumed_pkg_qty = flt(consumed_by_batch.get(pkg_batch_no, 0))
-                    else:
-                        already_consumed_pkg_qty = flt(sum(consumed_by_batch.values()))
-                    remaining_pkg_qty = qty - already_consumed_pkg_qty
-
-                    if remaining_pkg_qty > QTY_EPSILON:
-                        item_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
-                        row = {
-                            "item_code": item_code,
-                            "qty": remaining_pkg_qty,
-                            "uom": item_uom,
-                            "s_warehouse": wip_wh,
-                            "is_finished_item": 0,
-                        }
-                        if pkg_batch_no:
-                            row["batch_no"] = pkg_batch_no
-                            row["use_serial_batch_fields"] = 1
-                        se.append("items", row)
-                    elif remaining_pkg_qty < -QTY_EPSILON:
-                        frappe.log_error(
-                            title="Packaging Over-Consumption",
-                            message=(
-                                f"Packaging item over-consumed for WO {wo_name}\n"
-                                f"Item: {item_code}" + (f" Batch: {pkg_batch_no}" if pkg_batch_no else "") + "\n"
-                                f"Entered: {qty:.4f}\n"
-                                f"Already consumed: {already_consumed_pkg_qty:.4f}"
-                            ),
-                        )
-            
-            # Add scrap/rejects if applicable
-            if split["reject"] > 0:
-                scrap_wh = _default_line_scrap(wo_name)
-                if scrap_wh:
-                    se.append("items", {
-                        "item_code": wo.production_item,
-                        "qty": split["reject"],
-                        "uom": uom,
-                        "is_scrap_item": 1,
-                        "t_warehouse": scrap_wh,
-                    })
-            
-            # Set basic_rate on the finished item to account for costs from prior
-            # "Material Consumption for Manufacture" entries (consumed via LOAD button).
-            # Without this, ERPNext only sees the current entry's outgoing items and may
-            # calculate a zero rate for the finished good, causing a valuation error.
-            _apply_pre_consumed_cost_to_finished_item(se, wo_name, split["good"])
-
-            se.flags.ignore_permissions = True
-            se.insert()
-            se.submit()
-            
-            # Update rejects count
-            if split["reject"] > 0:
-                current_rejects = float(wo.get("custom_rejects_qty") or 0)
-                wo.db_set("custom_rejects_qty", current_rejects + split["reject"], commit=False)
-            
-            # Mark as completed
-            frappe.db.set_value(
-                "Work Order",
-                wo_name,
-                {
-                    "status": "Completed",
-                    "actual_end_date": frappe.utils.now_datetime(),
-                    "custom_production_ended": 0,
-                },
-            )
-            
-            wo.reload()
-            wo.add_comment("Info", _("Production closed: Good={0:.2f}, Rejects={1:.2f}").format(
-                split["good"], split["reject"]
-            ))
-            wo.flags.ignore_permissions = True
-            wo.save()
-            
-            completed_wos.append(wo_name)
-            
-        except Exception as e:
-            frappe.log_error(
-                title="Close Production Error",
-                message=f"Failed to close production for {wo_name}: {str(e)}",
-            )
-            frappe.throw(_("Failed to close production for {0}: {1}").format(wo_name, str(e)))
-    
     return {
         "success": True,
         "message": f"Successfully closed production for {len(completed_wos)} work order(s)",
-        "completed_wos": completed_wos
+        "completed_wos": completed_wos,
     }
 
 @frappe.whitelist()

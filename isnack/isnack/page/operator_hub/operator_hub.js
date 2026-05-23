@@ -2266,19 +2266,18 @@ function init_operator_hub($root) {
 
   // >>> NEW: Close Production - Complete all ended work orders <<<
   $('#btn-close-production',$root).on('click', async () => {
-    if (!state.current_emp || !state.current_lines.length) { 
-      flashStatus('Set operator and line first', 'warning'); 
-      return; 
+    if (!state.current_emp || !state.current_lines.length) {
+      flashStatus('Set operator and line first', 'warning');
+      return;
     }
     setScanMode(false);
 
     setStatus('Loading ended work orders…');
 
-    // Get ended work orders
     let endedWOs = [];
     try {
-      const r = await rpc('isnack.api.mes_ops.get_ended_work_orders', { 
-        lines: JSON.stringify(state.current_lines) 
+      const r = await rpc('isnack.api.mes_ops.get_ended_work_orders', {
+        lines: JSON.stringify(state.current_lines)
       });
       endedWOs = (r.message && r.message.work_orders) || [];
     } catch (e) {
@@ -2292,64 +2291,88 @@ function init_operator_hub($root) {
       return;
     }
 
-    // Get packaging items for ended WOs
-    let packagingItems = [];
-    try {
-      const woNames = endedWOs.map(wo => wo.name);
-      const r2 = await rpc('isnack.api.mes_ops.get_packaging_bom_items_for_ended_wos', {
-        work_orders: JSON.stringify(woNames)
-      });
-      packagingItems = (r2.message && r2.message.items) || [];
-    } catch (e) {
-      console.warn('get_packaging_bom_items_for_ended_wos failed', e);
-    }
+    // Group ended WOs by production_item so each finished product is closed
+    // independently — own good/reject totals, own batch number, own packaging.
+    const productGroups = [];
+    const groupByKey = new Map();
+    endedWOs.forEach(wo => {
+      const key = wo.production_item;
+      let g = groupByKey.get(key);
+      if (!g) {
+        g = {
+          production_item: wo.production_item,
+          item_name: wo.item_name || wo.production_item,
+          work_orders: [],
+          packaging_items: [],
+        };
+        groupByKey.set(key, g);
+        productGroups.push(g);
+      }
+      g.work_orders.push(wo);
+    });
+
+    // Fetch packaging items per product group (scoped to that product's WOs).
+    setStatus('Loading packaging materials…');
+    await Promise.all(productGroups.map(async (g) => {
+      try {
+        const woNames = g.work_orders.map(w => w.name);
+        const r2 = await rpc('isnack.api.mes_ops.get_packaging_bom_items_for_ended_wos', {
+          work_orders: JSON.stringify(woNames),
+        });
+        g.packaging_items = (r2.message && r2.message.items) || [];
+      } catch (e) {
+        console.warn('get_packaging_bom_items_for_ended_wos failed', e);
+        g.packaging_items = [];
+      }
+    }));
 
     const fields = [];
 
-    // Show list of ended WOs
-    fields.push({ fieldtype: 'Section Break', label: 'Ended Work Orders' });
-    fields.push({ 
-      fieldtype: 'HTML', 
-      fieldname: 'ended_wo_list',
-      options: '<div class="mb-3">' + endedWOs.map(wo => 
-        `<div class="border rounded p-2 mb-2"><strong>${wo.name}</strong>: ${wo.item_name} (Qty: ${wo.qty})</div>`
-      ).join('') + '</div>'
-    });
-
-    // Good and Reject quantities
-    fields.push({ fieldtype: 'Section Break', label: 'Total Production' });
-    fields.push({ label:'Total Good Qty', fieldname:'good_qty', fieldtype:'Float', reqd:1, default: 0 });
-    fields.push({ label:'Total Reject Qty', fieldname:'reject_qty', fieldtype:'Float', default: 0 });
-    fields.push({ 
-      label:'Batch No', 
-      fieldname:'batch_no', 
-      fieldtype:'Data', 
-      reqd:1,
-      read_only: 0,
-      description: 'Batch code format: 3 letters + dash + 3 digits (e.g., CGB-151). Dash is auto-inserted.',
-    });
-
-    // Packaging materials
-    if (packagingItems.length) {
-      fields.push({ fieldtype: 'Section Break', label: 'Packaging Materials Used' });
-      fields.push({ 
-        fieldtype: 'HTML', 
-        fieldname: 'packaging_help',
-        options: '<div class="text-muted small mb-2">Enter total quantities of packaging materials used across all ended work orders.</div>'
+    productGroups.forEach((g, gIdx) => {
+      const sectionLabel = productGroups.length > 1
+        ? `${g.item_name} (${g.production_item})`
+        : `Ended Work Orders — ${g.item_name}`;
+      fields.push({ fieldtype: 'Section Break', label: sectionLabel });
+      fields.push({
+        fieldtype: 'HTML',
+        fieldname: `g${gIdx}_wo_list`,
+        options: '<div class="mb-2">' + g.work_orders.map(wo =>
+          `<div class="border rounded p-2 mb-1"><strong>${wo.name}</strong> (Qty: ${wo.qty})</div>`
+        ).join('') + '</div>',
       });
 
-      packagingItems.forEach((item, idx) => {
-        const batchLabel = item.batch_no ? ` [Batch: ${item.batch_no}]` : '';
-        const consumedLabel = item.consumed_qty != null ? ` (Consumed: ${item.consumed_qty})` : '';
+      fields.push({ label:'Total Good Qty',   fieldname:`g${gIdx}_good_qty`,   fieldtype:'Float', reqd:1, default: 0 });
+      fields.push({ fieldtype: 'Column Break' });
+      fields.push({ label:'Total Reject Qty', fieldname:`g${gIdx}_reject_qty`, fieldtype:'Float', default: 0 });
+      fields.push({ fieldtype: 'Column Break' });
+      fields.push({
+        label:'Batch No',
+        fieldname:`g${gIdx}_batch_no`,
+        fieldtype:'Data',
+        reqd:1,
+        description: '3 letters + dash + 3 digits (e.g., CGB-151). Dash auto-inserted.',
+      });
+
+      if (g.packaging_items.length) {
+        fields.push({ fieldtype: 'Section Break', label: `${g.item_name} — Packaging Materials Used` });
         fields.push({
-          label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
-          fieldname: `pkg_${idx}`,
-          fieldtype: 'Float',
-          default: 0,
-          description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${consumedLabel}`,
+          fieldtype: 'HTML',
+          fieldname: `g${gIdx}_packaging_help`,
+          options: `<div class="text-muted small mb-2">Enter total quantities of packaging materials used across this product's ended work orders.</div>`,
         });
-      });
-    }
+        g.packaging_items.forEach((item, idx) => {
+          const batchLabel = item.batch_no ? ` [Batch: ${item.batch_no}]` : '';
+          const consumedLabel = item.consumed_qty != null ? ` (Consumed: ${item.consumed_qty})` : '';
+          fields.push({
+            label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
+            fieldname: `g${gIdx}_pkg_${idx}`,
+            fieldtype: 'Float',
+            default: 0,
+            description: `${item.stock_uom ? 'UOM: ' + item.stock_uom : ''}${consumedLabel}`,
+          });
+        });
+      }
+    });
 
     const d = opDialog({
       title:'Close Production',
@@ -2357,48 +2380,70 @@ function init_operator_hub($root) {
       size: 'large',
       primary_action_label:'Close Production',
       primary_action: (v) => {
-        if (!v.good_qty || v.good_qty <= 0) {
-          frappe.msgprint('Total Good Qty must be greater than zero');
-          return;
-        }
+        const batchPattern = /^[A-Za-z]{3}-\d{3}$/;
+        const payload = [];
+        const batchSeen = new Map(); // batch_no -> production_item
 
-        // Validate batch number format before submission
-        if (v.batch_no) {
-          const pattern = /^[A-Za-z]{3}-\d{3}$/;
-          if (!pattern.test(v.batch_no)) {
+        for (let gIdx = 0; gIdx < productGroups.length; gIdx++) {
+          const g = productGroups[gIdx];
+          const goodQty = parseFloat(v[`g${gIdx}_good_qty`] || 0);
+          const rejectQty = parseFloat(v[`g${gIdx}_reject_qty`] || 0);
+          const batchNo = ((v[`g${gIdx}_batch_no`] || '') + '').toUpperCase().trim();
+
+          if (!goodQty || goodQty <= 0) {
+            frappe.msgprint(`Total Good Qty for ${g.item_name} must be greater than zero`);
+            return;
+          }
+          if (rejectQty < 0) {
+            frappe.msgprint(`Reject Qty for ${g.item_name} cannot be negative`);
+            return;
+          }
+          if (!batchNo) {
             frappe.msgprint({
-              title: 'Invalid Batch Format',
-              message: 'Batch code must be 3 letters followed by a dash and 3 digits (e.g., CGB-151)',
-              indicator: 'red'
+              title: 'Batch Number Required',
+              message: `Batch number is required for ${g.item_name}`,
+              indicator: 'red',
             });
             return;
           }
-        } else {
-          frappe.msgprint({
-            title: 'Batch Number Required',
-            message: 'Batch number is required for production closure',
-            indicator: 'red'
+          if (!batchPattern.test(batchNo)) {
+            frappe.msgprint({
+              title: 'Invalid Batch Format',
+              message: `Batch code for ${g.item_name} must be 3 letters + dash + 3 digits (e.g., CGB-151)`,
+              indicator: 'red',
+            });
+            return;
+          }
+          if (batchSeen.has(batchNo) && batchSeen.get(batchNo) !== g.production_item) {
+            frappe.msgprint({
+              title: 'Duplicate Batch Number',
+              message: `Batch ${batchNo} is assigned to multiple products. Each product needs a unique batch number.`,
+              indicator: 'red',
+            });
+            return;
+          }
+          batchSeen.set(batchNo, g.production_item);
+
+          const packagingUsage = [];
+          g.packaging_items.forEach((item, idx) => {
+            const qty = parseFloat(v[`g${gIdx}_pkg_${idx}`] || 0);
+            if (qty > 0) {
+              packagingUsage.push({ item_code: item.item_code, qty, batch_no: item.batch_no || null });
+            }
           });
-          return;
+
+          payload.push({
+            production_item: g.production_item,
+            good_qty: goodQty,
+            reject_qty: rejectQty,
+            batch_no: batchNo,
+            packaging_usage: packagingUsage,
+          });
         }
 
         setStatus('Closing production…');
-
-        const packagingUsage = [];
-        packagingItems.forEach((item, idx) => {
-          const key = `pkg_${idx}`;
-          const rawVal = v[key];
-          const qty = parseFloat(rawVal || 0);
-          if (qty > 0) {
-            packagingUsage.push({ item_code: item.item_code, qty: qty, batch_no: item.batch_no || null });
-          }
-        });
-
         rpc('isnack.api.mes_ops.close_production', {
-          good_qty: v.good_qty,
-          reject_qty: v.reject_qty || 0,
-          batch_no: v.batch_no,
-          packaging_usage: JSON.stringify(packagingUsage),
+          groups: JSON.stringify(payload),
           lines: JSON.stringify(state.current_lines),
         }).then(() => {
           d.hide();
@@ -2407,33 +2452,32 @@ function init_operator_hub($root) {
         }).catch(err => {
           console.error('close_production failed', err);
         });
-      }
+      },
     });
 
     d.show();
     d.$wrapper.addClass('close-production-dialog');
-    
-    // Auto-insert dash after 3rd letter
-    const batchInput = d.fields_dict.batch_no.$input;
-    if (batchInput) {
+
+    // Auto-insert dash after 3rd letter on each per-group batch input.
+    productGroups.forEach((g, gIdx) => {
+      const field = d.fields_dict[`g${gIdx}_batch_no`];
+      const batchInput = field && field.$input;
+      if (!batchInput) return;
       batchInput.on('input', function() {
         let val = $(this).val().toUpperCase();
-        // Remove any existing dashes for re-processing
         let cleanedInput = val.replace(/-/g, '').substring(0, 6);
         let letterPart = cleanedInput.substring(0, 3).replace(/[^A-Z]/g, '');
         let digitPart = cleanedInput.substring(3).replace(/[^0-9]/g, '').substring(0, 3);
-        
         let formatted = letterPart;
         if (letterPart.length === 3) {
           formatted += '-' + digitPart;
         }
-        
         if (formatted !== val) {
           $(this).val(formatted);
-          d.set_value('batch_no', formatted);
+          d.set_value(`g${gIdx}_batch_no`, formatted);
         }
       });
-    }
+    });
   });
 
   // Initial
