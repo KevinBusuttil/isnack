@@ -2377,7 +2377,7 @@ function init_operator_hub($root) {
     const d = opDialog({
       title:'Close Production',
       fields,
-      size: 'large',
+      size: 'extra-large',
       primary_action_label:'Close Production',
       primary_action: (v) => {
         const batchPattern = /^[A-Za-z]{3}-\d{3}$/;
