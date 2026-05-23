@@ -2346,7 +2346,10 @@ function init_operator_hub($root) {
       });
 
       // Row 2: production quantities — three aligned columns.
-      fields.push({ fieldtype: 'Section Break', label: 'Production Quantities' });
+      const quantitiesLabel = productGroups.length > 1
+        ? `Production Quantities — ${g.item_name}`
+        : 'Production Quantities';
+      fields.push({ fieldtype: 'Section Break', label: quantitiesLabel });
       fields.push({ label:'Total Good Qty',   fieldname:`g${gIdx}_good_qty`,   fieldtype:'Float', reqd:1, default: 0 });
       fields.push({ fieldtype: 'Column Break' });
       fields.push({ label:'Total Reject Qty', fieldname:`g${gIdx}_reject_qty`, fieldtype:'Float', default: 0 });
@@ -2359,9 +2362,13 @@ function init_operator_hub($root) {
         description: '3 letters + dash + 3 digits (e.g., CGB-151). Dash auto-inserted.',
       });
 
-      // Row 3: packaging — two columns to keep the dialog compact.
+      // Row 3: packaging — stacked single column so labels and descriptions
+      // never collide regardless of how many packaging items there are.
       if (g.packaging_items.length) {
-        fields.push({ fieldtype: 'Section Break', label: 'Packaging Materials Used' });
+        const packagingLabel = productGroups.length > 1
+          ? `Packaging Materials Used — ${g.item_name}`
+          : 'Packaging Materials Used';
+        fields.push({ fieldtype: 'Section Break', label: packagingLabel });
         fields.push({
           fieldtype: 'HTML',
           fieldname: `g${gIdx}_packaging_help`,
@@ -2371,12 +2378,6 @@ function init_operator_hub($root) {
           const batchLabel = item.batch_no ? ` · Batch ${item.batch_no}` : '';
           const uomLabel = item.stock_uom ? `UOM: ${item.stock_uom}` : '';
           const consumedLabel = item.consumed_qty != null ? ` · Already consumed: ${item.consumed_qty}` : '';
-          if (idx > 0 && idx % 2 === 0) {
-            fields.push({ fieldtype: 'Section Break' });
-          }
-          if (idx % 2 === 1) {
-            fields.push({ fieldtype: 'Column Break' });
-          }
           fields.push({
             label: `${item.item_code} — ${item.item_name || ''}${batchLabel}`,
             fieldname: `g${gIdx}_pkg_${idx}`,
