@@ -213,7 +213,7 @@
    "label": "Use Per User Printer Defaults"
   },
   {
-   "depends_on": "eval:doc.use_per_user_printer_defaults",
+   "description": "Per-user printer overrides. Only honored when 'Use Per User Printer Defaults' above is ticked; otherwise the global Default Label Printer / Default A4 Printer apply.",
    "fieldname": "user_printer_defaults",
    "fieldtype": "Table",
    "label": "User Printer Defaults",
@@ -244,7 +244,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-27 12:00:00.000000",
+ "modified": "2026-05-27 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",
