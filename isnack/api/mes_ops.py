@@ -2918,11 +2918,22 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         # into rejected units are also consumed; otherwise they remain in WIP.
         total_production_qty = split["good"] + split["reject"]
 
+        # Packaging items are handled exclusively by the dedicated packaging
+        # loop below (which uses the qty entered at Close Production and the
+        # selected batch). They must be skipped here, otherwise the BOM-scaling
+        # loop would consume them once on a BOM-quantity basis without a batch
+        # and the packaging loop would consume them again on a usage basis —
+        # leading to double consumption / negative-stock errors.
+        packaging_groups = _packaging_groups_global()
+
         if wo.bom_no and total_production_qty > 0:
             bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty)
 
             for bom_item in bom_items:
                 item_code = bom_item["item_code"]
+                group = (_get_item_group(item_code) or "").strip().lower()
+                if group in packaging_groups:
+                    continue
                 required_qty = bom_item["qty"]
                 already_consumed = consumed_from_load.get(item_code, 0)
                 remaining_qty = required_qty - already_consumed
