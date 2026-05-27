@@ -2118,6 +2118,14 @@ function init_operator_hub($root) {
       let badge, badgeText;
       if (it.is_sfg) {
         badge = 'bg-secondary'; badgeText = 'SFG (enter below)';
+      } else if (it.is_packaging) {
+        // Packaging is intentionally deferred to Close Production — it
+        // does not block End WO and is consumed via the Manufacture
+        // Stock Entry created at Close.
+        badge = 'bg-info text-dark';
+        badgeText = it.status === 'ok'
+          ? 'Packaging — already loaded'
+          : 'Packaging — deferred to Close Production';
       } else if (it.status === 'ok') {
         badge = 'bg-success'; badgeText = 'OK';
       } else if (it.status === 'over') {

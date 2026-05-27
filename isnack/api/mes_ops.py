@@ -2001,8 +2001,12 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
           {item_code, item_name, uom, required, consumed, remaining,
            is_packaging, is_sfg, status}
         status ∈ {"ok", "short", "over"}.
-      - shortfalls: count of items with status == "short" (non-SFG only)
+      - shortfalls: count of items with status == "short" (non-SFG, non-packaging)
       - can_end: True iff there are no shortfalls
+
+    Packaging items are intentionally excluded from the shortfall gate:
+    they are deferred to Close Production, where ``_close_single_wo``
+    consumes them from WIP as part of the final Manufacture Stock Entry.
     """
     tolerance_pct = _end_wo_tolerance_pct()
     out = {"tolerance_pct": tolerance_pct, "items": [], "shortfalls": 0, "can_end": True}
@@ -2037,8 +2041,10 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
             status = "ok"
 
         # SFG items are handled by the SFG section of the dialog and are
-        # excluded from the "must be consumed" gate.
-        if not is_sfg and status == "short":
+        # excluded from the "must be consumed" gate. Packaging items are
+        # intentionally deferred to Close Production (consumed there via
+        # the Manufacture Stock Entry), so they also do not block End WO.
+        if not is_sfg and not is_packaging and status == "short":
             shortfalls += 1
 
         rows.append(
@@ -2122,7 +2128,12 @@ def end_work_order(work_order: str, sfg_usage: str = None,
         user_roles = set(frappe.get_roles(frappe.session.user))
         is_override_allowed = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
 
-        short_rows = [r for r in summary["items"] if (not r["is_sfg"]) and r["status"] == "short"]
+        # Packaging shortfalls are not blocking (deferred to Close Production)
+        # so keep them out of the audit / override message as well.
+        short_rows = [
+            r for r in summary["items"]
+            if (not r["is_sfg"]) and (not r["is_packaging"]) and r["status"] == "short"
+        ]
         short_summary = ", ".join(
             f"{r['item_code']} ({r['consumed']:.4g}/{r['required']:.4g} {r['uom']})"
             for r in short_rows
