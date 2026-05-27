@@ -1687,11 +1687,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           $out.append(`<div class="muted">Nothing was created (no remaining quantities?).</div>`);
         } else {
           transfers.forEach(se => {
+            const wo_label = se.is_surplus
+              ? 'Surplus (no WO)'
+              : `WO ${frappe.utils.escape_html(se.work_order || '')}`;
             const $row = $(`
               <div class="hub-row">
                 <div class="cell">
                   <b>${frappe.utils.escape_html(se.name)}</b>
-                  <div class="muted">WO ${frappe.utils.escape_html(se.work_order || '')}</div>
+                  <div class="muted">${wo_label}</div>
                 </div>
                 <div class="cell">
                   ${frappe.utils.escape_html(se.to_warehouse || '')}<br>
