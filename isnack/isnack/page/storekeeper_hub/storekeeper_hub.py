@@ -728,6 +728,7 @@ def create_consolidated_transfers(
         surplus_se.purpose = "Material Transfer"
         surplus_se.from_warehouse = source_warehouse
         surplus_se.to_warehouse = surplus_target
+        surplus_se.custom_is_surplus = 1
         if pallet_id:
             surplus_se.remarks = f"Surplus from pallet {pallet_id} (not allocated to any WO)"
         else:
@@ -828,24 +829,23 @@ def get_recent_transfers(
     # Picklist source: Stores → Staging transfers only. 'Material Transfer for
     # Manufacture' is the downstream Staging → WIP movement created by the
     # operator Start action and is not what the storekeeper picks.
-    # Surplus SEs (no WO link, remarks tagged 'Surplus...') are emitted by
+    # Surplus SEs (custom_is_surplus = 1, no WO link) are emitted by
     # create_consolidated_transfers when the picked qty exceeds the WO
     # requirements (e.g. opening a 50 kg reel for a 37 kg WO) and must be
     # picked together with the WO-linked SEs.
-    surplus_remarks_pattern = "Surplus from %"
     conditions = [
         "se.docstatus = 1",
         "se.purpose = 'Material Transfer'",
-        "(se.work_order IS NOT NULL OR (se.work_order IS NULL AND se.remarks LIKE %s))",
+        "(se.work_order IS NOT NULL OR se.custom_is_surplus = 1)",
     ]
-    params: list[object] = [surplus_remarks_pattern]
+    params: list[object] = []
 
     if factory_line:
         joins.append("left join `tabBOM` bom on bom.name = wo.bom_no")
         # Surplus SEs have no WO so they can't be filtered by factory line;
         # always include them and let the storekeeper select what to picklist.
         conditions.append(
-            "(se.work_order IS NULL or wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
+            "(se.custom_is_surplus = 1 or wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
         )
         params.extend([factory_line, factory_line])
 
@@ -867,7 +867,7 @@ def get_recent_transfers(
             f"("
             f"  pp.posting_date = %s"
             f"  or ({mr_fulfilment_clause} and se.modified >= %s)"
-            f"  or (se.work_order IS NULL and se.modified >= %s)"
+            f"  or (se.custom_is_surplus = 1 and se.modified >= %s)"
             f")"
         )
         params.extend([posting_date, since, since])
@@ -884,7 +884,7 @@ def get_recent_transfers(
             se.remarks,
             se.work_order,
             case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment,
-            case when se.work_order is null then 1 else 0 end as is_surplus
+            coalesce(se.custom_is_surplus, 0) as is_surplus
         from `tabStock Entry` se
         {' '.join(joins)}
         where {' and '.join(conditions)}
