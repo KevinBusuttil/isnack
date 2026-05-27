@@ -536,9 +536,24 @@ def create_consolidated_transfers(
                 # Check if batches are assigned (either single or multi-batch)
                 has_batches = bool(row.get("batches") and len(row.get("batches")) > 0)
                 has_single_batch = bool(row.get("batch_no"))
-                
+
                 if not has_batches and not has_single_batch:
                     frappe.throw(_("Batch No is required for item {0}.").format(item_code))
+
+                # If batches are supplied, their total must equal the cart row qty.
+                # The Storekeeper Hub UI lets the operator pick the full physical
+                # unit (e.g. a 50 kg reel) and syncs cart qty to the picked total,
+                # then re-validates at Allocate time. By the time we get here the
+                # two MUST agree. Mismatch indicates either an API caller bypassing
+                # the UI or a UI bug — fail fast rather than silently rescaling.
+                if has_batches:
+                    cart_qty = float(row.get("qty") or 0)
+                    batch_total = sum(float(b.get("qty") or 0) for b in row.get("batches") or [])
+                    if abs(batch_total - cart_qty) > 0.001:
+                        frappe.throw(_(
+                            "Batch totals ({0}) do not match cart quantity ({1}) for item {2}. "
+                            "Re-open the batch picker and adjust."
+                        ).format(batch_total, cart_qty, item_code))
 
     # Build batch information map: item_code -> list of {batch_no, qty} or single batch_no
     batch_info_map = {}
@@ -560,8 +575,12 @@ def create_consolidated_transfers(
     wo_order = _order_wos_fifo(selected_wos)
     remaining = {wo: _remaining_map_for_wo(wo) for wo in wo_order}
 
-    # Allocation: per item -> distribute across WOs until qty exhausted (capped by remaining)
+    # Allocation: per item -> distribute across WOs until qty exhausted (capped by remaining).
+    # Anything not absorbed by a WO (cart_qty > sum of WO remainings) becomes surplus and
+    # is still moved to staging via a separate non-WO Stock Entry below — the physical
+    # reel/pallet was already opened, so logical stock must follow the material.
     allocations = {wo: {} for wo in wo_order}
+    surplus_by_item = {}
     for row in items or []:
         if not isinstance(row, dict):
             continue
@@ -580,6 +599,8 @@ def create_consolidated_transfers(
                 qty_left -= take
             if qty_left <= 1e-9:
                 break
+        if qty_left > 1e-9:
+            surplus_by_item[item] = surplus_by_item.get(item, 0.0) + qty_left
 
     created = []
     for wo in wo_order:
@@ -691,6 +712,91 @@ def create_consolidated_transfers(
                 "posting_time": se.posting_time,
             }
         )
+
+    # Surplus: emit a single non-WO Material Transfer for whatever the WOs didn't absorb.
+    # Target = staging warehouse of the first selected WO (FIFO); if WOs span different
+    # staging warehouses the storekeeper can re-route manually from the SE form.
+    if surplus_by_item:
+        first_wo_doc = frappe.get_doc("Work Order", wo_order[0])
+        surplus_target = _staging_for(first_wo_doc) or _wip_for(first_wo_doc)
+        if not surplus_target:
+            frappe.throw(_("No Staging or WIP warehouse configured for WO {0}; cannot place surplus.").format(wo_order[0]))
+
+        surplus_se = frappe.new_doc("Stock Entry")
+        surplus_se.company = first_wo_doc.company
+        surplus_se.stock_entry_type = "Material Transfer"
+        surplus_se.purpose = "Material Transfer"
+        surplus_se.from_warehouse = source_warehouse
+        surplus_se.to_warehouse = surplus_target
+        if pallet_id:
+            surplus_se.remarks = f"Surplus from pallet {pallet_id} (not allocated to any WO)"
+        else:
+            surplus_se.remarks = "Surplus from staging transfer (not allocated to any WO)"
+
+        for item_code, surplus_qty in surplus_by_item.items():
+            surplus_rounded = _round_up_qty(surplus_qty, precision=3)
+            if surplus_rounded <= 0:
+                continue
+            uom = frappe.db.get_value("Item", item_code, "stock_uom")
+            batch_info = batch_info_map.get(item_code)
+
+            if isinstance(batch_info, list) and len(batch_info) > 0:
+                total_batch_qty = sum(float(b.get("qty", 0)) for b in batch_info)
+                if total_batch_qty <= 0:
+                    continue
+                allocated_so_far = 0.0
+                for i, batch_item in enumerate(batch_info):
+                    batch_no = batch_item.get("batch_no")
+                    batch_qty = float(batch_item.get("qty", 0))
+                    if batch_qty <= 0:
+                        continue
+                    if i == len(batch_info) - 1:
+                        line_qty = max(0.0, surplus_rounded - allocated_so_far)
+                    else:
+                        proportion = batch_qty / total_batch_qty
+                        line_qty = _round_up_qty(surplus_rounded * proportion, precision=3)
+                        allocated_so_far += line_qty
+                    if line_qty > 0:
+                        surplus_se.append(
+                            "items",
+                            {
+                                "item_code": item_code,
+                                "qty": line_qty,
+                                "uom": uom,
+                                "s_warehouse": source_warehouse,
+                                "t_warehouse": surplus_target,
+                                "batch_no": batch_no,
+                                "use_serial_batch_fields": 1 if batch_no else 0,
+                            },
+                        )
+            else:
+                batch_no = batch_info if isinstance(batch_info, str) else None
+                surplus_se.append(
+                    "items",
+                    {
+                        "item_code": item_code,
+                        "qty": surplus_rounded,
+                        "uom": uom,
+                        "s_warehouse": source_warehouse,
+                        "t_warehouse": surplus_target,
+                        "batch_no": batch_no,
+                        "use_serial_batch_fields": 1 if batch_no else 0,
+                    },
+                )
+
+        if surplus_se.get("items"):
+            surplus_se.insert(ignore_permissions=True)
+            surplus_se.submit()
+            created.append(
+                {
+                    "name": surplus_se.name,
+                    "work_order": None,
+                    "to_warehouse": surplus_target,
+                    "posting_date": surplus_se.posting_date,
+                    "posting_time": surplus_se.posting_time,
+                    "is_surplus": True,
+                }
+            )
 
     return {"transfers": created}
 
