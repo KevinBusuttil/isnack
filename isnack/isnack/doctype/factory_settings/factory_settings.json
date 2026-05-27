@@ -34,6 +34,7 @@
   "enable_silent_printing",
   "pallet_uom_options",
   "per_user_printer_defaults_section",
+  "use_per_user_printer_defaults",
   "user_printer_defaults"
  ],
  "fields": [
@@ -205,6 +206,14 @@
    "label": "Per User Printer Defaults"
   },
   {
+   "default": "0",
+   "description": "When enabled, label and A4 printing routes through the matching row in the User Printer Defaults table for the logged-in user. When disabled (default), every user prints to the global Default Label Printer / Default A4 Printer above.",
+   "fieldname": "use_per_user_printer_defaults",
+   "fieldtype": "Check",
+   "label": "Use Per User Printer Defaults"
+  },
+  {
+   "depends_on": "eval:doc.use_per_user_printer_defaults",
    "fieldname": "user_printer_defaults",
    "fieldtype": "Table",
    "label": "User Printer Defaults",
@@ -235,7 +244,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-02-17 21:34:24.423904",
+ "modified": "2026-05-27 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",

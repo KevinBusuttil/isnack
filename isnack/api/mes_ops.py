@@ -13,6 +13,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
     _process_batch_spaces,
 )
+from isnack.utils.printing import get_label_printer
 
 # ============================================================
 # Factory Settings helpers (Single doctype)
@@ -3287,7 +3288,7 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     
     # Get silent printing settings
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
-    default_label_printer = getattr(fs, "default_label_printer", None)
+    default_label_printer = get_label_printer(fs)
     
     return {
         "success": True,
@@ -3406,7 +3407,7 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
     
     # Get silent printing settings
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
-    default_label_printer = getattr(fs, "default_label_printer", None)
+    default_label_printer = get_label_printer(fs)
 
     base_url = _generate_print_url("Work Order", first_work_order, template)
     pallet_type_q = frappe.utils.quote(pallet_type)
@@ -3570,7 +3571,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     
     # Create print jobs for audit trail (only if printer is provided)
     fs = _fs()
-    target_printer = printer or getattr(fs, "default_label_printer", None)
+    target_printer = printer or get_label_printer(fs)
     
     jobs = []
     print_urls = []
@@ -3755,7 +3756,7 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
             )
 
     fs = _fs()
-    target_printer = printer or getattr(fs, "default_label_printer", None)
+    target_printer = printer or get_label_printer(fs)
 
     first_source = combined.sources[0] if combined.sources else None
     source_doctype = first_source.source_doctype if first_source else None
