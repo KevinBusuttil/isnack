@@ -6,6 +6,7 @@ from frappe import _
 from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate, cint
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
+from isnack.utils.printing import get_label_printer
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -917,7 +918,7 @@ def print_labels(stock_entry: str):
         fs = frappe.get_single("Factory Settings")
         fmt = getattr(fs, "default_label_print_format", None) or "SATO Label Print"
         enable_silent_printing = getattr(fs, "enable_silent_printing", False)
-        default_label_printer = getattr(fs, "default_label_printer", None)
+        default_label_printer = get_label_printer(fs)
     except Exception:
         fmt = "SATO Label Print"
         enable_silent_printing = False
@@ -1091,7 +1092,7 @@ def print_combined_pallet_labels(items):
             or "SATO Label Print"
         )
         enable_silent_printing = getattr(fs, "enable_silent_printing", False)
-        default_label_printer = getattr(fs, "default_label_printer", None)
+        default_label_printer = get_label_printer(fs)
     except Exception:
         fmt = "SATO Label Print"
         enable_silent_printing = False
