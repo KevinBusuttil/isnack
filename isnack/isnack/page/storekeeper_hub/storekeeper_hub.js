@@ -1194,10 +1194,18 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       return;
     }
     state.cart.forEach((r, idx) => {
-      // Check if item has multiple batches assigned
+      // Check if item has multiple batches assigned. When batches are
+      // assigned, the sum of batch qty must match the cart row qty at
+      // Allocate time. We flag any drift here so the storekeeper can spot
+      // and re-open the batch dialog before submitting.
       const has_multi_batch = r.batches && r.batches.length > 0;
-      const batch_indicator = has_multi_batch 
-        ? `<span class="chip" style="font-size: 10px; padding: 1px 6px;">${r.batches.length} batches</span>`
+      const batch_total = has_multi_batch
+        ? r.batches.reduce((s, b) => s + (parseFloat(b.qty) || 0), 0)
+        : 0;
+      const batch_mismatch = has_multi_batch
+        && Math.abs(batch_total - (parseFloat(r.qty) || 0)) > QTY_TOLERANCE;
+      const batch_indicator = has_multi_batch
+        ? `<span class="chip ${batch_mismatch ? 'sk-batch-chip-mismatch' : ''}" style="font-size: 10px; padding: 1px 6px;${batch_mismatch ? ' background-color: #fde68a; color: #92400e;' : ''}" title="${batch_mismatch ? __('Batch total {0} ≠ cart qty {1} — re-open batch picker before allocating', [fmt_qty(batch_total), fmt_qty(r.qty || 0)]) : __('{0} batch(es) assigned', [r.batches.length])}">${r.batches.length} batches${batch_mismatch ? ' ⚠' : ''}</span>`
         : '';
 
       const $tr = $(`
@@ -1257,6 +1265,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         const rounded = round_qty(e.target.value || 0);
         r.qty = rounded;
         $(e.currentTarget).val(fmt_qty(rounded));
+        // Re-render so the batch-mismatch indicator reflects the new qty.
+        if (r.has_batch_no && r.batches && r.batches.length) {
+          redraw_cart();
+        }
       });
       $tr.find('.c-notes').on('change', e => { r.note = e.target.value; });
       $tr.find('.del').on('click', () => { state.cart.splice(idx, 1); redraw_cart(); });
@@ -1383,7 +1395,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               const batch_no = $(this).attr('data-batch');
               const qty_input = $(this).find('.batch-qty-input');
               const qty = parseFloat(qty_input.val() || 0);
-              
+
               if (qty > 0) {
                 assignments.push({
                   batch_no: batch_no,
@@ -1393,13 +1405,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               }
             });
 
-            // Validate total
-            const diff = Math.abs(total_assigned - total_qty);
-            if (diff > QTY_TOLERANCE) {
+            // Storekeepers often allocate the full physical unit (e.g. a 50 kg
+            // reel for a 37.35 kg requirement). We no longer block on
+            // total_assigned != required — instead the cart row qty follows
+            // the picked total, and the Allocate & Create Transfers step
+            // re-validates that cart qty and batch totals agree.
+            if (total_assigned <= 0) {
               frappe.msgprint({
                 title: __('Validation Error'),
-                message: __('Total assigned quantity ({0}) must equal required quantity ({1})', 
-                  [fmt_qty(total_assigned), fmt_qty(total_qty)]),
+                message: __('Assign a quantity to at least one batch.'),
                 indicator: 'red'
               });
               return;
@@ -1407,7 +1421,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
             // Save to cart row
             cart_row.batches = assignments;
-            
+            // Cart qty becomes what was physically picked, so the operator
+            // sees and can still adjust the actual transfer amount.
+            cart_row.qty = round_qty(total_assigned);
+
             // Also set the single batch_no for backwards compatibility (first batch)
             if (assignments.length > 0) {
               cart_row.batch_no = assignments[0].batch_no;
@@ -1417,7 +1434,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
               message: __('Batch assignments saved'),
               indicator: 'green'
             });
-            
+
             d.hide();
             redraw_cart();
           }
@@ -1500,21 +1517,33 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
         $table_container.html(table_html);
 
-        // Update total on input change
+        // Update total on input change. Over/under-pick are allowed
+        // (e.g. allocating a full 50 kg reel for a 37.35 kg requirement),
+        // so we only show informational hints — never block.
+        const $hint = $('<div class="sk-batch-selection-hint text-muted small" style="margin-top:4px;"></div>');
+        $table_container.append($hint);
         const update_total = () => {
           let total = 0;
           $table_container.find('.batch-qty-input').each(function() {
             total += parseFloat($(this).val() || 0);
           });
           $table_container.find('#total-assigned').text(fmt_qty(total));
-          
-          // Visual feedback
+
           const $total = $table_container.find('#total-assigned');
-          const diff = Math.abs(total - total_qty);
-          if (diff < QTY_TOLERANCE) {
-            $total.removeClass('sk-total-invalid').addClass('sk-total-valid');
+          const diff = total - total_qty;
+          $total.removeClass('sk-total-invalid sk-total-valid');
+          if (Math.abs(diff) < QTY_TOLERANCE) {
+            $total.addClass('sk-total-valid');
+            $hint.text(__('Exact pick: cart qty will stay at {0} {1}.',
+              [fmt_qty(total_qty), cart_row.uom || '']));
+          } else if (diff > 0) {
+            $total.addClass('sk-total-valid');
+            $hint.text(__('Over-pick by {0} {1} — cart qty will be set to {2}; surplus will remain in WIP.',
+              [fmt_qty(diff), cart_row.uom || '', fmt_qty(total)]));
           } else {
-            $total.removeClass('sk-total-valid').addClass('sk-total-invalid');
+            $total.addClass('sk-total-invalid');
+            $hint.text(__('Under-pick by {0} {1} — cart qty will be set to {2}; remaining will need a second pick.',
+              [fmt_qty(-diff), cart_row.uom || '', fmt_qty(total)]));
           }
         };
 
@@ -1605,6 +1634,34 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     if (missing_batch.length) {
       const codes = missing_batch.map(row => row.item_code).filter(Boolean).join(', ');
       frappe.msgprint(__('Select batch codes for batch-managed items before allocating. Missing: {0}', [codes || __('(unknown item)')]));
+      return;
+    }
+
+    // Final safety net: if the user edited cart qty after assigning batches,
+    // the sum of batch qty must still match the cart row qty. The batch
+    // dialog itself no longer enforces equality (it lets the storekeeper
+    // pick a full reel for a partial requirement), so the contract is
+    // re-checked here before any Stock Entry is created.
+    const batch_mismatches = state.cart
+      .map((row) => {
+        if (!row.has_batch_no) return null;
+        if (!row.batches || !row.batches.length) return null;
+        const total = row.batches.reduce((s, b) => s + (parseFloat(b.qty) || 0), 0);
+        const diff = Math.abs(total - (parseFloat(row.qty) || 0));
+        if (diff <= QTY_TOLERANCE) return null;
+        return { item_code: row.item_code, cart_qty: row.qty, batch_total: total };
+      })
+      .filter(Boolean);
+
+    if (batch_mismatches.length) {
+      const lines = batch_mismatches
+        .map((m) => __('{0}: cart qty {1}, batch total {2}', [m.item_code, fmt_qty(m.cart_qty), fmt_qty(m.batch_total)]))
+        .join('<br>');
+      frappe.msgprint({
+        title: __('Batch totals do not match cart quantity'),
+        message: __('Re-open the batch picker for the rows below so the batch totals match the cart quantity, then try again:<br>{0}', [lines]),
+        indicator: 'red'
+      });
       return;
     }
 

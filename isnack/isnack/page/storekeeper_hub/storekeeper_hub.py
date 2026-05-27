@@ -536,9 +536,24 @@ def create_consolidated_transfers(
                 # Check if batches are assigned (either single or multi-batch)
                 has_batches = bool(row.get("batches") and len(row.get("batches")) > 0)
                 has_single_batch = bool(row.get("batch_no"))
-                
+
                 if not has_batches and not has_single_batch:
                     frappe.throw(_("Batch No is required for item {0}.").format(item_code))
+
+                # If batches are supplied, their total must equal the cart row qty.
+                # The Storekeeper Hub UI lets the operator pick the full physical
+                # unit (e.g. a 50 kg reel) and syncs cart qty to the picked total,
+                # then re-validates at Allocate time. By the time we get here the
+                # two MUST agree. Mismatch indicates either an API caller bypassing
+                # the UI or a UI bug — fail fast rather than silently rescaling.
+                if has_batches:
+                    cart_qty = float(row.get("qty") or 0)
+                    batch_total = sum(float(b.get("qty") or 0) for b in row.get("batches") or [])
+                    if abs(batch_total - cart_qty) > 0.001:
+                        frappe.throw(_(
+                            "Batch totals ({0}) do not match cart quantity ({1}) for item {2}. "
+                            "Re-open the batch picker and adjust."
+                        ).format(batch_total, cart_qty, item_code))
 
     # Build batch information map: item_code -> list of {batch_no, qty} or single batch_no
     batch_info_map = {}
