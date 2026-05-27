@@ -825,17 +825,27 @@ def get_recent_transfers(
     """
     factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
+    # Picklist source: Stores → Staging transfers only. 'Material Transfer for
+    # Manufacture' is the downstream Staging → WIP movement created by the
+    # operator Start action and is not what the storekeeper picks.
+    # Surplus SEs (no WO link, remarks tagged 'Surplus...') are emitted by
+    # create_consolidated_transfers when the picked qty exceeds the WO
+    # requirements (e.g. opening a 50 kg reel for a 37 kg WO) and must be
+    # picked together with the WO-linked SEs.
+    surplus_remarks_pattern = "Surplus from %"
     conditions = [
         "se.docstatus = 1",
-        "se.purpose IN ('Material Transfer for Manufacture', 'Material Transfer')",
-        "se.work_order IS NOT NULL",
+        "se.purpose = 'Material Transfer'",
+        "(se.work_order IS NOT NULL OR (se.work_order IS NULL AND se.remarks LIKE %s))",
     ]
-    params: list[object] = []
+    params: list[object] = [surplus_remarks_pattern]
 
     if factory_line:
         joins.append("left join `tabBOM` bom on bom.name = wo.bom_no")
+        # Surplus SEs have no WO so they can't be filtered by factory line;
+        # always include them and let the storekeeper select what to picklist.
         conditions.append(
-            "(wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
+            "(se.work_order IS NULL or wo.custom_factory_line = %s or bom.custom_default_factory_line = %s)"
         )
         params.extend([factory_line, factory_line])
 
@@ -851,12 +861,16 @@ def get_recent_transfers(
 
     if posting_date:
         joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
-        # Either the WO matches the day's Production Plan, OR the SE is an
-        # MR fulfilment we want to surface anyway (within the recency window).
+        # WO-linked: match Production Plan posting_date.
+        # MR-fulfilment or surplus (no WO): fall back to recency window.
         conditions.append(
-            f"(pp.posting_date = %s or ({mr_fulfilment_clause} and se.modified >= %s))"
+            f"("
+            f"  pp.posting_date = %s"
+            f"  or ({mr_fulfilment_clause} and se.modified >= %s)"
+            f"  or (se.work_order IS NULL and se.modified >= %s)"
+            f")"
         )
-        params.extend([posting_date, since])
+        params.extend([posting_date, since, since])
     else:
         conditions.append("se.modified >= %s")
         params.append(since)
@@ -869,7 +883,8 @@ def get_recent_transfers(
             se.to_warehouse,
             se.remarks,
             se.work_order,
-            case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment
+            case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment,
+            case when se.work_order is null then 1 else 0 end as is_surplus
         from `tabStock Entry` se
         {' '.join(joins)}
         where {' and '.join(conditions)}
