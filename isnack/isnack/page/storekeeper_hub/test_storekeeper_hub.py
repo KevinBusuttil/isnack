@@ -14,6 +14,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     mark_end_shift_return_received,
     _normalize_batch_expiry_date,
     print_combined_pallet_labels,
+    _build_surplus_groups,
 )
 
 
@@ -476,6 +477,107 @@ class TestGetRecentTransfers(unittest.TestCase):
         # once that originating WO has started.
         self.assertIn("owo.name = se.custom_originating_work_order", query)
         self.assertIn("owo.actual_start_date IS NULL", query)
+
+
+class TestBuildSurplusGroups(unittest.TestCase):
+    """Tests for grouping surplus by staging warehouse and tracking all WOs."""
+
+    def _wo_info(self, **lines):
+        """lines: wo -> (staging, wip). planned dates are arbitrary."""
+        return {
+            wo: {
+                "staging": s,
+                "wip": w,
+                "planned_start_date": date(2026, 5, 30),
+                "company": "Test Co",
+            }
+            for wo, (s, w) in lines.items()
+        }
+
+    def test_three_wos_same_staging_records_all_origins(self):
+        """3 WOs sharing a staging warehouse all become originating WOs."""
+        surplus_by_item = {"ITEM-X": 12.65}
+        demand_wos_by_item = {"ITEM-X": ["WO1", "WO2", "WO3"]}
+        wo_info = self._wo_info(
+            WO1=("Stage-A", "WIP-A"),
+            WO2=("Stage-A", "WIP-A"),
+            WO3=("Stage-A", "WIP-A"),
+        )
+
+        groups = _build_surplus_groups(
+            surplus_by_item, demand_wos_by_item, wo_info, ["WO1", "WO2", "WO3"], "WO1"
+        )
+
+        self.assertEqual(len(groups), 1)
+        g = groups[0]
+        self.assertEqual(g["staging"], "Stage-A")
+        self.assertEqual(g["items"], {"ITEM-X": 12.65})
+        origin_wos = {r["work_order"] for r in g["origin_rows"]}
+        self.assertEqual(origin_wos, {"WO1", "WO2", "WO3"})
+        # backward-compatible first FIFO WO
+        self.assertEqual(g["first_wo"], "WO1")
+        # every row carries the item code for traceability
+        for r in g["origin_rows"]:
+            self.assertEqual(r["item_code"], "ITEM-X")
+            self.assertEqual(r["staging_warehouse"], "Stage-A")
+            self.assertEqual(r["wip_warehouse"], "WIP-A")
+
+    def test_excludes_wo_on_different_staging_warehouse(self):
+        """A WO on a different staging warehouse is not linked to the surplus."""
+        surplus_by_item = {"ITEM-X": 10.0}
+        demand_wos_by_item = {"ITEM-X": ["WO1", "WO2", "WO3"]}
+        wo_info = self._wo_info(
+            WO1=("Stage-A", "WIP-A"),
+            WO2=("Stage-A", "WIP-A"),
+            WO3=("Stage-B", "WIP-B"),
+        )
+
+        groups = _build_surplus_groups(
+            surplus_by_item, demand_wos_by_item, wo_info, ["WO1", "WO2", "WO3"], "WO1"
+        )
+
+        # Surplus routes to the FIFO-first demand WO's staging (Stage-A); WO3 is
+        # on Stage-B so it must not appear as an originating WO.
+        self.assertEqual(len(groups), 1)
+        origin_wos = {r["work_order"] for r in groups[0]["origin_rows"]}
+        self.assertEqual(origin_wos, {"WO1", "WO2"})
+
+    def test_items_on_different_staging_become_separate_groups(self):
+        """Items routed to different staging warehouses produce separate SEs."""
+        surplus_by_item = {"ITEM-X": 5.0, "ITEM-Y": 3.0}
+        demand_wos_by_item = {"ITEM-X": ["WO1"], "ITEM-Y": ["WO3"]}
+        wo_info = self._wo_info(
+            WO1=("Stage-A", "WIP-A"),
+            WO3=("Stage-B", "WIP-B"),
+        )
+
+        groups = _build_surplus_groups(
+            surplus_by_item, demand_wos_by_item, wo_info, ["WO1", "WO3"], "WO1"
+        )
+
+        self.assertEqual(len(groups), 2)
+        by_staging = {g["staging"]: g for g in groups}
+        self.assertIn("Stage-A", by_staging)
+        self.assertIn("Stage-B", by_staging)
+        self.assertEqual(by_staging["Stage-A"]["items"], {"ITEM-X": 5.0})
+        self.assertEqual(by_staging["Stage-B"]["items"], {"ITEM-Y": 3.0})
+
+    def test_item_with_no_demand_falls_back_to_fallback_wo(self):
+        """An item demanded by no WO is attributed to the fallback WO."""
+        surplus_by_item = {"ITEM-Z": 4.0}
+        demand_wos_by_item = {}  # not demanded by any WO
+        wo_info = self._wo_info(WO1=("Stage-A", "WIP-A"))
+
+        groups = _build_surplus_groups(
+            surplus_by_item, demand_wos_by_item, wo_info, ["WO1"], "WO1"
+        )
+
+        self.assertEqual(len(groups), 1)
+        g = groups[0]
+        self.assertEqual(g["staging"], "Stage-A")
+        self.assertEqual(g["first_wo"], "WO1")
+        origin_wos = {r["work_order"] for r in g["origin_rows"]}
+        self.assertEqual(origin_wos, {"WO1"})
 
 
 if __name__ == '__main__':

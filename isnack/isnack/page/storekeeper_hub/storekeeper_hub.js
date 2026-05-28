@@ -12,6 +12,21 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const QTY_TOLERANCE = 0.001; // Math.pow(10, -QTY_PRECISION)
   const PRINT_DIALOG_DELAY_MS = 500; // Delay between multiple print dialogs
 
+  // Surplus chip: shows the Surplus tag, all originating WOs in its tooltip, and a
+  // "Swept" marker once the surplus has been moved from staging to WIP.
+  function surplus_chip_html(se) {
+    if (!se || !se.is_surplus) return '';
+    const wos = se.origin_work_orders || [];
+    const wo_text = wos.length
+      ? __('Originating Work Orders: {0}', [wos.join(', ')])
+      : __('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO');
+    let html = `<span class="chip surplus" title="${frappe.utils.escape_html(wo_text)}">${__('Surplus')}</span>`;
+    if (se.surplus_swept) {
+      html += ` <span class="chip swept" title="${__('Already swept from Staging to WIP')}">${__('Swept to WIP')}</span>`;
+    }
+    return html;
+  }
+
   // Load theme CSS (Deep Cerulean)
   $('<link rel="stylesheet" type="text/css" href="/assets/isnack/css/storekeeper_hub.css">').appendTo(document.head);
 
@@ -585,9 +600,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           `).join('')
         : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
 
-      const surplus_chip = se.is_surplus
-        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
-        : '';
+      const surplus_chip = surplus_chip_html(se);
 
       const $card = $(`
         <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
@@ -857,9 +870,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           `).join('')
         : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
 
-      const surplus_chip = se.is_surplus
-        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
-        : '';
+      const surplus_chip = surplus_chip_html(se);
 
       const $card = $(`
         <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
@@ -1783,9 +1794,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const mr_badge = se.is_mr_fulfilment
         ? `<span class="chip mr-fulfilment" title="${__('Fulfils an operator Material Request')}">${__('MR')}</span>`
         : '';
-      const surplus_badge = se.is_surplus
-        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
-        : '';
+      const surplus_badge = surplus_chip_html(se);
 
       const $row = $(`
         <div class="hub-row staged-row ${is_selected ? 'selected' : ''}" data-name="${se.name}">
