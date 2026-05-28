@@ -645,7 +645,11 @@ function init_operator_hub($root) {
       }[row.status] || 'chip chip-ns');
       const isEnded = !!row.custom_production_ended;
       const endedChip = isEnded ? '<span class="chip chip-ended" title="Production ended — awaiting Close Production">Ended</span>' : '';
-      const rowClass = isEnded ? ' row-ended' : '';
+      const isCurrent = row.name === state.current_wo;
+      const rowClass = `${isEnded ? ' row-ended' : ''}${isCurrent ? ' row-current' : ''}`;
+      const plannedDate = row.planned_start_date
+        ? `<span class="text-muted ms-2">Planned ${frappe.utils.escape_html(frappe.datetime.global_date_format(row.planned_start_date))}</span>`
+        : '';
       const el = $(`
         <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center${rowClass}" type="button">
           <div class="fw-semibold">
@@ -653,6 +657,7 @@ function init_operator_hub($root) {
             <span class="text-muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
             <span class="text-muted ms-2">Qty ${row.for_quantity}</span>
             ${row.line ? `<span class="text-muted ms-2">Line ${frappe.utils.escape_html(row.line)}</span>` : ''}
+            ${plannedDate}
           </div>
           <div class="d-flex gap-2 align-items-center">
             <span class="${chipType}">${row.type}</span>
@@ -662,6 +667,7 @@ function init_operator_hub($root) {
           </div>
         </button>
       `);
+      el.attr('data-wo', row.name);
       el.on('click', () => set_active_work_order(row.name)); grid.append(el);
     });
   }
@@ -673,6 +679,10 @@ function init_operator_hub($root) {
     state.current_wo_status = row ? row.status : null;
     state.current_stage_status = row ? row.stage_status : null;
     state.current_production_ended = row ? (row.custom_production_ended || false) : false;
+
+    grid.children('.list-group-item').removeClass('row-current')
+      .filter(function () { return $(this).attr('data-wo') === wo_name; })
+      .addClass('row-current');
 
     rpc('isnack.api.mes_ops.get_wo_banner', { work_order: wo_name })
       .then(r => banner.html(r.message && r.message.html ? r.message.html : '—'));
