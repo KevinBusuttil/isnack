@@ -434,6 +434,19 @@
   margin-left: 6px;
 }
 
+.storekeeper-hub .chip.swept,
+.ppl-se-card .chip.swept {
+  background: #dcfce7;   /* green — surplus already moved to WIP */
+  border: 1px solid #86efac;
+  color: #166534;
+  font-weight: 700;
+  letter-spacing: .25px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
 /* --- Right column cards: keep original stacked text, pin actions bottom-right --- */
 
 /* Undo any previous grid/flex on these rows */

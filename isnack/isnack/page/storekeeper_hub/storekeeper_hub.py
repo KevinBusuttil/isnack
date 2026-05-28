@@ -489,6 +489,90 @@ def get_available_batches(item_code: str, warehouse: str):
     return result
 
 
+def _build_surplus_groups(surplus_by_item, demand_wos_by_item, wo_info, wo_order, fallback_wo):
+    """Group surplus items by the staging warehouse they will be routed to.
+
+    For each surplus item the target staging warehouse is the staging warehouse
+    of the first FIFO Work Order that demanded it (falling back to ``fallback_wo``
+    when the item was demanded by no selected WO, e.g. an item not present in any
+    BOM). One surplus Stock Entry is then created per warehouse group.
+
+    Each group records, per (work_order, item) pair, an originating-WO row — but
+    only for WOs whose own staging warehouse matches the group's staging
+    warehouse. This keeps cross-line sweeping safe: a Work Order can only sweep
+    surplus that physically lives in its own staging warehouse, so WOs on a
+    different production line are intentionally excluded from the originating list
+    of a surplus that landed elsewhere.
+
+    Returns an ordered list of groups, each:
+        {"staging": wh, "items": {item: qty}, "origin_rows": [...],
+         "first_wo": wo, "first_planned_start_date": date}
+    """
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+
+    for item_code, qty in surplus_by_item.items():
+        demand_wos = demand_wos_by_item.get(item_code) or []
+
+        target_staging = None
+        for wo in demand_wos:
+            st = (wo_info.get(wo) or {}).get("staging")
+            if st:
+                target_staging = st
+                break
+        if not target_staging:
+            fb = wo_info.get(fallback_wo) or {}
+            target_staging = fb.get("staging") or fb.get("wip")
+
+        key = target_staging or "__none__"
+        g = groups.get(key)
+        if g is None:
+            g = {
+                "staging": target_staging,
+                "items": {},
+                "origin_rows": [],
+                "_pairs": set(),
+            }
+            groups[key] = g
+            order.append(key)
+
+        g["items"][item_code] = g["items"].get(item_code, 0.0) + float(qty)
+
+        matched = [
+            wo for wo in demand_wos
+            if (wo_info.get(wo) or {}).get("staging") == target_staging
+        ]
+        if not matched and not demand_wos and fallback_wo:
+            # Item demanded by no WO: attribute to the FIFO-first WO so the
+            # legacy custom_originating_work_order path still applies.
+            matched = [fallback_wo]
+
+        for wo in matched:
+            pair = (wo, item_code)
+            if pair in g["_pairs"]:
+                continue
+            g["_pairs"].add(pair)
+            info = wo_info.get(wo) or {}
+            g["origin_rows"].append({
+                "work_order": wo,
+                "item_code": item_code,
+                "planned_start_date": info.get("planned_start_date"),
+                "staging_warehouse": info.get("staging"),
+                "wip_warehouse": info.get("wip"),
+            })
+
+    result = []
+    for key in order:
+        g = groups[key]
+        g.pop("_pairs", None)
+        origin_wos = {r["work_order"] for r in g["origin_rows"]}
+        first_wo = next((w for w in wo_order if w in origin_wos), fallback_wo)
+        g["first_wo"] = first_wo
+        g["first_planned_start_date"] = (wo_info.get(first_wo) or {}).get("planned_start_date")
+        result.append(g)
+    return result
+
+
 @frappe.whitelist()
 def create_consolidated_transfers(
     pallet_id: str = "",
@@ -574,6 +658,15 @@ def create_consolidated_transfers(
 
     wo_order = _order_wos_fifo(selected_wos)
     remaining = {wo: _remaining_map_for_wo(wo) for wo in wo_order}
+
+    # Record which WOs had demand for each item BEFORE allocation consumes the
+    # remaining map. A surplus item's "originating WOs" are all selected WOs that
+    # had a requirement for it in this consolidated cart (FIFO order preserved).
+    demand_wos_by_item: dict[str, list[str]] = {}
+    for wo in wo_order:
+        for item_code, info in (remaining.get(wo) or {}).items():
+            if float(info.get("qty", 0)) > 0:
+                demand_wos_by_item.setdefault(item_code, []).append(wo)
 
     # Allocation: per item -> distribute across WOs until qty exhausted (capped by remaining).
     # Anything not absorbed by a WO (cart_qty > sum of WO remainings) becomes surplus and
@@ -713,93 +806,127 @@ def create_consolidated_transfers(
             }
         )
 
-    # Surplus: emit a single non-WO Material Transfer for whatever the WOs didn't absorb.
-    # Target = staging warehouse of the first selected WO (FIFO); if WOs span different
-    # staging warehouses the storekeeper can re-route manually from the SE form.
+    # Surplus: emit non-WO Material Transfer(s) for whatever the WOs didn't absorb.
+    # Surplus is grouped by the staging warehouse it is routed to (the staging
+    # warehouse of the FIFO-first WO that demanded each item), so WOs on different
+    # production lines don't end up sharing one surplus pool they cannot reach.
+    # Each surplus Stock Entry records ALL originating WOs (those that shared the
+    # same staging warehouse) in the custom_originating_work_orders child table,
+    # while custom_originating_work_order keeps the FIFO-first WO for backward
+    # compatibility.
     if surplus_by_item:
-        first_wo_doc = frappe.get_doc("Work Order", wo_order[0])
-        surplus_target = _staging_for(first_wo_doc) or _wip_for(first_wo_doc)
-        if not surplus_target:
-            frappe.throw(_("No Staging or WIP warehouse configured for WO {0}; cannot place surplus.").format(wo_order[0]))
+        wo_info: dict[str, dict] = {}
+        for wo in wo_order:
+            doc = frappe.get_doc("Work Order", wo)
+            wo_info[wo] = {
+                "staging": _staging_for(doc),
+                "wip": _wip_for(doc),
+                "planned_start_date": doc.planned_start_date,
+                "company": doc.company,
+            }
 
-        surplus_se = frappe.new_doc("Stock Entry")
-        surplus_se.company = first_wo_doc.company
-        surplus_se.stock_entry_type = "Material Transfer"
-        surplus_se.purpose = "Material Transfer"
-        surplus_se.from_warehouse = source_warehouse
-        surplus_se.to_warehouse = surplus_target
-        surplus_se.custom_is_surplus = 1
-        surplus_se.custom_originating_work_order = first_wo_doc.name
-        surplus_se.custom_originating_planned_start_date = first_wo_doc.planned_start_date
-        if pallet_id:
-            surplus_se.remarks = f"Surplus from pallet {pallet_id} (not allocated to any WO)"
-        else:
-            surplus_se.remarks = "Surplus from staging transfer (not allocated to any WO)"
+        surplus_groups = _build_surplus_groups(
+            surplus_by_item, demand_wos_by_item, wo_info, wo_order, wo_order[0]
+        )
 
-        for item_code, surplus_qty in surplus_by_item.items():
-            surplus_rounded = _round_up_qty(surplus_qty, precision=3)
-            if surplus_rounded <= 0:
-                continue
-            uom = frappe.db.get_value("Item", item_code, "stock_uom")
-            batch_info = batch_info_map.get(item_code)
+        for group in surplus_groups:
+            surplus_target = group["staging"] or (wo_info.get(group["first_wo"]) or {}).get("wip")
+            if not surplus_target:
+                frappe.throw(_(
+                    "No Staging or WIP warehouse configured for WO {0}; cannot place surplus."
+                ).format(group["first_wo"]))
 
-            if isinstance(batch_info, list) and len(batch_info) > 0:
-                total_batch_qty = sum(float(b.get("qty", 0)) for b in batch_info)
-                if total_batch_qty <= 0:
-                    continue
-                allocated_so_far = 0.0
-                for i, batch_item in enumerate(batch_info):
-                    batch_no = batch_item.get("batch_no")
-                    batch_qty = float(batch_item.get("qty", 0))
-                    if batch_qty <= 0:
-                        continue
-                    if i == len(batch_info) - 1:
-                        line_qty = max(0.0, surplus_rounded - allocated_so_far)
-                    else:
-                        proportion = batch_qty / total_batch_qty
-                        line_qty = _round_up_qty(surplus_rounded * proportion, precision=3)
-                        allocated_so_far += line_qty
-                    if line_qty > 0:
-                        surplus_se.append(
-                            "items",
-                            {
-                                "item_code": item_code,
-                                "qty": line_qty,
-                                "uom": uom,
-                                "s_warehouse": source_warehouse,
-                                "t_warehouse": surplus_target,
-                                "batch_no": batch_no,
-                                "use_serial_batch_fields": 1 if batch_no else 0,
-                            },
-                        )
-            else:
-                batch_no = batch_info if isinstance(batch_info, str) else None
-                surplus_se.append(
-                    "items",
-                    {
-                        "item_code": item_code,
-                        "qty": surplus_rounded,
-                        "uom": uom,
-                        "s_warehouse": source_warehouse,
-                        "t_warehouse": surplus_target,
-                        "batch_no": batch_no,
-                        "use_serial_batch_fields": 1 if batch_no else 0,
-                    },
-                )
-
-        if surplus_se.get("items"):
-            surplus_se.insert(ignore_permissions=True)
-            surplus_se.submit()
-            created.append(
-                {
-                    "name": surplus_se.name,
-                    "work_order": None,
-                    "to_warehouse": surplus_target,
-                    "posting_date": surplus_se.posting_date,
-                    "posting_time": surplus_se.posting_time,
-                    "is_surplus": True,
-                }
+            origin_wos = sorted({r["work_order"] for r in group["origin_rows"]})
+            wo_text = ", ".join(origin_wos) if origin_wos else _("no WO")
+            base_remark = (
+                f"Surplus from pallet {pallet_id}" if pallet_id else "Surplus from staging transfer"
             )
+
+            surplus_se = frappe.new_doc("Stock Entry")
+            surplus_se.company = (wo_info.get(group["first_wo"]) or {}).get("company")
+            surplus_se.stock_entry_type = "Material Transfer"
+            surplus_se.purpose = "Material Transfer"
+            surplus_se.from_warehouse = source_warehouse
+            surplus_se.to_warehouse = surplus_target
+            surplus_se.custom_is_surplus = 1
+            surplus_se.custom_originating_work_order = group["first_wo"]
+            surplus_se.custom_originating_planned_start_date = group["first_planned_start_date"]
+            surplus_se.remarks = f"{base_remark} (originating WOs: {wo_text})"
+
+            for row in group["origin_rows"]:
+                surplus_se.append("custom_originating_work_orders", {
+                    "work_order": row["work_order"],
+                    "item_code": row["item_code"],
+                    "planned_start_date": row["planned_start_date"],
+                    "staging_warehouse": row["staging_warehouse"],
+                    "wip_warehouse": row["wip_warehouse"],
+                })
+
+            for item_code, surplus_qty in group["items"].items():
+                surplus_rounded = _round_up_qty(surplus_qty, precision=3)
+                if surplus_rounded <= 0:
+                    continue
+                uom = frappe.db.get_value("Item", item_code, "stock_uom")
+                batch_info = batch_info_map.get(item_code)
+
+                if isinstance(batch_info, list) and len(batch_info) > 0:
+                    total_batch_qty = sum(float(b.get("qty", 0)) for b in batch_info)
+                    if total_batch_qty <= 0:
+                        continue
+                    allocated_so_far = 0.0
+                    for i, batch_item in enumerate(batch_info):
+                        batch_no = batch_item.get("batch_no")
+                        batch_qty = float(batch_item.get("qty", 0))
+                        if batch_qty <= 0:
+                            continue
+                        if i == len(batch_info) - 1:
+                            line_qty = max(0.0, surplus_rounded - allocated_so_far)
+                        else:
+                            proportion = batch_qty / total_batch_qty
+                            line_qty = _round_up_qty(surplus_rounded * proportion, precision=3)
+                            allocated_so_far += line_qty
+                        if line_qty > 0:
+                            surplus_se.append(
+                                "items",
+                                {
+                                    "item_code": item_code,
+                                    "qty": line_qty,
+                                    "uom": uom,
+                                    "s_warehouse": source_warehouse,
+                                    "t_warehouse": surplus_target,
+                                    "batch_no": batch_no,
+                                    "use_serial_batch_fields": 1 if batch_no else 0,
+                                },
+                            )
+                else:
+                    batch_no = batch_info if isinstance(batch_info, str) else None
+                    surplus_se.append(
+                        "items",
+                        {
+                            "item_code": item_code,
+                            "qty": surplus_rounded,
+                            "uom": uom,
+                            "s_warehouse": source_warehouse,
+                            "t_warehouse": surplus_target,
+                            "batch_no": batch_no,
+                            "use_serial_batch_fields": 1 if batch_no else 0,
+                        },
+                    )
+
+            if surplus_se.get("items"):
+                surplus_se.insert(ignore_permissions=True)
+                surplus_se.submit()
+                created.append(
+                    {
+                        "name": surplus_se.name,
+                        "work_order": None,
+                        "to_warehouse": surplus_target,
+                        "posting_date": surplus_se.posting_date,
+                        "posting_time": surplus_se.posting_time,
+                        "is_surplus": True,
+                        "originating_work_orders": origin_wos,
+                    }
+                )
 
     return {"transfers": created}
 
@@ -887,8 +1014,10 @@ def get_recent_transfers(
             se.to_warehouse,
             se.remarks,
             se.work_order,
+            se.custom_originating_work_order,
             case when {mr_fulfilment_clause} then 1 else 0 end as is_mr_fulfilment,
-            coalesce(se.custom_is_surplus, 0) as is_surplus
+            coalesce(se.custom_is_surplus, 0) as is_surplus,
+            coalesce(se.custom_surplus_swept_to_wip, 0) as surplus_swept
         from `tabStock Entry` se
         {' '.join(joins)}
         where {' and '.join(conditions)}
@@ -920,6 +1049,39 @@ def get_recent_transfers(
 
     for d in se_list:
         d["in_picklist"] = 1 if d["name"] in in_picklist else 0
+
+    # Attach the full originating Work Order list to surplus entries so the UI can
+    # show every WO that contributed demand, not just the FIFO-first one.
+    surplus_names = [d["name"] for d in se_list if d.get("is_surplus")]
+    origin_map: dict[str, list[str]] = {}
+    if surplus_names:
+        try:
+            origin_rows = frappe.db.sql(
+                """
+                select distinct parent, work_order
+                from `tabSurplus Originating Work Order`
+                where parent in %(names)s
+                  and parenttype = 'Stock Entry'
+                  and work_order is not null
+                order by parent, work_order
+                """,
+                {"names": tuple(surplus_names)},
+                as_dict=True,
+            )
+            for r in origin_rows:
+                origin_map.setdefault(r["parent"], []).append(r["work_order"])
+        except Exception:
+            origin_map = {}
+
+    for d in se_list:
+        if not d.get("is_surplus"):
+            d["origin_work_orders"] = []
+            continue
+        wos = origin_map.get(d["name"])
+        if not wos and d.get("custom_originating_work_order"):
+            # Legacy surplus: fall back to the single originating WO field.
+            wos = [d["custom_originating_work_order"]]
+        d["origin_work_orders"] = wos or []
 
     return se_list
 

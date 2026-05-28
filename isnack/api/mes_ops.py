@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 import frappe
 from frappe import _
-from frappe.utils import flt
+from frappe.utils import cint, flt
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
     _process_batch_spaces,
@@ -1201,6 +1201,11 @@ def set_work_order_state(
                 frappe.msgprint(_("Materials transferred from Staging to WIP: {0}").format(
                     transfer_result["stock_entry"]
                 ))
+            surplus_transfers = transfer_result.get("surplus_transfers") or []
+            if surplus_transfers:
+                frappe.msgprint(_("Surplus transferred from Staging to WIP: {0}").format(
+                    ", ".join(surplus_transfers)
+                ))
         except Exception as e:
             # Log the error but don't block the Start action
             frappe.log_error(
@@ -1292,35 +1297,182 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
         'wo_pattern2': f'%WO: {work_order}'
     }, as_dict=True)
     
-    if not items_in_staging:
-        return {"ok": True, "msg": _("No staged materials found to transfer to WIP"), "stock_entry": None}
-    
-    # Create Material Transfer for Manufacture
+    se_name = None
+    if items_in_staging:
+        # Create Material Transfer for Manufacture
+        se = frappe.new_doc("Stock Entry")
+        se.company = wo.company
+        se.purpose = "Material Transfer for Manufacture"
+        se.stock_entry_type = "Material Transfer for Manufacture"
+        se.work_order = work_order
+        se.from_warehouse = staging_wh
+        se.to_warehouse = wip_wh
+        se.from_bom = 1
+        se.bom_no = wo.bom_no
+        se.use_multi_level_bom = wo.use_multi_level_bom
+
+        # Set fg_completed_qty for ERPNext to update material_transferred_for_manufacturing
+        remaining_qty = flt(wo.qty) - flt(wo.material_transferred_for_manufacturing)
+        if remaining_qty <= 0:
+            frappe.msgprint(_("Warning: Material already transferred for full quantity. Proceeding with transfer."),
+                           indicator="orange")
+            se.fg_completed_qty = 0
+        else:
+            se.fg_completed_qty = remaining_qty
+
+        if employee:
+            se.custom_operator = employee  # If you have this custom field
+
+        # Add items from staging
+        for item in items_in_staging:
+            item_dict = {
+                "item_code": item.item_code,
+                "qty": item.qty,
+                "uom": item.uom,
+                "s_warehouse": staging_wh,
+                "t_warehouse": wip_wh,
+            }
+
+            # Handle batch tracking: Use batch_no and let ERPNext create new bundles
+            # Don't reuse serial_and_batch_bundle as it's already linked to the staging transfer
+            # Each Stock Entry needs its own unique bundle, even if referencing the same batch
+            if item.batch_no:
+                # Use batch_no and let ERPNext create a new bundle
+                item_dict["batch_no"] = item.batch_no
+                # use_serial_batch_fields=1 tells ERPNext to create a new bundle from batch_no
+                item_dict["use_serial_batch_fields"] = 1
+            # else: No batch tracking - ERPNext will handle as a regular item without batch/serial
+
+            se.append("items", item_dict)
+
+        se.flags.ignore_permissions = True
+        se.insert()
+        se.submit()
+        se_name = se.name
+
+    # Sweep any eligible surplus (from a Consolidated Pick Cart) into WIP too, so
+    # operators can consume it during production close. This runs even when there
+    # are no normal staged materials left for this WO.
+    surplus_transfers = _sweep_surplus_to_wip(work_order, staging_wh, wip_wh, wo, employee)
+
+    if not se_name and not surplus_transfers:
+        return {"ok": True, "msg": _("No staged materials found to transfer to WIP"),
+                "stock_entry": None, "surplus_transfers": []}
+
+    msg = _("Transferred materials from Staging to WIP") if se_name else _("Transferred surplus from Staging to WIP")
+    return {"ok": True, "msg": msg, "stock_entry": se_name, "surplus_transfers": surplus_transfers}
+
+
+def _find_eligible_surplus_ses(work_order: str, staging_wh: str) -> list[str]:
+    """Surplus Stock Entries eligible to be swept to WIP for this Work Order.
+
+    Eligible = submitted, marked surplus, not yet swept, sitting in this WO's
+    staging warehouse, AND this WO is one of its originating WOs. Membership is
+    read from the new ``custom_originating_work_orders`` child table; when that
+    table is empty (legacy surplus records) we fall back to the single
+    ``custom_originating_work_order`` field.
+
+    The ``to_warehouse = staging_wh`` condition is what keeps sweeping safe across
+    multiple production lines: a WO never sweeps surplus that physically lives in
+    another line's staging warehouse.
+    """
+    if not staging_wh:
+        return []
+    rows = frappe.db.sql("""
+        select se.name
+        from `tabStock Entry` se
+        where se.docstatus = 1
+          and coalesce(se.custom_is_surplus, 0) = 1
+          and coalesce(se.custom_surplus_swept_to_wip, 0) = 0
+          and se.to_warehouse = %(staging_wh)s
+          and (
+              exists (
+                  select 1 from `tabSurplus Originating Work Order` sowo
+                  where sowo.parent = se.name
+                    and sowo.parenttype = 'Stock Entry'
+                    and sowo.work_order = %(work_order)s
+              )
+              or (
+                  not exists (
+                      select 1 from `tabSurplus Originating Work Order` sowo2
+                      where sowo2.parent = se.name
+                        and sowo2.parenttype = 'Stock Entry'
+                  )
+                  and se.custom_originating_work_order = %(work_order)s
+              )
+          )
+    """, {"work_order": work_order, "staging_wh": staging_wh}, as_dict=True)
+    return [r["name"] for r in rows]
+
+
+def _claim_surplus_for_sweep(se_name: str, work_order: str) -> bool:
+    """Atomically claim a surplus SE so it is swept to WIP exactly once.
+
+    Uses a conditional UPDATE (``... where custom_surplus_swept_to_wip = 0``) and
+    checks the affected row count. Because the UPDATE locks the row until the
+    transaction commits, a concurrent second Work Order start blocks, then sees
+    the flag already set and claims zero rows — guaranteeing idempotency even if
+    two originating WOs start at the same time. Returns True only for the caller
+    that won the claim.
+    """
+    frappe.db.sql(
+        """
+        update `tabStock Entry`
+        set custom_surplus_swept_to_wip = 1,
+            custom_surplus_swept_by_work_order = %(wo)s,
+            custom_surplus_swept_at = %(now)s
+        where name = %(name)s
+          and coalesce(custom_surplus_swept_to_wip, 0) = 0
+        """,
+        {"name": se_name, "wo": work_order, "now": frappe.utils.now_datetime()},
+    )
+    return cint(frappe.db._cursor.rowcount) == 1
+
+
+def _create_surplus_wip_transfer(
+    se_name: str,
+    work_order: str,
+    staging_wh: str,
+    wip_wh: str,
+    company: str,
+    employee: Optional[str] = None,
+) -> Optional[str]:
+    """Move a claimed surplus Stock Entry's contents from staging to WIP.
+
+    A plain "Material Transfer" (NOT "Material Transfer for Manufacture") is used:
+    surplus is intentionally beyond the WO's theoretical BOM requirement, so a
+    Manufacture transfer would trip ERPNext v15's over-transfer validation
+    (transferred qty vs. required-for-manufacture). A plain Material Transfer
+    between two warehouses carries no BOM/required-qty checks, which is exactly
+    what we want — the surplus simply becomes available in WIP for over-
+    consumption at production close.
+    """
+    rows = frappe.db.sql(
+        """
+        select sed.item_code, sed.batch_no, sed.uom, sed.qty
+        from `tabStock Entry Detail` sed
+        where sed.parent = %(name)s
+          and sed.t_warehouse = %(staging_wh)s
+          and sed.qty > 0
+        order by sed.idx
+        """,
+        {"name": se_name, "staging_wh": staging_wh},
+        as_dict=True,
+    )
+    if not rows:
+        return None
+
     se = frappe.new_doc("Stock Entry")
-    se.company = wo.company
-    se.purpose = "Material Transfer for Manufacture"
-    se.stock_entry_type = "Material Transfer for Manufacture"
-    se.work_order = work_order
+    se.company = company
+    se.purpose = "Material Transfer"
+    se.stock_entry_type = "Material Transfer"
     se.from_warehouse = staging_wh
     se.to_warehouse = wip_wh
-    se.from_bom = 1
-    se.bom_no = wo.bom_no
-    se.use_multi_level_bom = wo.use_multi_level_bom
-    
-    # Set fg_completed_qty for ERPNext to update material_transferred_for_manufacturing
-    remaining_qty = flt(wo.qty) - flt(wo.material_transferred_for_manufacturing)
-    if remaining_qty <= 0:
-        frappe.msgprint(_("Warning: Material already transferred for full quantity. Proceeding with transfer."), 
-                       indicator="orange")
-        se.fg_completed_qty = 0
-    else:
-        se.fg_completed_qty = remaining_qty
-    
+    se.remarks = f"Surplus swept to WIP for WO: {work_order} (from {se_name})"
     if employee:
-        se.custom_operator = employee  # If you have this custom field
-    
-    # Add items from staging
-    for item in items_in_staging:
+        se.custom_operator = employee
+
+    for item in rows:
         item_dict = {
             "item_code": item.item_code,
             "qty": item.qty,
@@ -1328,24 +1480,66 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
             "s_warehouse": staging_wh,
             "t_warehouse": wip_wh,
         }
-        
-        # Handle batch tracking: Use batch_no and let ERPNext create new bundles
-        # Don't reuse serial_and_batch_bundle as it's already linked to the staging transfer
-        # Each Stock Entry needs its own unique bundle, even if referencing the same batch
         if item.batch_no:
-            # Use batch_no and let ERPNext create a new bundle
             item_dict["batch_no"] = item.batch_no
-            # use_serial_batch_fields=1 tells ERPNext to create a new bundle from batch_no
             item_dict["use_serial_batch_fields"] = 1
-        # else: No batch tracking - ERPNext will handle as a regular item without batch/serial
-        
         se.append("items", item_dict)
-    
+
     se.flags.ignore_permissions = True
     se.insert()
     se.submit()
-    
-    return {"ok": True, "msg": _("Transferred materials from Staging to WIP"), "stock_entry": se.name}
+    return se.name
+
+
+def _sweep_surplus_to_wip(
+    work_order: str,
+    staging_wh: str,
+    wip_wh: str,
+    wo,
+    employee: Optional[str] = None,
+) -> list[str]:
+    """Find, claim and move eligible surplus from staging to WIP for this WO.
+
+    Idempotent: each surplus SE is claimed atomically before being moved, so a
+    later start of another originating WO will not move it again. A failure on one
+    surplus SE rolls back only its own claim and is logged; it does not block the
+    remaining surplus or the Work Order start.
+    """
+    if not staging_wh or not wip_wh:
+        return []
+
+    created: list[str] = []
+    for se_name in _find_eligible_surplus_ses(work_order, staging_wh):
+        if not _claim_surplus_for_sweep(se_name, work_order):
+            # Another originating WO already swept this surplus.
+            continue
+        try:
+            new_name = _create_surplus_wip_transfer(
+                se_name, work_order, staging_wh, wip_wh, wo.company, employee
+            )
+            if new_name:
+                frappe.db.set_value(
+                    "Stock Entry", se_name, "custom_surplus_wip_transfer", new_name,
+                    update_modified=False,
+                )
+                created.append(new_name)
+        except Exception as exc:
+            # Roll back the claim so the surplus can be retried on a later start.
+            frappe.db.set_value(
+                "Stock Entry",
+                se_name,
+                {
+                    "custom_surplus_swept_to_wip": 0,
+                    "custom_surplus_swept_by_work_order": None,
+                    "custom_surplus_swept_at": None,
+                },
+                update_modified=False,
+            )
+            frappe.log_error(
+                title="Sweep Surplus To WIP Error",
+                message=f"Failed to sweep surplus {se_name} for {work_order}: {exc}",
+            )
+    return created
 
 
 # ============================================================
