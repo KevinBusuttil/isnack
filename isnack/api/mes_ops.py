@@ -713,13 +713,19 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         "page_len": int(page_len),
     }
 
-    # Optionally include packaging items (by item group) in addition to BOM items
-    # when Factory Settings allows packaging consumption at material loading.
+    # Packaging materials are only selectable when Factory Settings allows
+    # packaging consumption at material loading. When the flag is on we also
+    # offer packaging items that are not BOM components; when it is off we
+    # exclude packaging-group items from the BOM list entirely (the backend
+    # rejects them either way, so the picker must mirror that).
+    allow_packaging = bool(getattr(_fs(), "allow_packaging_at_material_loading", 0))
+    packaging_groups = _packaging_groups_global()
+
+    bom_packaging_filter = ""
     packaging_union = ""
-    if getattr(_fs(), "allow_packaging_at_material_loading", 0):
-        packaging_groups = _packaging_groups_global()
-        if packaging_groups:
-            params["packaging_groups"] = tuple(packaging_groups)
+    if packaging_groups:
+        params["packaging_groups"] = tuple(packaging_groups)
+        if allow_packaging:
             packaging_union = """
                 UNION
                 SELECT DISTINCT i.name AS item_code, i.item_name
@@ -730,6 +736,10 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
                 WHERE LOWER(i.item_group) IN %(packaging_groups)s
                     AND (i.name LIKE %(txt)s OR i.item_name LIKE %(txt)s)
             """
+        else:
+            bom_packaging_filter = (
+                "AND LOWER(IFNULL(it.item_group, '')) NOT IN %(packaging_groups)s"
+            )
 
     return frappe.db.sql(f"""
         SELECT DISTINCT bi.item_code, bi.item_name
@@ -737,8 +747,10 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         JOIN `tabBin` bin ON bin.item_code = bi.item_code
             AND bin.warehouse = %(wip_wh)s
             AND bin.actual_qty > 0
+        JOIN `tabItem` it ON it.name = bi.item_code
         WHERE bi.parent = %(bom_no)s
             AND (bi.item_code LIKE %(txt)s OR bi.item_name LIKE %(txt)s)
+            {bom_packaging_filter}
         {packaging_union}
         ORDER BY item_code
         LIMIT %(page_len)s OFFSET %(start)s
