@@ -951,11 +951,24 @@ function init_operator_hub($root) {
   }
 
   // ---------- Buttons ----------
-  $('#btn-start',$root).on('click', async () => {
-    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+  async function doStart() {
     await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
     flashStatus(`Started — ${state.current_wo}`, 'success');
     await updateAfterAction();
+  }
+
+  $('#btn-start',$root).on('click', () => {
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    const row = (state.orders || []).find(x => x.name === state.current_wo);
+    const planned = row && row.planned_start_date ? row.planned_start_date.split(' ')[0] : null;
+    if (planned && planned !== frappe.datetime.get_today()) {
+      frappe.confirm(
+        `This Work Order is planned for <b>${frappe.utils.escape_html(frappe.datetime.global_date_format(planned))}</b>, not today. Start anyway?`,
+        () => { doStart(); }
+      );
+      return;
+    }
+    doStart();
   });
 
   $('#btn-pause',$root).on('click', async () => {
