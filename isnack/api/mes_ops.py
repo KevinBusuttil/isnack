@@ -705,7 +705,33 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
     if not bom_no:
         return []
 
-    return frappe.db.sql("""
+    params = {
+        "wip_wh": wip_wh,
+        "bom_no": bom_no,
+        "txt": "%{}%".format(txt),
+        "start": int(start),
+        "page_len": int(page_len),
+    }
+
+    # Optionally include packaging items (by item group) in addition to BOM items
+    # when Factory Settings allows packaging consumption at material loading.
+    packaging_union = ""
+    if getattr(_fs(), "allow_packaging_at_material_loading", 0):
+        packaging_groups = _packaging_groups_global()
+        if packaging_groups:
+            params["packaging_groups"] = tuple(packaging_groups)
+            packaging_union = """
+                UNION
+                SELECT DISTINCT i.name AS item_code, i.item_name
+                FROM `tabItem` i
+                JOIN `tabBin` bin ON bin.item_code = i.name
+                    AND bin.warehouse = %(wip_wh)s
+                    AND bin.actual_qty > 0
+                WHERE LOWER(i.item_group) IN %(packaging_groups)s
+                    AND (i.name LIKE %(txt)s OR i.item_name LIKE %(txt)s)
+            """
+
+    return frappe.db.sql(f"""
         SELECT DISTINCT bi.item_code, bi.item_name
         FROM `tabBOM Item` bi
         JOIN `tabBin` bin ON bin.item_code = bi.item_code
@@ -713,15 +739,10 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
             AND bin.actual_qty > 0
         WHERE bi.parent = %(bom_no)s
             AND (bi.item_code LIKE %(txt)s OR bi.item_name LIKE %(txt)s)
-        ORDER BY bi.item_code
+        {packaging_union}
+        ORDER BY item_code
         LIMIT %(page_len)s OFFSET %(start)s
-    """, {
-        "wip_wh": wip_wh,
-        "bom_no": bom_no,
-        "txt": "%{}%".format(txt),
-        "start": int(start),
-        "page_len": int(page_len),
-    })
+    """, params)
 
 def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     bom = frappe.db.get_value("Work Order", work_order, "bom_no")
@@ -4274,7 +4295,7 @@ def get_manual_load_item_context(work_order: str, item_code: str):
     }
 
 
-def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
+def _post_material_consumption_for_wo(work_order: str, items: list, allow_packaging: bool = True) -> dict:
     """
     Validate and post a single "Material Consumption for Manufacture" Stock
     Entry for `work_order`, with one row per item in `items`.
@@ -4288,6 +4309,9 @@ def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
     WO BOM unless it is in a packaging group, and total consumption stays within
     the material_overconsumption_threshold. The Stock Entry consumes from the
     Work Order line WIP warehouse and is linked to the Work Order.
+
+    When allow_packaging is False, items in a packaging group are rejected
+    instead of bypassing the BOM-membership check.
 
     Returns {"ok": True, "msg": str, "stock_entry": str}.
     """
@@ -4328,6 +4352,8 @@ def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
         # Check BOM membership or packaging group
         group = (_get_item_group(item_code) or "").strip().lower()
         is_packaging = group in packaging_groups
+        if is_packaging and not allow_packaging:
+            frappe.throw(_("Packaging item {0} cannot be consumed at material loading").format(item_code))
         if not is_packaging:
             ok, msg = _validate_item_in_bom(work_order, item_code)
             if not ok:
@@ -4368,6 +4394,9 @@ def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
 
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
         batch_no = (it.get("batch_no") or "").strip() or None
+
+        if frappe.db.get_value("Item", item_code, "has_batch_no") and not batch_no:
+            frappe.throw(_("Batch number required for {0}").format(item_code))
 
         item_dict = {
             "item_code": item_code,
@@ -4410,7 +4439,8 @@ def manual_load_materials(work_order: str, items: str):
     except Exception:
         item_list = []
 
-    return _post_material_consumption_for_wo(work_order, item_list or [])
+    allow_packaging = bool(getattr(_fs(), "allow_packaging_at_material_loading", 0))
+    return _post_material_consumption_for_wo(work_order, item_list or [], allow_packaging=allow_packaging)
 
 
 @frappe.whitelist()

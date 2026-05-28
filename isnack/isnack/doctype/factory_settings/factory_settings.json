@@ -19,6 +19,7 @@
   "stock_entry_button_roles",
   "item_group_policies_section",
   "packaging_item_groups",
+  "allow_packaging_at_material_loading",
   "backflush_item_groups",
   "allowed_item_groups",
   "per_line_rules_section",
@@ -148,6 +149,13 @@
    "options": "Line Packaging Item Groups"
   },
   {
+   "default": "0",
+   "description": "When enabled, operators can select and consume packaging materials (items in the Packaging Item Groups above) via the Operator Hub Manual Load dialog, in addition to BOM items.",
+   "fieldname": "allow_packaging_at_material_loading",
+   "fieldtype": "Check",
+   "label": "Allow packaging consumption at material loading"
+  },
+  {
    "fieldname": "allowed_item_groups",
    "fieldtype": "Table MultiSelect",
    "label": "Allowed Item Groups",
@@ -244,7 +252,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-27 12:30:00.000000",
+ "modified": "2026-05-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",

@@ -1021,6 +1021,7 @@ function init_operator_hub($root) {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     setScanMode(false);
     const lines = [];
+    let currentItemHasBatch = false;
 
     const listHTML = `
       <div class="mb-2 text-muted">Select item and batch, enter quantity, then click <b>Add</b>. When done, click <b>Post Consumption</b>.</div>
@@ -1071,11 +1072,15 @@ function init_operator_hub($root) {
       d.set_value('remaining_qty', 0);
       d.set_value('available_qty', 0);
       d.set_value('qty', 0);
+      currentItemHasBatch = false;
       if (!item_code) return;
 
-      // Fetch item description
-      frappe.db.get_value('Item', item_code, 'description').then(r => {
-        if (r && r.message) d.set_value('item_desc', r.message.description || '');
+      // Fetch item description + batch-tracking flag
+      frappe.db.get_value('Item', item_code, ['description', 'has_batch_no']).then(r => {
+        if (r && r.message) {
+          d.set_value('item_desc', r.message.description || '');
+          currentItemHasBatch = !!r.message.has_batch_no;
+        }
       });
 
       // Fetch WO-specific required/remaining context for this item
@@ -1153,6 +1158,7 @@ function init_operator_hub($root) {
       const qty       = parseFloat(d.get_value('qty') || 0);
       const avail_qty = parseFloat(d.get_value('available_qty') || 0);
       if (!item_code || qty <= 0) { frappe.msgprint('Item and positive qty required'); return; }
+      if (currentItemHasBatch && !batch_no) { frappe.msgprint(`Batch number required for ${item_code}`); return; }
       if (batch_no && qty > avail_qty) { frappe.msgprint(`Qty cannot exceed available qty (${avail_qty})`); return; }
       lines.push({ item_code, qty, batch_no: batch_no || undefined });
       d.set_value('item_code', ''); d.set_value('item_desc', ''); d.set_value('batch_no', '');
