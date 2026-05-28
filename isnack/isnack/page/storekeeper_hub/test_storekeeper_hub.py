@@ -461,6 +461,22 @@ class TestGetRecentTransfers(unittest.TestCase):
         self.assertIn("se.modified >= %s", query)
         self.assertEqual(len(params), 1)
 
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
+    @patch("frappe.db.sql")
+    def test_excludes_stock_entries_for_started_work_orders(self, mock_sql, _now_datetime, _add_to_date):
+        mock_sql.side_effect = [[], []]
+
+        get_recent_transfers(posting_date=None)
+
+        query = mock_sql.call_args_list[0][0][0]
+        # WO-linked SEs whose Work Order has already started are filtered out.
+        self.assertIn("wo.actual_start_date IS NULL", query)
+        # Surplus SEs are joined to their originating Work Order and excluded
+        # once that originating WO has started.
+        self.assertIn("owo.name = se.custom_originating_work_order", query)
+        self.assertIn("owo.actual_start_date IS NULL", query)
+
 
 if __name__ == '__main__':
     unittest.main()

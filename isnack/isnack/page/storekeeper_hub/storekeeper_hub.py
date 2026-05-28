@@ -822,7 +822,11 @@ def get_recent_transfers(
     hours" based on se.modified.
     """
     factory_line = _normalize_factory_line(factory_line)
-    joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
+    joins = [
+        "left join `tabWork Order` wo on wo.name = se.work_order",
+        # Originating WO for surplus SEs (which have no direct work_order link).
+        "left join `tabWork Order` owo on owo.name = se.custom_originating_work_order",
+    ]
     # Picklist source: Stores → Staging transfers only. 'Material Transfer for
     # Manufacture' is the downstream Staging → WIP movement created by the
     # operator Start action and is not what the storekeeper picks.
@@ -834,6 +838,12 @@ def get_recent_transfers(
         "se.docstatus = 1",
         "se.purpose = 'Material Transfer'",
         "(se.work_order IS NOT NULL OR se.custom_is_surplus = 1)",
+        # Exclude anything tied to a WO that has already started from the
+        # Operator Hub (actual_start_date is set on the Start action and is
+        # never cleared, so it survives later Pause/Stop). This covers both
+        # WO-linked SEs (via wo) and surplus SEs (via their originating owo).
+        "wo.actual_start_date IS NULL",
+        "owo.actual_start_date IS NULL",
     ]
     params: list[object] = []
 
