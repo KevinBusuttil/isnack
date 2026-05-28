@@ -1026,6 +1026,7 @@ def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
                 "item_name": wo.item_name,
                 "type": "FG" if _is_fg(wo.production_item) else "SF",
                 "custom_production_ended": wo.get("custom_production_ended", 0),
+                "planned_start_date": wo.get("planned_start_date"),
             }
         )
     return out

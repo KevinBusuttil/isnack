@@ -200,6 +200,15 @@
 .op-teal .chip-partial{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
 .op-teal .chip-not-allocated{ background:#f3f4f6; color:#6b7280; border-color:#e5e7eb; }
 .op-teal .chip-ended{ background:#1f2937; color:#f9fafb; border-color:#111827; }
+.op-teal .row-current{
+  background:var(--teal-soft);
+  border-color:var(--teal);
+  box-shadow:inset 3px 0 0 var(--teal);
+}
+.op-teal .row-current:hover{
+  background:var(--teal-soft);
+  border-color:var(--teal);
+}
 .op-teal .row-ended{ opacity:.65; }
 .op-teal .row-ended .fw-semibold{ text-decoration: line-through; text-decoration-color: #6b7280; }
 
