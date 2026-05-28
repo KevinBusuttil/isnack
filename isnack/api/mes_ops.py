@@ -4369,6 +4369,9 @@ def _post_material_consumption_for_wo(work_order: str, items: list) -> dict:
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
         batch_no = (it.get("batch_no") or "").strip() or None
 
+        if frappe.db.get_value("Item", item_code, "has_batch_no") and not batch_no:
+            frappe.throw(_("Batch number required for {0}").format(item_code))
+
         item_dict = {
             "item_code": item_code,
             "qty": qty,
