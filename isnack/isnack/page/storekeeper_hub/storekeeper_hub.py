@@ -814,15 +814,13 @@ def get_recent_transfers(
 ):
     """Material Transfers for Manufacture.
 
-    If posting_date is given, filter by Work Orders whose Production Plan has
-    that posting_date. Otherwise, fallback to "last N hours" based on
+    If posting_date is given, filter by Work Orders whose planned_start_date
+    matches it. Otherwise, fallback to "last N hours" based on
     se.modified.
 
-    Material Request fulfilments (Stock Entries with at least one detail row
-    referencing a Material Request) are *always* included when recent enough,
-    regardless of the posting_date filter, because the operator-initiated
-    Request More flow may target Work Orders that aren't on the day's
-    Production Plan and the storekeeper still needs visibility on them.
+    Surplus entries (which are not WO-linked) remain visible by recency when
+    posting_date is set, so storekeepers can still include related extras in
+    picklists.
     """
     factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
@@ -849,8 +847,8 @@ def get_recent_transfers(
         )
         params.extend([factory_line, factory_line])
 
-    # Recency window applied to MR-fulfilment SEs even when posting_date is
-    # set; keeps the panel bounded.
+    # Recency window used whenever no posting_date is provided and for surplus
+    # entries that have no WO link when posting_date is set.
     since = add_to_date(now_datetime(), hours=-int(hours))
     mr_fulfilment_clause = (
         "exists ("
@@ -860,17 +858,15 @@ def get_recent_transfers(
     )
 
     if posting_date:
-        joins.append("left join `tabProduction Plan` pp on pp.name = wo.production_plan")
-        # WO-linked: match Production Plan posting_date.
-        # MR-fulfilment or surplus (no WO): fall back to recency window.
+        # WO-linked: match Work Order planned_start_date.
+        # Surplus (no WO): fall back to recency window.
         conditions.append(
             f"("
-            f"  pp.posting_date = %s"
-            f"  or ({mr_fulfilment_clause} and se.modified >= %s)"
-            f"  or (se.custom_is_surplus = 1 and se.modified >= %s)"
+            f"  (se.work_order is not null and wo.planned_start_date = %s)"
+            f"  or (se.work_order is null and se.custom_is_surplus = 1 and se.modified >= %s)"
             f")"
         )
-        params.extend([posting_date, since, since])
+        params.extend([posting_date, since])
     else:
         conditions.append("se.modified >= %s")
         params.append(since)
