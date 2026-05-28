@@ -648,15 +648,15 @@ function init_operator_hub($root) {
       const isCurrent = row.name === state.current_wo;
       const rowClass = `${isEnded ? ' row-ended' : ''}${isCurrent ? ' row-current' : ''}`;
       const plannedDate = row.planned_start_date
-        ? `<span class="text-muted ms-2">Planned ${frappe.utils.escape_html(frappe.datetime.global_date_format(row.planned_start_date))}</span>`
+        ? `<span class="wo-meta ms-2"><span class="wo-meta-k">Planned</span> <span class="wo-meta-v">${frappe.utils.escape_html(frappe.datetime.global_date_format(row.planned_start_date))}</span></span>`
         : '';
       const el = $(`
         <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center${rowClass}" type="button">
           <div class="fw-semibold">
             <span class="me-2">${frappe.utils.escape_html(row.name)}</span>
             <span class="text-muted">— ${frappe.utils.escape_html(row.item_name || '')}</span>
-            <span class="text-muted ms-2">Qty ${row.for_quantity}</span>
-            ${row.line ? `<span class="text-muted ms-2">Line ${frappe.utils.escape_html(row.line)}</span>` : ''}
+            <span class="wo-meta ms-2"><span class="wo-meta-k">Qty</span> <span class="wo-meta-v">${row.for_quantity}</span></span>
+            ${row.line ? `<span class="wo-meta ms-2"><span class="wo-meta-k">Line</span> <span class="wo-meta-v">${frappe.utils.escape_html(row.line)}</span></span>` : ''}
             ${plannedDate}
           </div>
           <div class="d-flex gap-2 align-items-center">
