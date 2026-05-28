@@ -425,6 +425,32 @@ class TestGetRecentTransfers(unittest.TestCase):
     @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
     @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
     @patch("frappe.db.sql")
+    def test_filters_surplus_by_originating_planned_start_date_when_posting_date_is_set(self, mock_sql, _now_datetime, _add_to_date):
+        mock_sql.side_effect = [[], []]
+
+        get_recent_transfers(posting_date="2026-05-30")
+
+        query = mock_sql.call_args_list[0][0][0]
+        params = mock_sql.call_args_list[0][0][1]
+        self.assertIn("se.custom_originating_planned_start_date = %s", query)
+        self.assertNotIn("se.modified >= %s", query)
+        self.assertIn("2026-05-30", params)
+
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
+    @patch("frappe.db.sql")
+    def test_no_recency_fallback_for_surplus_when_posting_date_is_set(self, mock_sql, _now_datetime, _add_to_date):
+        mock_sql.side_effect = [[], []]
+
+        get_recent_transfers(posting_date="2026-05-30")
+
+        query = mock_sql.call_args_list[0][0][0]
+        # The legacy fallback 'se.modified >= %s' must not appear anywhere in the date-filtered query.
+        self.assertNotIn("se.modified >= %s", query)
+
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
+    @patch("frappe.db.sql")
     def test_keeps_recency_filter_when_posting_date_not_set(self, mock_sql, _now_datetime, _add_to_date):
         mock_sql.side_effect = [[], []]
 

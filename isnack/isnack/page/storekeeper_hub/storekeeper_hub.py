@@ -729,6 +729,8 @@ def create_consolidated_transfers(
         surplus_se.from_warehouse = source_warehouse
         surplus_se.to_warehouse = surplus_target
         surplus_se.custom_is_surplus = 1
+        surplus_se.custom_originating_work_order = first_wo_doc.name
+        surplus_se.custom_originating_planned_start_date = first_wo_doc.planned_start_date
         if pallet_id:
             surplus_se.remarks = f"Surplus from pallet {pallet_id} (not allocated to any WO)"
         else:
@@ -815,12 +817,9 @@ def get_recent_transfers(
     """Material Transfers for Manufacture.
 
     If posting_date is given, filter by Work Orders whose planned_start_date
-    matches it. Otherwise, fallback to "last N hours" based on
-    se.modified.
-
-    Surplus entries (which are not WO-linked) remain visible by recency when
-    posting_date is set, so storekeepers can still include related extras in
-    picklists.
+    matches it, and filter surplus entries by their stored
+    custom_originating_planned_start_date. Otherwise, fallback to "last N
+    hours" based on se.modified.
     """
     factory_line = _normalize_factory_line(factory_line)
     joins = ["left join `tabWork Order` wo on wo.name = se.work_order"]
@@ -847,8 +846,7 @@ def get_recent_transfers(
         )
         params.extend([factory_line, factory_line])
 
-    # Recency window used whenever no posting_date is provided and for surplus
-    # entries that have no WO link when posting_date is set.
+    # Recency window used when no posting_date is provided.
     since = add_to_date(now_datetime(), hours=-int(hours))
     mr_fulfilment_clause = (
         "exists ("
@@ -859,14 +857,14 @@ def get_recent_transfers(
 
     if posting_date:
         # WO-linked: match Work Order planned_start_date.
-        # Surplus (no WO): fall back to recency window.
+        # Surplus (no WO): match the stored originating planned start date.
         conditions.append(
             f"("
             f"  (se.work_order is not null and wo.planned_start_date = %s)"
-            f"  or (se.work_order is null and se.custom_is_surplus = 1 and se.modified >= %s)"
+            f"  or (se.work_order is null and se.custom_is_surplus = 1 and se.custom_originating_planned_start_date = %s)"
             f")"
         )
-        params.extend([posting_date, since])
+        params.extend([posting_date, posting_date])
     else:
         conditions.append("se.modified >= %s")
         params.append(since)
