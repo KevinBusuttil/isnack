@@ -421,6 +421,19 @@
   letter-spacing: .25px;
 }
 
+.storekeeper-hub .chip.surplus,
+.ppl-se-card .chip.surplus {
+  background: #ede9fe;   /* lavender — distinct from MR amber and Picklist blue */
+  border: 1px solid #c4b5fd;
+  color: #5b21b6;
+  font-weight: 700;
+  letter-spacing: .25px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
 /* --- Right column cards: keep original stacked text, pin actions bottom-right --- */
 
 /* Undo any previous grid/flex on these rows */

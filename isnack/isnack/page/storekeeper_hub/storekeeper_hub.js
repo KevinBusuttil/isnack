@@ -585,12 +585,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           `).join('')
         : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
 
+      const surplus_chip = se.is_surplus
+        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
+        : '';
+
       const $card = $(`
         <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
           <div class="ppl-se-card-header">
             <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" checked />
             <div class="ppl-se-info">
-              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)}</span>
+              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)} ${surplus_chip}</span>
               <span class="ppl-se-meta">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${frappe.utils.escape_html(se.posting_time || '')}</span>
               ${se.remarks ? '<span class="ppl-se-remarks">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
             </div>
@@ -853,12 +857,16 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           `).join('')
         : `<tr><td colspan="4" class="ppl-no-items">${__('No items')}</td></tr>`;
 
+      const surplus_chip = se.is_surplus
+        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
+        : '';
+
       const $card = $(`
         <div class="ppl-se-card ppl-se-selected" data-name="${frappe.utils.escape_html(se.name)}">
           <div class="ppl-se-card-header">
             <input type="checkbox" class="ppl-se-check" data-name="${frappe.utils.escape_html(se.name)}" checked />
             <div class="ppl-se-info">
-              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)}</span>
+              <span class="ppl-se-name">${frappe.utils.escape_html(se.name)} ${surplus_chip}</span>
               <span class="ppl-se-meta">${frappe.utils.escape_html(se.to_warehouse || '')} &mdash; ${frappe.datetime.str_to_user(se.posting_date)} ${frappe.utils.escape_html(se.posting_time || '')}</span>
               ${se.remarks ? '<span class="ppl-se-remarks">' + frappe.utils.escape_html(se.remarks) + '</span>' : ''}
             </div>
@@ -1775,6 +1783,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       const mr_badge = se.is_mr_fulfilment
         ? `<span class="chip mr-fulfilment" title="${__('Fulfils an operator Material Request')}">${__('MR')}</span>`
         : '';
+      const surplus_badge = se.is_surplus
+        ? `<span class="chip surplus" title="${__('Unallocated surplus from a pallet pick — physically transferred to staging but not linked to any WO')}">${__('Surplus')}</span>`
+        : '';
 
       const $row = $(`
         <div class="hub-row staged-row ${is_selected ? 'selected' : ''}" data-name="${se.name}">
@@ -1782,7 +1793,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
             <div class="staged-header">
               <input type="checkbox" class="pick-transfer" ${is_selected ? 'checked' : ''} />
               <div class="staged-main">
-                <b>${frappe.utils.escape_html(se.name)}</b> ${in_picklist_badge} ${mr_badge}<br>
+                <b>${frappe.utils.escape_html(se.name)}</b> ${in_picklist_badge} ${mr_badge} ${surplus_badge}<br>
                 <span class="muted">${frappe.utils.escape_html(info || '')}</span>
               </div>
             </div>
