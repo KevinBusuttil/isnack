@@ -1370,6 +1370,7 @@ function init_operator_hub($root) {
       // Build table HTML for WIP items
       const tableHTML = `
         <div class="wip-toolbar">
+          <button type="button" class="wip-fill-selected-btn">⤓ Fill Selected</button>
           <button type="button" class="wip-clear-selected-btn">✕ Clear Selected</button>
         </div>
         <div class="table-responsive" style="max-height:400px; overflow:auto;">
@@ -1487,6 +1488,7 @@ function init_operator_hub($root) {
             <td class="col-avail-qty">${item.qty}</td>
             <td style="white-space:nowrap;">
               <input type="number" class="form-control form-control-sm return-qty-input" value="0" min="0" max="${item.qty}" step="0.01" data-avail="${item.qty}">
+              <button type="button" class="wip-row-fill-btn" title="Fill available qty">⤓</button>
               <button type="button" class="wip-row-clear-btn" title="Clear">✕</button>
             </td>
             <td>${batchBadge}</td>
@@ -1511,29 +1513,35 @@ function init_operator_hub($root) {
         d.$wrapper.find('#wip-sum-total').text(total.toFixed(2));
       }
 
+      // Helper: show/hide the bulk Selected-row action buttons
+      function toggleSelectedActions() {
+        const anyChecked = $tbody.find('.wip-row-check:checked').length > 0;
+        d.$wrapper.find('.wip-clear-selected-btn, .wip-fill-selected-btn')
+          .toggleClass('visible', anyChecked);
+      }
+
       // Wire up event handlers
       // Select-all checkbox
       d.$wrapper.find('#wip-select-all').on('change', function () {
-        const checked = this.checked;
-        $tbody.find('.wip-row-check').prop('checked', checked);
-        const $btn = d.$wrapper.find('.wip-clear-selected-btn');
-        if (checked && $tbody.find('.wip-row-check').length) {
-          $btn.addClass('visible');
-        } else {
-          $btn.removeClass('visible');
-        }
+        $tbody.find('.wip-row-check').prop('checked', this.checked);
+        toggleSelectedActions();
       });
 
-      // Row check → show/hide Clear Selected button
+      // Row check → show/hide bulk Selected-row action buttons
       $tbody.on('change', '.wip-row-check', function () {
-        const anyChecked = $tbody.find('.wip-row-check:checked').length > 0;
-        const $btn = d.$wrapper.find('.wip-clear-selected-btn');
-        if (anyChecked) {
-          $btn.addClass('visible');
-        } else {
-          $btn.removeClass('visible');
+        if (!$tbody.find('.wip-row-check:checked').length) {
           d.$wrapper.find('#wip-select-all').prop('checked', false);
         }
+        toggleSelectedActions();
+      });
+
+      // Fill Selected button → set checked rows' return qty to available qty
+      d.$wrapper.find('.wip-fill-selected-btn').on('click', function () {
+        $tbody.find('.wip-row-check:checked').each((_, chk) => {
+          const $input = $(chk).closest('tr').find('.return-qty-input');
+          $input.val($input.data('avail'));
+        });
+        updateWipSummary();
       });
 
       // Clear Selected button
@@ -1543,7 +1551,14 @@ function init_operator_hub($root) {
           $(chk).prop('checked', false);
         });
         d.$wrapper.find('#wip-select-all').prop('checked', false);
-        $(this).removeClass('visible');
+        toggleSelectedActions();
+        updateWipSummary();
+      });
+
+      // Per-row fill button → set return qty to available qty
+      $tbody.on('click', '.wip-row-fill-btn', function () {
+        const $input = $(this).closest('tr').find('.return-qty-input');
+        $input.val($input.data('avail'));
         updateWipSummary();
       });
 

@@ -808,6 +808,34 @@
   opacity: 1;
 }
 
+/* Per-row fill button — teal mirror of the clear button */
+.end-shift-return-dialog .wip-row-fill-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #b8f1e6;
+  background: #e7fbf7;
+  color: #0f766e;
+  font-size: .75rem;
+  line-height: 1;
+  cursor: pointer;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity .15s ease, background .12s ease;
+  vertical-align: middle;
+  padding: 0;
+}
+.end-shift-return-dialog .wip-return-table tr:hover .wip-row-fill-btn{
+  opacity: 1;
+}
+.end-shift-return-dialog .wip-row-fill-btn:hover{
+  background: #c8f6ed !important;
+  opacity: 1;
+}
+
 /* Batch pill badges */
 .end-shift-return-dialog .batch-badge{
   display: inline-block;
@@ -874,6 +902,26 @@
   background: #fee2e2 !important;
 }
 
+/* "Fill Selected" button — teal-outline mirror of Clear Selected */
+.end-shift-return-dialog .wip-fill-selected-btn{
+  display: none;
+  background: #e7fbf7 !important;
+  border-color: #b8f1e6 !important;
+  color: #0f766e !important;
+  font-size: .82rem;
+  padding: .25rem .65rem;
+  border-radius: 8px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: opacity .2s ease, background .12s ease;
+}
+.end-shift-return-dialog .wip-fill-selected-btn.visible{
+  display: inline-block;
+}
+.end-shift-return-dialog .wip-fill-selected-btn:hover{
+  background: #c8f6ed !important;
+}
+
 /* Post Return button — teal CTA is provided by .op-dialog. */
 
 /* Summary footer */
@@ -896,7 +944,9 @@
 @media (prefers-reduced-motion: reduce){
   .end-shift-return-dialog .wip-return-table tbody tr,
   .end-shift-return-dialog .wip-row-clear-btn,
-  .end-shift-return-dialog .wip-clear-selected-btn{
+  .end-shift-return-dialog .wip-row-fill-btn,
+  .end-shift-return-dialog .wip-clear-selected-btn,
+  .end-shift-return-dialog .wip-fill-selected-btn{
     transition: none !important;
     animation: none !important;
   }
