@@ -143,6 +143,7 @@ override_doctype_class = {
     "Journal Entry": "isnack.overrides.journal_entry.CustomJournalEntry",
     "Payment Reconciliation": "isnack.overrides.payment_reconciliation.CustomPaymentReconciliation",
     "Landed Cost Voucher": "isnack.overrides.landed_cost_voucher.CustomLandedCostVoucher",
+    "Packing Slip": "isnack.overrides.packing_slip.CustomPackingSlip",
 }
 
 # Document Events
