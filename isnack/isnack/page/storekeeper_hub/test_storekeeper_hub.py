@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock
 import frappe
 from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     get_items_per_stock_entry,
+    get_recent_transfers,
     get_pending_end_shift_returns,
     mark_end_shift_return_received,
     _normalize_batch_expiry_date,
@@ -404,6 +405,35 @@ class TestPendingEndShiftReturns(unittest.TestCase):
         se.db_set.assert_not_called()
         mock_publish.assert_not_called()
         self.assertTrue(result["already_received"])
+
+
+class TestGetRecentTransfers(unittest.TestCase):
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
+    @patch("frappe.db.sql")
+    def test_filters_by_work_order_planned_start_date_when_posting_date_is_set(self, mock_sql, _now_datetime, _add_to_date):
+        mock_sql.side_effect = [[], []]
+
+        get_recent_transfers(posting_date="2026-05-30")
+
+        query = mock_sql.call_args_list[0][0][0]
+        params = mock_sql.call_args_list[0][0][1]
+        self.assertIn("wo.planned_start_date = %s", query)
+        self.assertNotIn("tabProduction Plan", query)
+        self.assertEqual(params[0], "2026-05-30")
+
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.add_to_date", return_value="2026-05-28 00:00:00")
+    @patch("isnack.isnack.page.storekeeper_hub.storekeeper_hub.now_datetime", return_value="2026-05-28 12:00:00")
+    @patch("frappe.db.sql")
+    def test_keeps_recency_filter_when_posting_date_not_set(self, mock_sql, _now_datetime, _add_to_date):
+        mock_sql.side_effect = [[], []]
+
+        get_recent_transfers(posting_date=None)
+
+        query = mock_sql.call_args_list[0][0][0]
+        params = mock_sql.call_args_list[0][0][1]
+        self.assertIn("se.modified >= %s", query)
+        self.assertEqual(len(params), 1)
 
 
 if __name__ == '__main__':
