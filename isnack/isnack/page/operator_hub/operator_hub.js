@@ -648,7 +648,7 @@ function init_operator_hub($root) {
       const isCurrent = row.name === state.current_wo;
       const rowClass = `${isEnded ? ' row-ended' : ''}${isCurrent ? ' row-current' : ''}`;
       const plannedDate = row.planned_start_date
-        ? `<span class="wo-meta ms-2"><span class="wo-meta-k">Planned</span> <span class="wo-meta-v">${frappe.utils.escape_html(frappe.datetime.global_date_format(row.planned_start_date))}</span></span>`
+        ? `<span class="wo-meta ms-2"><span class="wo-meta-k">Planned</span> <span class="wo-meta-v">${frappe.utils.escape_html(frappe.datetime.global_date_format(row.planned_start_date.split(' ')[0]))}</span></span>`
         : '';
       const el = $(`
         <button class="list-group-item list-group-item-action py-3 d-flex justify-content-between align-items-center${rowClass}" type="button">
