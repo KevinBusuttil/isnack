@@ -104,18 +104,17 @@ frappe.ui.form.on("Production Plan", {
 // Load Production Plan defaults from Factory Settings and cache them on the
 // form so the Assembly Items item-group filter and Finished Goods Warehouse
 // default can be applied without an extra round trip per row/lookup.
-async function isnack_load_production_plan_defaults(frm) {
-  try {
-    const [item_group, fg_warehouse] = await Promise.all([
-      frappe.db.get_single_value("Factory Settings", "production_assembly_item_group"),
-      frappe.db.get_single_value("Factory Settings", "default_finished_goods_warehouse"),
-    ]);
-    frm.__isnack_assembly_item_group = item_group || null;
-    frm.__isnack_default_fg_warehouse = fg_warehouse || null;
-  } catch (e) {
-    frm.__isnack_assembly_item_group = null;
-    frm.__isnack_default_fg_warehouse = null;
-  }
+// Uses a whitelisted server method because Factory Settings is only readable
+// by System Manager; a direct client read would be denied for planners.
+function isnack_load_production_plan_defaults(frm) {
+  frappe.call({
+    method: "isnack.overrides.production_plan.get_production_plan_defaults",
+    callback(r) {
+      const d = (r && r.message) || {};
+      frm.__isnack_assembly_item_group = d.assembly_item_group || null;
+      frm.__isnack_default_fg_warehouse = d.default_finished_goods_warehouse || null;
+    },
+  });
 }
 
 // Pallet-label reprint dialog for a Production Plan's closed Work Orders.
