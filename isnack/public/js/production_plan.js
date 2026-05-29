@@ -103,6 +103,17 @@ frappe.ui.form.on("Production Plan", {
   },
 });
 
+frappe.ui.form.on("Production Plan Item", {
+  // Default the Finished Goods (For Warehouse) when an item is chosen. This
+  // covers the pre-rendered first row, which never fires po_items_add.
+  item_code(frm, cdt, cdn) {
+    const row = locals[cdt][cdn];
+    if (frm.__isnack_default_fg_warehouse && !row.warehouse) {
+      frappe.model.set_value(cdt, cdn, "warehouse", frm.__isnack_default_fg_warehouse);
+    }
+  },
+});
+
 // Load Production Plan defaults from Factory Settings and cache them on the
 // form so the Assembly Items item-group filter and Finished Goods Warehouse
 // default can be applied without an extra round trip per row/lookup.
