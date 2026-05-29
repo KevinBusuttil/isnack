@@ -29,6 +29,26 @@ from erpnext.utilities.transaction_base import validate_uom_is_integer
 
 from erpnext.manufacturing.doctype.production_plan.production_plan import ProductionPlan, get_sub_assembly_items, get_bin_details
 
+
+@frappe.whitelist()
+def get_production_plan_defaults():
+    """Return Production Plan defaults from Factory Settings.
+
+    Read here (server-side) rather than client-side because Factory Settings
+    is only readable by System Manager; Production Plan users would otherwise
+    get a permission error and the Assembly Items filter/warehouse default
+    would silently do nothing.
+    """
+    return {
+        "assembly_item_group": frappe.db.get_single_value(
+            "Factory Settings", "production_assembly_item_group"
+        ),
+        "default_finished_goods_warehouse": frappe.db.get_single_value(
+            "Factory Settings", "default_finished_goods_warehouse"
+        ),
+    }
+
+
 class CustomProductionPlan(ProductionPlan):
     def before_save(self):
         #    This method will populate the 'total_estimated_cost' field.
