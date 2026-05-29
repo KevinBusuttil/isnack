@@ -1075,10 +1075,10 @@ function init_operator_hub($root) {
       currentItemHasBatch = false;
       if (!item_code) return;
 
-      // Fetch item description + batch-tracking flag
-      frappe.db.get_value('Item', item_code, ['description', 'has_batch_no']).then(r => {
+      // Fetch item name + batch-tracking flag
+      frappe.db.get_value('Item', item_code, ['item_name', 'has_batch_no']).then(r => {
         if (r && r.message) {
-          d.set_value('item_desc', r.message.description || '');
+          d.set_value('item_desc', r.message.item_name || '');
           currentItemHasBatch = !!r.message.has_batch_no;
         }
       });
