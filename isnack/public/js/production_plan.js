@@ -1,6 +1,27 @@
 frappe.ui.form.off("Production Plan", "make_work_order");
 
 frappe.ui.form.on("Production Plan", {
+  setup(frm) {
+    // Restrict Assembly Items to the configured Production Assembly Item Group.
+    frm.set_query("item_code", "po_items", () => {
+      if (frm.__isnack_assembly_item_group) {
+        return { filters: { item_group: frm.__isnack_assembly_item_group } };
+      }
+      return {};
+    });
+  },
+
+  onload(frm) {
+    isnack_load_production_plan_defaults(frm);
+  },
+
+  po_items_add(frm, cdt, cdn) {
+    // Default the Finished Goods (For Warehouse) on new Assembly Items rows.
+    if (frm.__isnack_default_fg_warehouse) {
+      frappe.model.set_value(cdt, cdn, "warehouse", frm.__isnack_default_fg_warehouse);
+    }
+  },
+
   refresh(frm) {
     if (!frm.doc.__islocal) {
       frm.add_custom_button(
@@ -79,6 +100,23 @@ frappe.ui.form.on("Production Plan", {
     });
   },
 });
+
+// Load Production Plan defaults from Factory Settings and cache them on the
+// form so the Assembly Items item-group filter and Finished Goods Warehouse
+// default can be applied without an extra round trip per row/lookup.
+async function isnack_load_production_plan_defaults(frm) {
+  try {
+    const [item_group, fg_warehouse] = await Promise.all([
+      frappe.db.get_single_value("Factory Settings", "production_assembly_item_group"),
+      frappe.db.get_single_value("Factory Settings", "default_finished_goods_warehouse"),
+    ]);
+    frm.__isnack_assembly_item_group = item_group || null;
+    frm.__isnack_default_fg_warehouse = fg_warehouse || null;
+  } catch (e) {
+    frm.__isnack_assembly_item_group = null;
+    frm.__isnack_default_fg_warehouse = null;
+  }
+}
 
 // Pallet-label reprint dialog for a Production Plan's closed Work Orders.
 // Self-contained (not shared with the Operator Hub dialog) and read-only —

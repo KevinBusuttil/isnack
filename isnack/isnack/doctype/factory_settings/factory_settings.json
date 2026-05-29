@@ -25,6 +25,9 @@
   "per_line_rules_section",
   "default_semi_finished_warehouse",
   "line_warehouse_map",
+  "production_plan_section",
+  "production_assembly_item_group",
+  "default_finished_goods_warehouse",
   "label_printing_section",
   "default_label_template",
   "default_label_print_format",
@@ -160,6 +163,25 @@
    "fieldtype": "Table MultiSelect",
    "label": "Allowed Item Groups",
    "options": "Line Allowed Item Groups"
+  },
+  {
+   "fieldname": "production_plan_section",
+   "fieldtype": "Section Break",
+   "label": "Production Plan"
+  },
+  {
+   "description": "Item Group used to filter items in the Assembly Items table of a Production Plan.",
+   "fieldname": "production_assembly_item_group",
+   "fieldtype": "Link",
+   "label": "Production Assembly Item Group",
+   "options": "Item Group"
+  },
+  {
+   "description": "Default warehouse set as the Finished Goods (For Warehouse) on new Assembly Items rows of a Production Plan.",
+   "fieldname": "default_finished_goods_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Finished Goods Warehouse",
+   "options": "Warehouse"
   },
   {
    "fieldname": "label_printing_section",
