@@ -1,16 +1,6 @@
 frappe.ui.form.off("Production Plan", "make_work_order");
 
 frappe.ui.form.on("Production Plan", {
-  setup(frm) {
-    // Restrict Assembly Items to the configured Production Assembly Item Group.
-    frm.set_query("item_code", "po_items", () => {
-      if (frm.__isnack_assembly_item_group) {
-        return { filters: { item_group: frm.__isnack_assembly_item_group } };
-      }
-      return {};
-    });
-  },
-
   onload(frm) {
     isnack_load_production_plan_defaults(frm);
   },
@@ -23,6 +13,18 @@ frappe.ui.form.on("Production Plan", {
   },
 
   refresh(frm) {
+    // Restrict Assembly Items to the configured Production Assembly Item Group.
+    // Applied in refresh (not setup) because ERPNext's setup_queries sets this
+    // same get_query during setup and would otherwise win; refresh always runs
+    // after setup, so ours is the one that sticks.
+    frm.set_query("item_code", "po_items", () => {
+      const filters = { is_stock_item: 1 };
+      if (frm.__isnack_assembly_item_group) {
+        filters.item_group = frm.__isnack_assembly_item_group;
+      }
+      return { query: "erpnext.controllers.queries.item_query", filters };
+    });
+
     if (!frm.doc.__islocal) {
       frm.add_custom_button(
         __("Work Orders"),
