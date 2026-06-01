@@ -1677,6 +1677,211 @@ function init_operator_hub($root) {
       }
     }
 
+    // Format a splits array as "EURO 1 ×800 + EURO 4 ×200"
+    function formatSplitsSummary(splits) {
+      if (!splits || !splits.length) return '';
+      const fmt = (n) => {
+        const v = parseFloat(n) || 0;
+        return v === Math.floor(v) ? String(v) : String(v);
+      };
+      return splits.map(s => `${s.pallet_type} ×${fmt(s.carton_qty)}`).join(' + ');
+    }
+
+    // Reflect splits onto the parent grid row: when split, blank pallet_type
+    // (since multiple types apply) and show total pallet_qty + summary.
+    function applySplitsToParentRow(gridRow) {
+      if (!gridRow || !gridRow.doc) return;
+      const splits = gridRow.doc.splits || [];
+      if (splits.length >= 2) {
+        gridRow.doc.pallet_type = '';
+        gridRow.doc.pallet_qty = splits.reduce((acc, s) => acc + (parseFloat(s.pallet_qty) || 0), 0);
+        gridRow.doc.splits_summary = formatSplitsSummary(splits);
+      } else if (splits.length === 1) {
+        // Single-split == regular single-pallet-type flow; collapse it.
+        gridRow.doc.pallet_type = splits[0].pallet_type || '';
+        gridRow.doc.pallet_qty = parseFloat(splits[0].pallet_qty) || 0;
+        gridRow.doc.splits_summary = '';
+        gridRow.doc.splits = [];
+      } else {
+        gridRow.doc.splits_summary = '';
+      }
+      gridRow.refresh();
+    }
+
+    // Open the split sub-dialog for a single grid row
+    function showSplitDialog(parentGridRow) {
+      if (!parentGridRow || !parentGridRow.doc) return;
+      const parentDoc = parentGridRow.doc;
+      const totalCarton = parseFloat(parentDoc.carton_qty) || 0;
+      if (!totalCarton) {
+        frappe.show_alert({message: 'Set carton qty first', indicator: 'orange'});
+        return;
+      }
+      const itemCode = parentDoc.item_code;
+      const fromUom = parentDoc.default_uom;
+
+      // Seed with existing splits, else one row using the current pallet_type/qty (if any)
+      const seed = (parentDoc.splits && parentDoc.splits.length)
+        ? parentDoc.splits.map(s => ({...s}))
+        : [{
+            pallet_type: parentDoc.pallet_type || '',
+            carton_qty: totalCarton,
+            pallet_qty: parseFloat(parentDoc.pallet_qty) || 0,
+          }];
+
+      async function calcSubPalletQty(subRow) {
+        if (!subRow || !subRow.doc) return;
+        const pt = subRow.doc.pallet_type;
+        const cq = parseFloat(subRow.doc.carton_qty) || 0;
+        if (!pt || !cq) {
+          subRow.doc.pallet_qty = null;
+          subRow.refresh();
+          return;
+        }
+        try {
+          const r = await rpc('isnack.api.mes_ops.get_pallet_conversion_factor', {
+            item_code: itemCode,
+            from_uom: fromUom,
+            to_uom: pt,
+          });
+          const result = r.message || {};
+          if (result.found && result.conversion_factor) {
+            subRow.doc.pallet_qty = cq / result.conversion_factor;
+          } else {
+            subRow.doc.pallet_qty = null;
+          }
+          subRow.refresh();
+        } catch (err) {
+          console.error('Conversion factor fetch failed (split):', err);
+        }
+      }
+
+      const sd = opDialog({
+        title: `Split ${itemCode} — total ${totalCarton} ${fromUom || ''}`.trim(),
+        size: 'large',
+        fields: [
+          {
+            fieldname: 'help',
+            fieldtype: 'HTML',
+            options: `<div class="text-muted" style="margin-bottom:8px;">Allocate the total carton qty (<b>${totalCarton}</b>) across one or more pallet types. The split must sum exactly to the total.</div>`
+          },
+          {
+            fieldname: 'split_rows',
+            fieldtype: 'Table',
+            label: 'Splits',
+            cannot_add_rows: false,
+            cannot_delete_rows: false,
+            in_place_edit: true,
+            data: seed,
+            fields: [
+              {
+                fieldname: 'pallet_type',
+                fieldtype: 'Link',
+                label: 'Pallet Type',
+                options: 'UOM',
+                in_list_view: 1,
+                columns: 4,
+                get_query: () => ({filters: {name: ['in', allowedPalletUoms]}}),
+                onchange: function () {
+                  calcSubPalletQty(this.grid_row).then(refreshRemaining);
+                }
+              },
+              {
+                fieldname: 'carton_qty',
+                fieldtype: 'Float',
+                label: 'Carton Qty',
+                in_list_view: 1,
+                columns: 3,
+                onchange: function () {
+                  calcSubPalletQty(this.grid_row).then(refreshRemaining);
+                }
+              },
+              {
+                fieldname: 'pallet_qty',
+                fieldtype: 'Float',
+                label: 'Pallet Qty',
+                in_list_view: 1,
+                columns: 3,
+              }
+            ]
+          },
+          {
+            fieldname: 'remaining_html',
+            fieldtype: 'HTML',
+            options: '<div class="isn-split-remaining" style="margin-top:6px;"></div>'
+          }
+        ],
+        primary_action_label: 'Save Split',
+        primary_action: () => {
+          const data = sd.fields_dict.split_rows.grid.get_data();
+          const valid = data.filter(r => r.pallet_type && (parseFloat(r.carton_qty) || 0) > 0);
+          if (!valid.length) {
+            frappe.show_alert({message: 'Add at least one split row with pallet type and carton qty', indicator: 'orange'});
+            return;
+          }
+          // Disallow duplicate pallet types within one item's split
+          const seen = new Set();
+          for (const r of valid) {
+            if (seen.has(r.pallet_type)) {
+              frappe.show_alert({message: `Duplicate pallet type "${r.pallet_type}" — merge them into one row`, indicator: 'red'});
+              return;
+            }
+            seen.add(r.pallet_type);
+          }
+          const sum = valid.reduce((acc, r) => acc + (parseFloat(r.carton_qty) || 0), 0);
+          if (Math.abs(sum - totalCarton) > 0.0001) {
+            frappe.show_alert({message: `Splits must sum to ${totalCarton}. Currently ${sum}.`, indicator: 'red'});
+            return;
+          }
+          // Require pallet_qty per row (auto-calc may have failed if no conversion exists)
+          const missingQty = valid.find(r => !((parseFloat(r.pallet_qty) || 0) > 0));
+          if (missingQty) {
+            frappe.show_alert({message: `Enter Pallet Qty for "${missingQty.pallet_type}"`, indicator: 'red'});
+            return;
+          }
+          parentDoc.splits = valid.map(r => ({
+            pallet_type: r.pallet_type,
+            carton_qty: parseFloat(r.carton_qty) || 0,
+            pallet_qty: parseFloat(r.pallet_qty) || 0,
+          }));
+          applySplitsToParentRow(parentGridRow);
+          sd.hide();
+        },
+        secondary_action_label: 'Clear Split',
+        secondary_action: () => {
+          parentDoc.splits = [];
+          parentDoc.splits_summary = '';
+          parentGridRow.refresh();
+          sd.hide();
+        }
+      });
+
+      function refreshRemaining() {
+        const data = sd.fields_dict.split_rows.grid.get_data();
+        const sum = data.reduce((acc, r) => acc + (parseFloat(r.carton_qty) || 0), 0);
+        const rem = totalCarton - sum;
+        const balanced = Math.abs(rem) < 0.0001;
+        const tone = balanced ? 'success' : (rem < 0 ? 'danger' : 'warning');
+        const label = balanced ? 'Balanced' : (rem < 0 ? 'Over-allocated by' : 'Remaining');
+        const remDisp = balanced ? '' : ` <b>${Math.abs(rem)}</b>`;
+        sd.$wrapper.find('.isn-split-remaining').html(
+          `<div class="text-${tone}">Allocated <b>${sum}</b> / ${totalCarton} • ${label}${remDisp}</div>`
+        );
+      }
+
+      sd.show();
+      // Recompute pallet_qty on seeded rows (in case conversion factors changed)
+      setTimeout(async () => {
+        const grid = sd.fields_dict.split_rows.grid;
+        for (const gr of (grid.grid_rows || [])) {
+          if (gr.doc && gr.doc.pallet_type && (parseFloat(gr.doc.carton_qty) || 0) > 0 && !gr.doc.pallet_qty) {
+            await calcSubPalletQty(gr);
+          }
+        }
+        refreshRemaining();
+      }, 50);
+    }
+
     // 4. Build the dialog with a Table (grid) field
     const d = opDialog({
       title: 'Print Pallet Label (FG only)',
@@ -1723,7 +1928,12 @@ function init_operator_hub($root) {
               read_only: 0,
               columns: 1,
               onchange: function () {
-                // Auto-recalculate pallet_qty when carton_qty changes
+                // Carton qty changing invalidates any existing split allocation
+                if (this.grid_row && this.grid_row.doc && (this.grid_row.doc.splits || []).length) {
+                  this.grid_row.doc.splits = [];
+                  this.grid_row.doc.splits_summary = '';
+                  frappe.show_alert({message: 'Split cleared — carton qty changed', indicator: 'orange'});
+                }
                 calculatePalletQty(this.grid_row);
               }
             },
@@ -1739,7 +1949,11 @@ function init_operator_hub($root) {
                 filters: { name: ['in', allowedPalletUoms] }
               }),
               onchange: function () {
-                // Auto-calculate pallet_qty when pallet_type changes
+                // Manually editing pallet_type drops any existing multi-type split
+                if (this.grid_row && this.grid_row.doc && (this.grid_row.doc.splits || []).length) {
+                  this.grid_row.doc.splits = [];
+                  this.grid_row.doc.splits_summary = '';
+                }
                 calculatePalletQty(this.grid_row);
               }
             },
@@ -1750,6 +1964,24 @@ function init_operator_hub($root) {
               in_list_view: 1,
               read_only: 0,  // editable for manual override
               columns: 1,
+            },
+            {
+              fieldname: 'split_btn',
+              fieldtype: 'Button',
+              label: 'Split…',
+              in_list_view: 1,
+              columns: 1,
+              click: function () {
+                showSplitDialog(this.grid_row);
+              }
+            },
+            {
+              fieldname: 'splits_summary',
+              fieldtype: 'Data',
+              label: 'Split',
+              in_list_view: 1,
+              read_only: 1,
+              columns: 2,
             },
             {
               fieldname: 'work_orders',
@@ -1764,13 +1996,46 @@ function init_operator_hub($root) {
       primary_action_label: 'Print Labels',
       primary_action: async (v) => {
         const gridData = d.fields_dict.pallet_items.grid.get_data();
-        const rowsToPrint = gridData.filter(row => row.pallet_type && row.pallet_qty > 0);
-        
+
+        // Expand each item row into one print job per pallet-type split.
+        // Rows with no splits and a single pallet_type behave as before.
+        const rowsToPrint = [];
+        for (const row of gridData) {
+          const splits = row.splits || [];
+          if (splits.length >= 2) {
+            const splitSum = splits.reduce((acc, s) => acc + (parseFloat(s.carton_qty) || 0), 0);
+            if (Math.abs(splitSum - (parseFloat(row.carton_qty) || 0)) > 0.0001) {
+              frappe.show_alert({
+                message: `Split for ${row.item_code} does not match carton qty — re-open Split…`,
+                indicator: 'red'
+              });
+              return;
+            }
+            for (const s of splits) {
+              rowsToPrint.push({
+                item_code: row.item_code,
+                work_orders: row.work_orders || [],
+                pallet_type: s.pallet_type,
+                carton_qty: parseFloat(s.carton_qty) || 0,
+                pallet_qty: parseFloat(s.pallet_qty) || 0,
+              });
+            }
+          } else if (row.pallet_type && (parseFloat(row.pallet_qty) || 0) > 0) {
+            rowsToPrint.push({
+              item_code: row.item_code,
+              work_orders: row.work_orders || [],
+              pallet_type: row.pallet_type,
+              carton_qty: parseFloat(row.carton_qty) || 0,
+              pallet_qty: parseFloat(row.pallet_qty) || 0,
+            });
+          }
+        }
+
         if (!rowsToPrint.length) {
           frappe.show_alert({message: 'No items with pallet type selected', indicator: 'orange'});
           return;
         }
-        
+
         setStatus(`Printing ${rowsToPrint.length} pallet label(s)…`);
         
         let printedCount = 0;
@@ -1843,6 +2108,8 @@ function init_operator_hub($root) {
         carton_qty: item.carton_qty,
         pallet_type: '',
         pallet_qty: 0,
+        splits: [],
+        splits_summary: '',
         work_orders: item.work_orders || [],  // Store work_orders array
       });
     });
