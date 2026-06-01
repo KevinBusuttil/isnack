@@ -1910,7 +1910,7 @@ function init_operator_hub($root) {
               label: 'Description',
               in_list_view: 1,
               read_only: 1,
-              columns: 2,
+              columns: 1,
             },
             {
               fieldname: 'default_uom',
@@ -1971,7 +1971,7 @@ function init_operator_hub($root) {
               label: 'Split',
               in_list_view: 1,
               read_only: 1,
-              columns: 3,
+              columns: 2,
             },
             {
               fieldname: 'work_orders',
@@ -2105,51 +2105,87 @@ function init_operator_hub($root) {
     });
     d.fields_dict.pallet_items.grid.refresh();
 
-    // Frappe v15 grid Button fields don't fire `click`, and df.formatter is
-    // not invoked for cells (frappe.format() is used directly). So we inject
-    // the inline split icon into each row's splits_summary column after
-    // render, and wrap each row's refresh() so it survives re-renders.
-    function injectSplitIcon(gridRow) {
-      if (!gridRow || !gridRow.row) return;
-      const $col = gridRow.row.find('[data-fieldname="splits_summary"]');
-      if (!$col.length) return;
-      if ($col.find('.isn-split-btn').length) return;
+    // ---- Inline "Split" icon injection ----
+    // Frappe v15 quirks that forced this DOM-based approach:
+    //   - grid Button fields render but don't fire `click`
+    //   - df.formatter on a grid cell is never invoked (frappe.format() is
+    //     called directly into .static-area)
+    //   - the `grid-row-render` event only fires when this.frm exists, so
+    //     it never fires inside a Dialog
+    // Solution: watch the grid wrapper with a MutationObserver and inject
+    // the icon into every .grid-static-col[data-fieldname="splits_summary"]
+    // as rows appear or re-render.
+    function injectIntoCol($col) {
+      if (!$col || !$col.length) return false;
+      if ($col.find('.isn-split-btn').length) return false;
+      const $gridRowEl = $col.closest('.grid-row');
+      const gridRow = $gridRowEl.data('grid_row');
+      if (!gridRow) return false;
       const $btn = $(
         '<button type="button" class="btn btn-xs btn-default isn-split-btn" ' +
         'title="Split across pallet types" ' +
-        'style="padding:1px 6px;margin-right:6px;line-height:1;vertical-align:middle;">' +
-        '<svg class="icon icon-sm" style="vertical-align:middle;">' +
+        'style="padding:1px 6px;margin:0 6px 0 0;line-height:1;' +
+        'vertical-align:middle;height:22px;">' +
+        '<svg class="icon icon-sm" style="vertical-align:middle;' +
+        'width:12px;height:12px;">' +
         '<use href="#icon-branch"></use></svg>' +
         '</button>'
       );
+      $btn.on('mousedown', function (e) { e.stopPropagation(); });
       $btn.on('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
         showSplitDialog(gridRow);
       });
       $col.prepend($btn);
+      return true;
     }
 
-    function setupSplitIcons() {
-      const grid = d.fields_dict.pallet_items.grid;
-      const rows = grid.grid_rows || [];
-      rows.forEach(function (gr) {
-        injectSplitIcon(gr);
-        if (!gr._isnSplitWrapped && typeof gr.refresh === 'function') {
-          gr._isnSplitWrapped = true;
-          const origRefresh = gr.refresh.bind(gr);
-          gr.refresh = function () {
-            const r = origRefresh.apply(this, arguments);
-            injectSplitIcon(gr);
-            return r;
-          };
-        }
-      });
+    function injectAllSplitIcons() {
+      const $cols = d.$wrapper.find(
+        '.grid-static-col[data-fieldname="splits_summary"]'
+      );
+      let n = 0;
+      $cols.each(function () { if (injectIntoCol($(this))) n++; });
+      if (n) console.log('[isnack] split icon injected into', n, 'row(s)');
+      return $cols.length;
     }
 
     d.show();
-    // Grid rows are built during/after show(); inject on next tick.
-    setTimeout(setupSplitIcons, 0);
+
+    // Initial attempt + a few retries (grid rendering can be async).
+    injectAllSplitIcons();
+    [30, 100, 300, 800].forEach(function (t) {
+      setTimeout(injectAllSplitIcons, t);
+    });
+
+    // Watch the grid for any DOM change and re-inject; debounced so we don't
+    // run for every microscopic update.
+    const grid = d.fields_dict.pallet_items.grid;
+    const observeTarget =
+      (grid && grid.wrapper && grid.wrapper[0]) ||
+      d.$wrapper.find('.form-grid')[0] ||
+      d.$wrapper[0];
+    if (observeTarget && !d._isnSplitObserver) {
+      let debounce;
+      d._isnSplitObserver = new MutationObserver(function () {
+        clearTimeout(debounce);
+        debounce = setTimeout(injectAllSplitIcons, 25);
+      });
+      d._isnSplitObserver.observe(observeTarget, {
+        childList: true,
+        subtree: true,
+      });
+      // Disconnect when the dialog closes to avoid leaks.
+      const origHide = d.hide.bind(d);
+      d.hide = function () {
+        if (d._isnSplitObserver) {
+          d._isnSplitObserver.disconnect();
+          d._isnSplitObserver = null;
+        }
+        return origHide.apply(this, arguments);
+      };
+    }
   }
 
   async function showLabelHistoryDialog() {
