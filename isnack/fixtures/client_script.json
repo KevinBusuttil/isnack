@@ -14,7 +14,7 @@
   "docstatus": 0,
   "doctype": "Client Script",
   "dt": "Production Plan",
-  "enabled": 1,
+  "enabled": 0,
   "modified": "2025-06-18 22:44:44.283559",
   "module": "Isnack",
   "name": "Production Plan Item filter",
