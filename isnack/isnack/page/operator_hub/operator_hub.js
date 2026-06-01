@@ -1888,6 +1888,16 @@ function init_operator_hub($root) {
       size: 'extra-large',
       fields: [
         {
+          fieldname: 'pallet_split_help',
+          fieldtype: 'HTML',
+          options:
+            '<div class="text-muted" style="margin:0 0 8px 0;">' +
+            'Tick a row and click <b>Split Selected Row…</b> to allocate ' +
+            'its carton qty across multiple pallet types ' +
+            '(e.g. 800 on EURO 1 + 200 on EURO 4).' +
+            '</div>'
+        },
+        {
           fieldname: 'pallet_items',
           fieldtype: 'Table',
           label: 'Pallet Label Items',
@@ -1910,15 +1920,14 @@ function init_operator_hub($root) {
               label: 'Description',
               in_list_view: 1,
               read_only: 1,
-              columns: 1,
+              columns: 2,
             },
             {
               fieldname: 'default_uom',
               fieldtype: 'Data',
               label: 'Default UOM',
-              in_list_view: 1,
+              in_list_view: 0,
               read_only: 1,
-              columns: 1,
             },
             {
               fieldname: 'carton_qty',
@@ -1983,6 +1992,35 @@ function init_operator_hub($root) {
           ]
         }
       ],
+      secondary_action_label: 'Split Selected Row…',
+      secondary_action: () => {
+        const grid = d.fields_dict.pallet_items.grid;
+        const rows = grid.grid_rows || [];
+        const selected = rows.filter(function (gr) {
+          if (!gr || !gr.doc) return false;
+          if (gr.doc.__checked === 1 || gr.doc.__checked === true) return true;
+          // DOM fallback in case __checked isn't set synchronously
+          if (gr.wrapper && gr.wrapper.find('.grid-row-check').is(':checked')) {
+            return true;
+          }
+          return false;
+        });
+        if (selected.length === 0) {
+          frappe.show_alert({
+            message: 'Tick the row you want to split first',
+            indicator: 'orange'
+          });
+          return;
+        }
+        if (selected.length > 1) {
+          frappe.show_alert({
+            message: 'Tick only one row at a time to split',
+            indicator: 'orange'
+          });
+          return;
+        }
+        showSplitDialog(selected[0]);
+      },
       primary_action_label: 'Print Labels',
       primary_action: async (v) => {
         const gridData = d.fields_dict.pallet_items.grid.get_data();
@@ -2104,88 +2142,7 @@ function init_operator_hub($root) {
       });
     });
     d.fields_dict.pallet_items.grid.refresh();
-
-    // ---- Inline "Split" icon injection ----
-    // Frappe v15 quirks that forced this DOM-based approach:
-    //   - grid Button fields render but don't fire `click`
-    //   - df.formatter on a grid cell is never invoked (frappe.format() is
-    //     called directly into .static-area)
-    //   - the `grid-row-render` event only fires when this.frm exists, so
-    //     it never fires inside a Dialog
-    // Solution: watch the grid wrapper with a MutationObserver and inject
-    // the icon into every .grid-static-col[data-fieldname="splits_summary"]
-    // as rows appear or re-render.
-    function injectIntoCol($col) {
-      if (!$col || !$col.length) return false;
-      if ($col.find('.isn-split-btn').length) return false;
-      const $gridRowEl = $col.closest('.grid-row');
-      const gridRow = $gridRowEl.data('grid_row');
-      if (!gridRow) return false;
-      const $btn = $(
-        '<button type="button" class="btn btn-xs btn-default isn-split-btn" ' +
-        'title="Split across pallet types" ' +
-        'style="padding:1px 6px;margin:0 6px 0 0;line-height:1;' +
-        'vertical-align:middle;height:22px;">' +
-        '<svg class="icon icon-sm" style="vertical-align:middle;' +
-        'width:12px;height:12px;">' +
-        '<use href="#icon-branch"></use></svg>' +
-        '</button>'
-      );
-      $btn.on('mousedown', function (e) { e.stopPropagation(); });
-      $btn.on('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        showSplitDialog(gridRow);
-      });
-      $col.prepend($btn);
-      return true;
-    }
-
-    function injectAllSplitIcons() {
-      const $cols = d.$wrapper.find(
-        '.grid-static-col[data-fieldname="splits_summary"]'
-      );
-      let n = 0;
-      $cols.each(function () { if (injectIntoCol($(this))) n++; });
-      if (n) console.log('[isnack] split icon injected into', n, 'row(s)');
-      return $cols.length;
-    }
-
     d.show();
-
-    // Initial attempt + a few retries (grid rendering can be async).
-    injectAllSplitIcons();
-    [30, 100, 300, 800].forEach(function (t) {
-      setTimeout(injectAllSplitIcons, t);
-    });
-
-    // Watch the grid for any DOM change and re-inject; debounced so we don't
-    // run for every microscopic update.
-    const grid = d.fields_dict.pallet_items.grid;
-    const observeTarget =
-      (grid && grid.wrapper && grid.wrapper[0]) ||
-      d.$wrapper.find('.form-grid')[0] ||
-      d.$wrapper[0];
-    if (observeTarget && !d._isnSplitObserver) {
-      let debounce;
-      d._isnSplitObserver = new MutationObserver(function () {
-        clearTimeout(debounce);
-        debounce = setTimeout(injectAllSplitIcons, 25);
-      });
-      d._isnSplitObserver.observe(observeTarget, {
-        childList: true,
-        subtree: true,
-      });
-      // Disconnect when the dialog closes to avoid leaks.
-      const origHide = d.hide.bind(d);
-      d.hide = function () {
-        if (d._isnSplitObserver) {
-          d._isnSplitObserver.disconnect();
-          d._isnSplitObserver = null;
-        }
-        return origHide.apply(this, arguments);
-      };
-    }
   }
 
   async function showLabelHistoryDialog() {
