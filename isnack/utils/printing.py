@@ -1,6 +1,9 @@
 import frappe
 from frappe.utils import cstr
 
+# Fallback print format when no DocType-level default is configured.
+DEFAULT_FALLBACK_PRINT_FORMAT = "Standard"
+
 
 def get_factory_settings():
     try:
@@ -104,3 +107,44 @@ def get_a4_printer(fs=None) -> str | None:
         return frappe.db.get_single_value("Print Settings", "default_printer")
     except Exception:
         return None
+
+
+def _doctype_default_print_format(doctype: str) -> str:
+    """Return the DocType's configured default Print Format, or a sane fallback.
+
+    Respects any Property Setter override (e.g. the
+    ``Packing Slip-main-default_print_format`` fixture) since the meta lookup
+    reads from the same column.
+    """
+    try:
+        value = frappe.db.get_value("DocType", doctype, "default_print_format")
+    except Exception:
+        value = None
+    return cstr(value) if value else DEFAULT_FALLBACK_PRINT_FORMAT
+
+
+def enqueue_doc_print(doctype: str, name: str, printer: str | None = None,
+                      print_format: str | None = None) -> bool:
+    """Enqueue a background job that prints a document on a Network Printer.
+
+    Returns ``True`` when a job was enqueued, ``False`` when there is no
+    printer to send to (the call is intentionally a no-op in that case so a
+    missing-printer configuration never blocks the caller's workflow).
+    Printing happens via ``frappe.utils.print_format.print_by_server`` in a
+    short-queue worker so the request returns immediately.
+    """
+    target = printer or get_a4_printer()
+    if not target:
+        return False
+
+    fmt = print_format or _doctype_default_print_format(doctype)
+
+    frappe.enqueue(
+        "frappe.utils.print_format.print_by_server",
+        queue="short",
+        doctype=doctype,
+        name=name,
+        printer_setting=target,
+        print_format=fmt,
+    )
+    return True
