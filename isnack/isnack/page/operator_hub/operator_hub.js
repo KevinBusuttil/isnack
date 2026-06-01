@@ -1972,12 +1972,6 @@ function init_operator_hub($root) {
               in_list_view: 1,
               read_only: 1,
               columns: 3,
-              formatter: function (value) {
-                const safe = value ? frappe.utils.escape_html(value) : '';
-                const icon = `<button type="button" class="btn btn-xs btn-default isn-split-btn" title="Split across pallet types" style="padding:1px 6px;margin-right:6px;line-height:1;"><svg class="icon icon-sm" style="vertical-align:middle;"><use href="#icon-branch"></use></svg></button>`;
-                const text = safe ? `<span style="color:#555;">${safe}</span>` : '';
-                return icon + text;
-              }
             },
             {
               fieldname: 'work_orders',
@@ -2111,33 +2105,51 @@ function init_operator_hub($root) {
     });
     d.fields_dict.pallet_items.grid.refresh();
 
-    // Delegated click handler for the inline split icon. Frappe v15 grid
-    // Button fields don't fire `click` reliably, so we render the icon via
-    // the splits_summary formatter and bind here.
-    d.$wrapper.off('click.isnSplit').on('click.isnSplit', '.isn-split-btn', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      const $row = $(this).closest('[data-name], .grid-row');
-      const dataName = $row.attr('data-name');
-      const dataIdx = $row.attr('data-idx');
+    // Frappe v15 grid Button fields don't fire `click`, and df.formatter is
+    // not invoked for cells (frappe.format() is used directly). So we inject
+    // the inline split icon into each row's splits_summary column after
+    // render, and wrap each row's refresh() so it survives re-renders.
+    function injectSplitIcon(gridRow) {
+      if (!gridRow || !gridRow.row) return;
+      const $col = gridRow.row.find('[data-fieldname="splits_summary"]');
+      if (!$col.length) return;
+      if ($col.find('.isn-split-btn').length) return;
+      const $btn = $(
+        '<button type="button" class="btn btn-xs btn-default isn-split-btn" ' +
+        'title="Split across pallet types" ' +
+        'style="padding:1px 6px;margin-right:6px;line-height:1;vertical-align:middle;">' +
+        '<svg class="icon icon-sm" style="vertical-align:middle;">' +
+        '<use href="#icon-branch"></use></svg>' +
+        '</button>'
+      );
+      $btn.on('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showSplitDialog(gridRow);
+      });
+      $col.prepend($btn);
+    }
+
+    function setupSplitIcons() {
       const grid = d.fields_dict.pallet_items.grid;
       const rows = grid.grid_rows || [];
-      let gridRow = null;
-      if (dataName) {
-        gridRow = rows.find(gr => gr.doc && gr.doc.name === dataName);
-      }
-      if (!gridRow && dataIdx) {
-        const idxNum = parseInt(dataIdx, 10);
-        gridRow = rows.find(gr => gr.doc && parseInt(gr.doc.idx, 10) === idxNum);
-      }
-      if (gridRow) {
-        showSplitDialog(gridRow);
-      } else {
-        console.warn('Split: could not resolve grid row', dataName, dataIdx);
-      }
-    });
+      rows.forEach(function (gr) {
+        injectSplitIcon(gr);
+        if (!gr._isnSplitWrapped && typeof gr.refresh === 'function') {
+          gr._isnSplitWrapped = true;
+          const origRefresh = gr.refresh.bind(gr);
+          gr.refresh = function () {
+            const r = origRefresh.apply(this, arguments);
+            injectSplitIcon(gr);
+            return r;
+          };
+        }
+      });
+    }
 
     d.show();
+    // Grid rows are built during/after show(); inject on next tick.
+    setTimeout(setupSplitIcons, 0);
   }
 
   async function showLabelHistoryDialog() {
