@@ -1677,14 +1677,17 @@ function init_operator_hub($root) {
       }
     }
 
-    // Format a splits array as "EURO 1 ×800 + EURO 4 ×200"
+    // Compact summary shown in the grid Split column. Per-pallet carton
+    // qty is intentionally omitted to avoid truncation — re-tick the row
+    // and click Split Selected Row… to view/edit full allocation.
     function formatSplitsSummary(splits) {
       if (!splits || !splits.length) return '';
-      const fmt = (n) => {
-        const v = parseFloat(n) || 0;
-        return v === Math.floor(v) ? String(v) : String(v);
-      };
-      return splits.map(s => `${s.pallet_type} ×${fmt(s.carton_qty)}`).join(' + ');
+      const types = splits.map(s => {
+        const name = (s.pallet_type || '').trim();
+        // Strip trailing " Pallet" suffix for compactness ("EUR 2 Pallet" -> "EUR 2")
+        return name.replace(/\s+pallet\s*$/i, '') || name;
+      });
+      return types.join(' + ');
     }
 
     // Reflect splits onto the parent grid row: when split, blank pallet_type
@@ -1894,7 +1897,9 @@ function init_operator_hub($root) {
             '<div class="text-muted" style="margin:0 0 8px 0;">' +
             'Tick a row and click <b>Split Selected Row…</b> to allocate ' +
             'its carton qty across multiple pallet types ' +
-            '(e.g. 800 on EURO 1 + 200 on EURO 4).' +
+            '(e.g. 800 on EURO 1 + 200 on EURO 4). ' +
+            'Re-tick a split row and click the same button to view or ' +
+            'edit its allocation.' +
             '</div>'
         },
         {
