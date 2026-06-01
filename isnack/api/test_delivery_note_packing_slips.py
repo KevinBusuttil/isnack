@@ -187,11 +187,12 @@ class TestCheckExistingPackingSlips(unittest.TestCase):
 class TestCreateAndSubmitPackingSlip(unittest.TestCase):
     """Per-group Packing Slip creation, field mapping and packed_qty mirroring."""
 
+    @patch.object(dnps, "enqueue_doc_print")
     @patch("isnack.api.delivery_note_packing_slips.now_datetime",
            return_value="2026-05-22 10:00:00")
     @patch("isnack.api.delivery_note_packing_slips.frappe.new_doc")
     def test_pallet_fields_copied_and_packed_qty_mirrored(
-        self, mock_new_doc, _now
+        self, mock_new_doc, _now, mock_enqueue
     ):
         ps = _FakePackingSlip()
         mock_new_doc.return_value = ps
@@ -228,10 +229,14 @@ class TestCreateAndSubmitPackingSlip(unittest.TestCase):
         # is persisted and the standard validate_packed_qty check passes.
         self.assertEqual(dn_item.packed_qty, 2000)
 
+        # The submitted Packing Slip is dispatched to the A4 printer.
+        mock_enqueue.assert_called_once_with("Packing Slip", ps.name)
+
+    @patch.object(dnps, "enqueue_doc_print")
     @patch("isnack.api.delivery_note_packing_slips.now_datetime",
            return_value="2026-05-22 10:00:00")
     @patch("isnack.api.delivery_note_packing_slips.frappe.new_doc")
-    def test_no_sales_order_group_leaves_link_blank(self, mock_new_doc, _now):
+    def test_no_sales_order_group_leaves_link_blank(self, mock_new_doc, _now, _enqueue):
         ps = _FakePackingSlip()
         mock_new_doc.return_value = ps
 
@@ -249,10 +254,35 @@ class TestCreateAndSubmitPackingSlip(unittest.TestCase):
             ps.custom_auto_creation_reference, "DN-0001|NO-SALES-ORDER"
         )
 
+    @patch("isnack.api.delivery_note_packing_slips.frappe.log_error")
+    @patch.object(dnps, "enqueue_doc_print",
+                  side_effect=RuntimeError("printer module missing"))
     @patch("isnack.api.delivery_note_packing_slips.now_datetime",
            return_value="2026-05-22 10:00:00")
     @patch("isnack.api.delivery_note_packing_slips.frappe.new_doc")
-    def test_packed_item_row_uses_pi_detail(self, mock_new_doc, _now):
+    def test_print_enqueue_failure_does_not_break_submission(
+        self, mock_new_doc, _now, _enqueue, mock_log_error
+    ):
+        ps = _FakePackingSlip()
+        mock_new_doc.return_value = ps
+
+        dn_item = _dn_item("r1", "FG10005", 5, "SO-0001")
+        dn = _FakeDN(items=[dn_item])
+        group = {"sales_order": "SO-0001", "dn_items": [dn_item], "packed_items": []}
+
+        # The Packing Slip is still returned and packed_qty mirrored even though
+        # the print enqueue blew up; the failure is just logged.
+        name = dnps._create_and_submit_packing_slip(dn, "SO-0001", group, 1)
+        self.assertEqual(name, ps.name)
+        self.assertTrue(ps.submitted)
+        self.assertEqual(dn_item.packed_qty, 5)
+        mock_log_error.assert_called_once()
+
+    @patch.object(dnps, "enqueue_doc_print")
+    @patch("isnack.api.delivery_note_packing_slips.now_datetime",
+           return_value="2026-05-22 10:00:00")
+    @patch("isnack.api.delivery_note_packing_slips.frappe.new_doc")
+    def test_packed_item_row_uses_pi_detail(self, mock_new_doc, _now, _enqueue):
         ps = _FakePackingSlip()
         mock_new_doc.return_value = ps
 
