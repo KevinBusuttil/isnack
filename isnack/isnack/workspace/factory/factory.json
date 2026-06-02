@@ -131,7 +131,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-06-02 20:01:50.522046",
+ "modified": "2026-06-02 20:02:55.881237",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory",
@@ -140,7 +140,17 @@
  "parent_page": "",
  "public": 1,
  "quick_lists": [],
- "roles": [],
+ "roles": [
+  {
+   "role": "Factory Administrator"
+  },
+  {
+   "role": "Factory Operator"
+  },
+  {
+   "role": "Production Manager"
+  }
+ ],
  "sequence_id": 28.0,
  "shortcuts": [],
  "title": "Factory"
