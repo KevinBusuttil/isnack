@@ -10,7 +10,7 @@
  "idx": 0,
  "is_standard": "Yes",
  "letterhead": null,
- "modified": "2026-06-02 13:51:08.437891",
+ "modified": "2026-06-02 15:34:17.969763",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Document Attachments",
@@ -28,6 +28,9 @@
   },
   {
    "role": "Financial Auditor"
+  },
+  {
+   "role": "Auditor"
   }
  ],
  "timeout": 0
