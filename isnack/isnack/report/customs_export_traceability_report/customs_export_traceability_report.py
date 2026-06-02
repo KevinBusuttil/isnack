@@ -51,9 +51,9 @@ def get_columns():
 		{"label": _("Sales Qty"), "fieldname": "sales_qty", "fieldtype": "Float", "width": 90},
 		{"label": _("Sales UOM"), "fieldname": "sales_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Stock Qty"), "fieldname": "stock_qty", "fieldtype": "Float", "width": 90},
-		{"label": _("FG Total Weight"), "fieldname": "fg_total_weight", "fieldtype": "Float", "width": 120},
+		{"label": _("FG Total Weight"), "fieldname": "fg_total_weight", "fieldtype": "Float", "precision": 3, "width": 120},
 		{"label": _("FG Weight UOM"), "fieldname": "fg_weight_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
-		{"label": _("FG Total Volume"), "fieldname": "fg_total_volume", "fieldtype": "Float", "width": 120},
+		{"label": _("FG Total Volume"), "fieldname": "fg_total_volume", "fieldtype": "Float", "precision": 3, "width": 120},
 		{"label": _("FG Volume UOM"), "fieldname": "fg_volume_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
 		{"label": _("Item Group"), "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 120},
 		# B. Finished good traceability
@@ -159,8 +159,8 @@ def get_data(filters):
 					_sales_qty = frappe.utils.flt(si_row.qty)
 					_weight_per_unit = frappe.utils.flt(si_row.get("weight_per_unit"))
 					_volume_per_unit = frappe.utils.flt(si_row.get("custom_volume_per_unit"))
-					_fg_total_weight = (_sales_qty * _weight_per_unit) if (_sales_qty and _weight_per_unit) else None
-					_fg_total_volume = (_sales_qty * _volume_per_unit) if (_sales_qty and _volume_per_unit) else None
+					_fg_total_weight = frappe.utils.flt(_sales_qty * _weight_per_unit, 3) if (_sales_qty and _weight_per_unit) else None
+					_fg_total_volume = frappe.utils.flt(_sales_qty * _volume_per_unit, 3) if (_sales_qty and _volume_per_unit) else None
 
 					row = frappe._dict(
 						# A
