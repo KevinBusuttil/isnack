@@ -31,6 +31,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime
 
+from isnack.utils.printing import enqueue_doc_print
+
 # Deterministic group key for Delivery Note rows that have no Sales Order.
 # Used only for the idempotency reference string -- never written into the
 # `custom_sales_order` Link field.
@@ -274,5 +276,16 @@ def _create_and_submit_packing_slip(doc, group_key: str, group: dict, case_no: i
         item.packed_qty = flt(item.get("qty"))
     for packed_item in group["packed_items"]:
         packed_item.packed_qty = flt(packed_item.get("qty"))
+
+    # Send the submitted Packing Slip to the configured A4 Network Printer.
+    # Printing failures must never break Delivery Note submission, so the call
+    # is best-effort and only logs on error.
+    try:
+        enqueue_doc_print("Packing Slip", ps.name)
+    except Exception:
+        frappe.log_error(
+            title="Auto Packing Slip Print Enqueue Failed",
+            message=frappe.get_traceback(),
+        )
 
     return ps.name
