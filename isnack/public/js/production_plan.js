@@ -37,6 +37,9 @@ frappe.ui.form.on("Production Plan", {
       frm.add_custom_button(__("Print Pallet Labels"), () =>
         isnack_show_pallet_label_dialog(frm)
       );
+      frm.add_custom_button(__("Print Work Orders"), () =>
+        isnack_print_work_orders(frm)
+      );
     }
   },
 
@@ -126,6 +129,34 @@ function isnack_load_production_plan_defaults(frm) {
       const d = (r && r.message) || {};
       frm.__isnack_assembly_item_group = d.assembly_item_group || null;
       frm.__isnack_default_fg_warehouse = d.default_finished_goods_warehouse || null;
+    },
+  });
+}
+
+// Print all Work Orders linked to the Production Plan as a single PDF using
+// the "Work Order Detailed" print format.
+function isnack_print_work_orders(frm) {
+  frappe.call({
+    method: "frappe.client.get_list",
+    args: {
+      doctype: "Work Order",
+      fields: ["name"],
+      filters: { production_plan: frm.doc.name },
+      order_by: "creation asc",
+      limit_page_length: 0,
+    },
+    callback(r) {
+      const names = (r.message || []).map((d) => d.name);
+      if (!names.length) {
+        frappe.msgprint(__("No Work Orders found for this Production Plan."));
+        return;
+      }
+      const url =
+        "/api/method/frappe.utils.print_format.download_multi_pdf" +
+        "?doctype=" + encodeURIComponent("Work Order") +
+        "&name=" + encodeURIComponent(JSON.stringify(names)) +
+        "&format=" + encodeURIComponent("Work Order Detailed");
+      window.open(url, "_blank");
     },
   });
 }
