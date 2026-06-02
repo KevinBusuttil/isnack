@@ -1,0 +1,53 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"fe-X055E8C\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Auditor</span>\",\"col\":12}},{\"id\":\"X-giMIMlpw\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-06-02 14:29:05.339379",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "",
+ "idx": 0,
+ "indicator_color": "blue",
+ "is_hidden": 0,
+ "label": "Auditor",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 1,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Document Attachments",
+   "link_count": 0,
+   "link_to": "Document Attachments",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-06-02 14:31:49.954106",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Auditor",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Financial Auditor"
+  }
+ ],
+ "sequence_id": 22.0,
+ "shortcuts": [],
+ "title": "Auditor"
+}
