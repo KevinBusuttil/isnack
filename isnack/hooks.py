@@ -15,6 +15,7 @@ app_include_js = [
     "/assets/isnack/js/isnack.js",
     "/assets/isnack/js/trial_balance.js",
     "/assets/isnack/js/manual_line_pricing.js",
+    "/assets/isnack/js/sales_item_group_filter.js",
 ]
 
 # include js, css files in header of web template
