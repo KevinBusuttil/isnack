@@ -170,6 +170,9 @@ doc_events = {
         "validate": "isnack.api.delivery_note_pallets.calculate_delivery_note_pallets",
         "before_submit": "isnack.api.delivery_note_packing_slips.auto_create_packing_slips_before_submit",
     },
+    "Sales Invoice": {
+        "validate": "isnack.overrides.sales_invoice.quantise_item_currency_fields",
+    },
 }
 
 # doc_events = {
