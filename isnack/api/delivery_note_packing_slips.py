@@ -38,6 +38,14 @@ from isnack.utils.printing import enqueue_doc_print
 # `custom_sales_order` Link field.
 NO_SALES_ORDER_KEY = "NO-SALES-ORDER"
 
+# Item groups whose rows are services / non-physical and must never appear on
+# an auto-created Packing Slip. Including them would mix UOMs (e.g. blank
+# weight_uom vs Kg) and break the Packing Slip net-weight validation.
+_NON_PACKABLE_ITEM_GROUPS = {
+    "Services",
+    "Promotional & Marketing Services",
+}
+
 
 def auto_create_packing_slips_before_submit(doc, method=None):
     """Delivery Note `before_submit` hook: auto-create one Packing Slip per Sales Order."""
@@ -94,6 +102,38 @@ def _is_product_bundle(item_code: str) -> bool:
     )
 
 
+def _is_packable_dn_item(item) -> bool:
+    """True when a Delivery Note Item should be included in an auto Packing Slip.
+
+    Non-stock items and service-type item groups are excluded so the resulting
+    Packing Slip only contains physically packable rows with a consistent
+    weight UOM.
+    """
+    if flt(item.get("qty")) <= 0:
+        return False
+
+    if _is_product_bundle(item.item_code):
+        return False
+
+    item_data = frappe.db.get_value(
+        "Item",
+        item.item_code,
+        ["is_stock_item", "item_group"],
+        as_dict=True,
+    )
+
+    if not item_data:
+        return False
+
+    if not cint(item_data.get("is_stock_item")):
+        return False
+
+    if (item_data.get("item_group") or "").strip() in _NON_PACKABLE_ITEM_GROUPS:
+        return False
+
+    return True
+
+
 def _reference_key(delivery_note: str, group_key: str) -> str:
     """Deterministic idempotency key, e.g. ``DN-0001|SO-0001``."""
     return f"{delivery_note}|{group_key}"
@@ -126,9 +166,7 @@ def _build_groups(doc) -> dict:
         sales_order = item.get("against_sales_order") or None
         sales_order_by_dn_item[item.name] = sales_order
 
-        if flt(item.get("qty")) <= 0:
-            continue
-        if _is_product_bundle(item.item_code):
+        if not _is_packable_dn_item(item):
             continue
 
         _group(sales_order or NO_SALES_ORDER_KEY, sales_order)["dn_items"].append(item)

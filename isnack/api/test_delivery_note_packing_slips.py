@@ -73,11 +73,18 @@ def _dn_item(name, item_code, qty, sales_order=None, **extra):
     return _Row(**base)
 
 
+def _stock_item_lookup(*_args, **_kwargs):
+    """Default frappe.db.get_value stub treating every Item as a stock item."""
+    return {"is_stock_item": 1, "item_group": "Finished Goods"}
+
+
 class TestBuildGroups(unittest.TestCase):
     """Grouping of Delivery Note rows by Sales Order."""
 
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+           side_effect=_stock_item_lookup)
     @patch.object(dnps, "_is_product_bundle", return_value=False)
-    def test_two_sales_orders_two_groups(self, _bundle):
+    def test_two_sales_orders_two_groups(self, _bundle, _get_value):
         dn = _FakeDN(items=[
             _dn_item("r1", "A", 10, "SO-0001"),
             _dn_item("r2", "B", 5, "SO-0001"),
@@ -88,8 +95,10 @@ class TestBuildGroups(unittest.TestCase):
         self.assertEqual(len(groups["SO-0001"]["dn_items"]), 2)
         self.assertEqual(len(groups["SO-0002"]["dn_items"]), 1)
 
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+           side_effect=_stock_item_lookup)
     @patch.object(dnps, "_is_product_bundle", return_value=False)
-    def test_rows_without_sales_order_use_fallback_key(self, _bundle):
+    def test_rows_without_sales_order_use_fallback_key(self, _bundle, _get_value):
         dn = _FakeDN(items=[_dn_item("r1", "A", 10, None)])
         groups = dnps._build_groups(dn)
         self.assertEqual(list(groups.keys()), [dnps.NO_SALES_ORDER_KEY])
@@ -109,8 +118,10 @@ class TestBuildGroups(unittest.TestCase):
         with patch.object(dnps, "_is_product_bundle", return_value=True):
             self.assertEqual(dnps._build_groups(dn), {})
 
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+           side_effect=_stock_item_lookup)
     @patch.object(dnps, "_is_product_bundle", return_value=False)
-    def test_packed_items_inherit_parent_sales_order(self, _bundle):
+    def test_packed_items_inherit_parent_sales_order(self, _bundle, _get_value):
         dn = _FakeDN(
             items=[_dn_item("r1", "BUNDLE", 1, "SO-0009")],
             packed_items=[
@@ -125,6 +136,115 @@ class TestBuildGroups(unittest.TestCase):
             groups = dnps._build_groups(dn)
         self.assertEqual(list(groups.keys()), ["SO-0009"])
         self.assertEqual(len(groups["SO-0009"]["packed_items"]), 1)
+
+
+class TestIsPackableDnItem(unittest.TestCase):
+    """Filter that keeps services / non-stock rows out of Packing Slips."""
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value")
+    @patch.object(dnps, "_is_product_bundle", return_value=False)
+    def test_stock_finished_good_is_packable(self, _bundle, mock_get_value):
+        mock_get_value.return_value = {
+            "is_stock_item": 1,
+            "item_group": "Finished Goods",
+        }
+        item = _dn_item("r1", "FG10005", 10, "SO-0001")
+        self.assertTrue(dnps._is_packable_dn_item(item))
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value")
+    @patch.object(dnps, "_is_product_bundle", return_value=False)
+    def test_non_stock_service_row_is_excluded(self, _bundle, mock_get_value):
+        mock_get_value.return_value = {
+            "is_stock_item": 0,
+            "item_group": "Services",
+        }
+        item = _dn_item("r1", "Delivery Charges", 1, "SO-0001")
+        self.assertFalse(dnps._is_packable_dn_item(item))
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value")
+    @patch.object(dnps, "_is_product_bundle", return_value=False)
+    def test_stock_item_in_services_group_is_excluded(self, _bundle, mock_get_value):
+        # Defensive: even a misconfigured stock item filed under Services must
+        # be kept out of the Packing Slip.
+        mock_get_value.return_value = {
+            "is_stock_item": 1,
+            "item_group": "Services",
+        }
+        item = _dn_item("r1", "ODD", 1, "SO-0001")
+        self.assertFalse(dnps._is_packable_dn_item(item))
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value")
+    @patch.object(dnps, "_is_product_bundle", return_value=False)
+    def test_promotional_marketing_services_group_is_excluded(
+        self, _bundle, mock_get_value
+    ):
+        mock_get_value.return_value = {
+            "is_stock_item": 1,
+            "item_group": "Promotional & Marketing Services",
+        }
+        item = _dn_item("r1", "PMS10001", 1, "SO-0001")
+        self.assertFalse(dnps._is_packable_dn_item(item))
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+           return_value=None)
+    @patch.object(dnps, "_is_product_bundle", return_value=False)
+    def test_missing_item_record_is_excluded(self, _bundle, _get_value):
+        item = _dn_item("r1", "GHOST", 1, "SO-0001")
+        self.assertFalse(dnps._is_packable_dn_item(item))
+
+    @patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+           side_effect=_stock_item_lookup)
+    def test_product_bundle_parent_is_not_packable(self, _get_value):
+        item = _dn_item("r1", "BUNDLE", 1, "SO-0001")
+        with patch.object(dnps, "_is_product_bundle", return_value=True):
+            self.assertFalse(dnps._is_packable_dn_item(item))
+
+
+class TestBuildGroupsExcludesServices(unittest.TestCase):
+    """Service rows must never reach the Packing Slip via _build_groups."""
+
+    def test_mixed_stock_and_service_rows(self):
+        dn = _FakeDN(items=[
+            _dn_item("r1", "FG10005", 10, "SO-0001"),
+            _dn_item("r2", "Delivery Charges", 1, "SO-0001"),
+        ])
+
+        lookups = {
+            "FG10005": {"is_stock_item": 1, "item_group": "Finished Goods"},
+            "Delivery Charges": {"is_stock_item": 0, "item_group": "Services"},
+        }
+
+        with patch.object(dnps, "_is_product_bundle", return_value=False), \
+             patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+                   side_effect=lambda _dt, code, *a, **kw: lookups.get(code)):
+            groups = dnps._build_groups(dn)
+
+        self.assertEqual(list(groups.keys()), ["SO-0001"])
+        codes = [r.item_code for r in groups["SO-0001"]["dn_items"]]
+        self.assertEqual(codes, ["FG10005"])
+        self.assertNotIn("Delivery Charges", codes)
+
+    def test_service_only_delivery_note_yields_no_groups(self):
+        dn = _FakeDN(items=[
+            _dn_item("r1", "Delivery Charges", 1, "SO-0001"),
+        ])
+        with patch.object(dnps, "_is_product_bundle", return_value=False), \
+             patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+                   return_value={"is_stock_item": 0, "item_group": "Services"}):
+            self.assertEqual(dnps._build_groups(dn), {})
+
+    @patch.object(dnps, "_create_and_submit_packing_slip")
+    @patch.object(dnps, "_check_existing_packing_slips", return_value="create")
+    @patch.object(dnps, "_auto_create_enabled", return_value=True)
+    def test_service_only_dn_creates_no_packing_slip(
+        self, _enabled, _check, mock_create
+    ):
+        dn = _FakeDN(items=[_dn_item("r1", "Delivery Charges", 1, "SO-0001")])
+        with patch.object(dnps, "_is_product_bundle", return_value=False), \
+             patch("isnack.api.delivery_note_packing_slips.frappe.db.get_value",
+                   return_value={"is_stock_item": 0, "item_group": "Services"}):
+            dnps.auto_create_packing_slips_before_submit(dn)
+        mock_create.assert_not_called()
 
 
 class TestCheckExistingPackingSlips(unittest.TestCase):
@@ -322,8 +442,10 @@ class TestAutoCreateOrchestration(unittest.TestCase):
     @patch.object(dnps, "_is_product_bundle", return_value=False)
     @patch.object(dnps, "_auto_create_enabled", return_value=True)
     def test_one_packing_slip_per_sales_order(
-        self, _enabled, _bundle, _check, _frappe
+        self, _enabled, _bundle, _check, mock_frappe
     ):
+        mock_frappe.db.get_value.side_effect = _stock_item_lookup
+
         created = []
 
         def fake_create(doc, group_key, group, case_no):
