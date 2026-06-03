@@ -43,7 +43,6 @@ NO_SALES_ORDER_KEY = "NO-SALES-ORDER"
 # weight_uom vs Kg) and break the Packing Slip net-weight validation.
 _NON_PACKABLE_ITEM_GROUPS = {
     "Services",
-    "Promotional & Marketing Services",
 }
 
 
