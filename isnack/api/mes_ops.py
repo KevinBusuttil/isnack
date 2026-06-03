@@ -566,6 +566,113 @@ ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
 # Tolerance for floating point quantity comparisons
 QTY_EPSILON = 0.0001
 
+
+# ============================================================
+# Work Order locking + Stock Entry source-of-truth helpers
+# ------------------------------------------------------------
+# Operator Hub can fire the same stock movement more than once (Start retried,
+# button double-clicked, Close Production re-submitted). The cached
+# Work Order.material_transferred_for_manufacturing value is not a safe basis
+# for the "should I create another transfer?" decision because two concurrent
+# requests can both read the same stale value before either commits. We instead
+# (a) take a row lock on the Work Order for the duration of the transaction and
+# (b) sum the *submitted* Stock Entries as the source of truth.
+# ============================================================
+
+def _lock_work_order_for_update(work_order: str) -> None:
+    """Row-lock a single Work Order until the current transaction commits.
+
+    A concurrent request touching the same Work Order blocks here until we
+    commit, so it then reads our committed Stock Entries rather than the stale
+    pre-transfer state. This is what makes the MTFM/Manufacture decisions
+    concurrency-safe rather than merely idempotent on retry.
+    """
+    frappe.db.sql(
+        "select name from `tabWork Order` where name = %s for update",
+        (work_order,),
+    )
+
+
+def _lock_work_orders_for_update(work_orders: list[str]) -> None:
+    """Row-lock several Work Orders, always in deterministic (sorted) order.
+
+    Acquiring multiple row locks in a consistent order across all callers
+    prevents lock-ordering deadlocks when two Close Production requests overlap
+    on an intersecting set of Work Orders.
+    """
+    if not work_orders:
+        return
+    ordered = sorted(set(work_orders))
+    placeholders = ", ".join(["%s"] * len(ordered))
+    frappe.db.sql(
+        f"""
+        select name
+        from `tabWork Order`
+        where name in ({placeholders})
+        order by name
+        for update
+        """,
+        tuple(ordered),
+    )
+
+
+def _submitted_mtfm_qty(work_order: str) -> float:
+    """Sum of fg_completed_qty across submitted Material Transfer for Manufacture
+    Stock Entries for this Work Order — the authoritative "already transferred"
+    figure, independent of the cached Work Order field."""
+    return flt(frappe.db.sql("""
+        select coalesce(sum(fg_completed_qty), 0)
+        from `tabStock Entry`
+        where docstatus = 1
+          and purpose = 'Material Transfer for Manufacture'
+          and work_order = %s
+    """, (work_order,))[0][0])
+
+
+def _submitted_manufacture_qty(work_order: str) -> float:
+    """Sum of fg_completed_qty across submitted Manufacture Stock Entries for
+    this Work Order. Used to make Close Production idempotent so a retry does not
+    book a second Manufacture entry for a Work Order that is already produced."""
+    return flt(frappe.db.sql("""
+        select coalesce(sum(fg_completed_qty), 0)
+        from `tabStock Entry`
+        where docstatus = 1
+          and purpose = 'Manufacture'
+          and work_order = %s
+    """, (work_order,))[0][0])
+
+
+def _submitted_mtfm_item_qty_by_key(work_order: str) -> dict[tuple, float]:
+    """Per-(item, batch, uom) quantity already moved by submitted Material
+    Transfer for Manufacture entries for this Work Order.
+
+    Keyed by (item_code, batch_no, uom) with blank-string defaults so it can be
+    diffed against the staged rows when computing what still needs to move. Only
+    true warehouse-to-warehouse rows are counted (both s_warehouse and
+    t_warehouse set), matching how this flow builds MTFM rows.
+    """
+    rows = frappe.db.sql("""
+        select
+            sed.item_code,
+            coalesce(sed.batch_no, '') as batch_no,
+            coalesce(sed.uom, '') as uom,
+            coalesce(sum(sed.qty), 0) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus = 1
+          and se.purpose = 'Material Transfer for Manufacture'
+          and se.work_order = %s
+          and sed.s_warehouse is not null
+          and sed.t_warehouse is not null
+        group by sed.item_code, coalesce(sed.batch_no, ''), coalesce(sed.uom, '')
+    """, (work_order,), as_dict=True)
+
+    return {
+        (r.item_code, r.batch_no or "", r.uom or ""): flt(r.qty)
+        for r in rows
+    }
+
+
 def _is_fg(item_code: str) -> bool:
     """Treat sales items as FG by policy (adjust to Item Group if you prefer)."""
     return bool(frappe.db.get_value("Item", item_code, "is_sales_item"))
@@ -1227,26 +1334,33 @@ def set_work_order_state(
         if not wo.actual_start_date:
             updates["actual_start_date"] = now
         
-        # NEW: Transfer staged materials to WIP
+        # Transfer staged materials to WIP. This MUST succeed before the Work
+        # Order is advanced to In Process — a Start that silently proceeds on a
+        # failed transfer leaves the WO running with broken stock movement.
+        # transfer_staged_to_wip is idempotent (it skips the MTFM when the WO is
+        # already fully transferred and only sweeps pending surplus), so a Start
+        # while already In Process will not create a duplicate MTFM.
         try:
             transfer_result = transfer_staged_to_wip(work_order)
-            if transfer_result.get("stock_entry"):
-                frappe.msgprint(_("Materials transferred from Staging to WIP: {0}").format(
-                    transfer_result["stock_entry"]
-                ))
-            surplus_transfers = transfer_result.get("surplus_transfers") or []
-            if surplus_transfers:
-                frappe.msgprint(_("Surplus transferred from Staging to WIP: {0}").format(
-                    ", ".join(surplus_transfers)
-                ))
         except Exception as e:
-            # Log the error but don't block the Start action
             frappe.log_error(
                 title="Transfer Staged To WIP Error",
                 message=f"Failed to transfer staged materials for {work_order}: {str(e)}",
             )
-            frappe.msgprint(_("Warning: Could not transfer staged materials. Error: {0}").format(str(e)), 
-                          indicator="orange")
+            frappe.throw(
+                _("Could not start Work Order because staged materials could not be "
+                  "transferred to WIP: {0}").format(str(e))
+            )
+
+        if transfer_result.get("stock_entry"):
+            frappe.msgprint(_("Materials transferred from Staging to WIP: {0}").format(
+                transfer_result["stock_entry"]
+            ))
+        surplus_transfers = transfer_result.get("surplus_transfers") or []
+        if surplus_transfers:
+            frappe.msgprint(_("Surplus transferred from Staging to WIP: {0}").format(
+                ", ".join(surplus_transfers)
+            ))
     elif action_lc == "pause":
         updates["status"] = "Stopped"
     elif action_lc == "stop":
@@ -1287,105 +1401,138 @@ def transfer_staged_to_wip(work_order: str, employee: Optional[str] = None):
     Important: This function preserves individual Stock Entry Detail rows from staging
     (no aggregation) to maintain serial_and_batch_bundle integrity. Each bundle
     represents a specific batch allocation that must be transferred as-is to WIP.
+
+    Idempotency & concurrency: the Work Order row is locked for the duration of
+    the transaction and submitted MTFM Stock Entries are the source of truth.
+    A second Start/retry/double-click cannot create a duplicate (or a zero-qty)
+    Material Transfer for Manufacture, and any rows already moved by a prior MTFM
+    are netted out so they are never transferred twice. Surplus is always swept
+    separately via plain Material Transfer, even when the normal MTFM is skipped.
     """
     _require_roles(ROLES_OPERATOR)
-    
+
+    # Serialize concurrent Start requests for this WO and ensure we read the
+    # committed transfer history rather than a stale cached counter.
+    _lock_work_order_for_update(work_order)
+
     wo = frappe.get_doc("Work Order", work_order)
     staging_wh = _default_line_staging(work_order)
     wip_wh = _default_line_wip(work_order)
-    
+
     if not staging_wh:
         frappe.throw(_("No Staging warehouse configured for this Work Order"))
     if not wip_wh:
         frappe.throw(_("No WIP warehouse configured for this Work Order"))
-    
-    # Get materials currently in staging for this WO
-    # Look for recent "Material Transfer" stock entries to this staging warehouse
-    # Note: work_order parameter is validated by frappe.get_doc() above, ensuring it's a valid Work Order name
-    # Using a more precise pattern match to avoid matching partial work order names
-    #
-    # IMPORTANT: Preserve each bundle as separate row (no aggregation) to maintain batch allocation integrity
-    #   - Fetch batch_no from staging transfer
-    #   - Let ERPNext create NEW serial_and_batch_bundle records (don't reuse existing ones)
-    #   - Each Stock Entry needs its own unique bundle, even if referencing the same batch
-    #   - ORDER BY preserves chronological order and row sequence from staging transfers
-    wo_escaped = frappe.db.escape(work_order)
-    items_in_staging = frappe.db.sql("""
-        SELECT 
-            sed.item_code,
-            sed.batch_no,
-            sed.uom,
-            sed.qty
-        FROM `tabStock Entry` se
-        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-        WHERE se.docstatus = 1
-            AND se.purpose = 'Material Transfer'
-            AND sed.t_warehouse = %(staging_wh)s
-            AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
-            AND sed.qty > 0
-        ORDER BY se.posting_date, se.posting_time, sed.idx
-    """, {
-        'staging_wh': staging_wh,
-        'wo_pattern1': f'%WO: {work_order}|%',
-        'wo_pattern2': f'%WO: {work_order}'
-    }, as_dict=True)
-    
+
+    # Authoritative "already transferred" figure from submitted MTFM entries —
+    # NOT the cached wo.material_transferred_for_manufacturing, which two
+    # concurrent requests could both read pre-commit.
+    already_transferred = _submitted_mtfm_qty(work_order)
+    remaining_fg_qty = flt(wo.qty) - already_transferred
+
     se_name = None
-    if items_in_staging:
-        # Create Material Transfer for Manufacture
-        se = frappe.new_doc("Stock Entry")
-        se.company = wo.company
-        se.purpose = "Material Transfer for Manufacture"
-        se.stock_entry_type = "Material Transfer for Manufacture"
-        se.work_order = work_order
-        se.from_warehouse = staging_wh
-        se.to_warehouse = wip_wh
-        se.from_bom = 1
-        se.bom_no = wo.bom_no
-        se.use_multi_level_bom = wo.use_multi_level_bom
+    # Hard skip: when the Work Order is already fully transferred we must not
+    # create another MTFM at all (not even a zero-qty one). Surplus is still
+    # swept below.
+    if remaining_fg_qty > QTY_EPSILON:
+        # Read normal staged rows for this WO. Surplus source entries are
+        # excluded here (custom_is_surplus = 0); surplus moves via its own
+        # plain Material Transfer sweep.
+        #
+        # IMPORTANT: Preserve each row separately (no aggregation) to maintain
+        # batch allocation integrity. We fetch batch_no and let ERPNext create
+        # NEW serial_and_batch_bundle records — existing bundles belong to the
+        # staging transfer and must not be reused. ORDER BY preserves the
+        # chronological row sequence from staging transfers.
+        staged_rows = frappe.db.sql("""
+            SELECT
+                sed.item_code,
+                COALESCE(sed.batch_no, '') AS batch_no,
+                sed.uom,
+                sed.qty
+            FROM `tabStock Entry` se
+            JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+            WHERE se.docstatus = 1
+                AND se.purpose = 'Material Transfer'
+                AND COALESCE(se.custom_is_surplus, 0) = 0
+                AND sed.t_warehouse = %(staging_wh)s
+                AND (se.remarks LIKE %(wo_pattern1)s OR se.remarks LIKE %(wo_pattern2)s)
+                AND sed.qty > 0
+            ORDER BY se.posting_date, se.posting_time, sed.idx
+        """, {
+            'staging_wh': staging_wh,
+            'wo_pattern1': f'%WO: {work_order}|%',
+            'wo_pattern2': f'%WO: {work_order}'
+        }, as_dict=True)
 
-        # Set fg_completed_qty for ERPNext to update material_transferred_for_manufacturing
-        remaining_qty = flt(wo.qty) - flt(wo.material_transferred_for_manufacturing)
-        if remaining_qty <= 0:
-            frappe.msgprint(_("Warning: Material already transferred for full quantity. Proceeding with transfer."),
-                           indicator="orange")
-            se.fg_completed_qty = 0
-        else:
-            se.fg_completed_qty = remaining_qty
+        # Net out what submitted MTFM entries have already moved, per
+        # (item, batch, uom), preserving row-level batch identity.
+        already_moved = _submitted_mtfm_item_qty_by_key(work_order)
+        items_to_transfer = []
+        for row in staged_rows:
+            key = (row.item_code, row.batch_no or "", row.uom or "")
+            prior = flt(already_moved.get(key, 0))
 
-        if employee:
-            se.custom_operator = employee  # If you have this custom field
+            if prior >= flt(row.qty) - QTY_EPSILON:
+                # This whole staged row was already moved by a prior MTFM.
+                already_moved[key] = prior - flt(row.qty)
+                continue
 
-        # Add items from staging
-        for item in items_in_staging:
-            item_dict = {
-                "item_code": item.item_code,
-                "qty": item.qty,
-                "uom": item.uom,
-                "s_warehouse": staging_wh,
-                "t_warehouse": wip_wh,
-            }
+            qty_to_move = flt(row.qty) - max(prior, 0)
+            already_moved[key] = 0
 
-            # Handle batch tracking: Use batch_no and let ERPNext create new bundles
-            # Don't reuse serial_and_batch_bundle as it's already linked to the staging transfer
-            # Each Stock Entry needs its own unique bundle, even if referencing the same batch
-            if item.batch_no:
-                # Use batch_no and let ERPNext create a new bundle
-                item_dict["batch_no"] = item.batch_no
-                # use_serial_batch_fields=1 tells ERPNext to create a new bundle from batch_no
-                item_dict["use_serial_batch_fields"] = 1
-            # else: No batch tracking - ERPNext will handle as a regular item without batch/serial
+            if qty_to_move > QTY_EPSILON:
+                items_to_transfer.append({
+                    "item_code": row.item_code,
+                    "batch_no": row.batch_no or None,
+                    "uom": row.uom,
+                    "qty": qty_to_move,
+                })
 
-            se.append("items", item_dict)
+        if items_to_transfer:
+            # Create Material Transfer for Manufacture
+            se = frappe.new_doc("Stock Entry")
+            se.company = wo.company
+            se.purpose = "Material Transfer for Manufacture"
+            se.stock_entry_type = "Material Transfer for Manufacture"
+            se.work_order = work_order
+            se.from_warehouse = staging_wh
+            se.to_warehouse = wip_wh
+            se.from_bom = 1
+            se.bom_no = wo.bom_no
+            se.use_multi_level_bom = wo.use_multi_level_bom
+            # Cap at the remaining FG qty so the submitted MTFM total can never
+            # exceed the planned Work Order quantity.
+            se.fg_completed_qty = remaining_fg_qty
 
-        se.flags.ignore_permissions = True
-        se.insert()
-        se.submit()
-        se_name = se.name
+            if employee:
+                se.custom_operator = employee  # If you have this custom field
+
+            for item in items_to_transfer:
+                item_dict = {
+                    "item_code": item["item_code"],
+                    "qty": item["qty"],
+                    "uom": item["uom"],
+                    "s_warehouse": staging_wh,
+                    "t_warehouse": wip_wh,
+                }
+                # Use batch_no + use_serial_batch_fields so ERPNext v15 creates a
+                # NEW transaction-specific bundle; never reuse the staging bundle.
+                if item["batch_no"]:
+                    item_dict["batch_no"] = item["batch_no"]
+                    item_dict["use_serial_batch_fields"] = 1
+
+                se.append("items", item_dict)
+
+            se.flags.ignore_permissions = True
+            se.insert()
+            se.submit()
+            se_name = se.name
 
     # Sweep any eligible surplus (from a Consolidated Pick Cart) into WIP too, so
-    # operators can consume it during production close. This runs even when there
-    # are no normal staged materials left for this WO.
+    # operators can consume it during production close. This runs even when the
+    # normal MTFM was skipped (WO already fully transferred) so late surplus can
+    # still move from Staging to WIP.
     surplus_transfers = _sweep_surplus_to_wip(work_order, staging_wh, wip_wh, wo, employee)
 
     if not se_name and not surplus_transfers:
@@ -3094,6 +3241,34 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
     wo_name = wo_data["name"]
     try:
         wo = frappe.get_doc("Work Order", wo_name)
+
+        # Guard against the duplicate-MTFM corruption that motivated this flow:
+        # if submitted Material Transfer for Manufacture quantity already exceeds
+        # the planned qty, a duplicate transfer exists and must be fixed manually
+        # before production can be closed (we do not auto-repair vouchers).
+        transferred_qty = _submitted_mtfm_qty(wo_name)
+        if transferred_qty > flt(wo.qty) + QTY_EPSILON:
+            frappe.throw(
+                _("Work Order {0} has excess Material Transfer for Manufacture quantity "
+                  "({1} > {2}). Please fix the duplicate transfer before closing production.")
+                .format(wo_name, transferred_qty, wo.qty)
+            )
+
+        # Idempotency: if a submitted Manufacture entry already covers this Work
+        # Order (double-click / retry), do not book a second one. Just ensure the
+        # WO is marked Completed and return.
+        if _submitted_manufacture_qty(wo_name) >= flt(wo.qty) - QTY_EPSILON:
+            frappe.db.set_value(
+                "Work Order",
+                wo_name,
+                {
+                    "status": "Completed",
+                    "actual_end_date": wo.actual_end_date or frappe.utils.now_datetime(),
+                    "custom_production_ended": 0,
+                },
+            )
+            return
+
         fg_wh = (
             wo.fg_warehouse
             or _default_line_target(wo_name)
@@ -3102,6 +3277,14 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         uom = frappe.db.get_value("Item", wo.production_item, "stock_uom") or "Nos"
         wip_wh = wo.wip_warehouse or _default_line_wip(wo_name)
         has_batch = bool(frappe.db.get_value("Item", wo.production_item, "has_batch_no"))
+
+        # Late surplus sweep: surplus may have been added after Start but before
+        # Close Production. Move it Staging -> WIP now (plain Material Transfer,
+        # never Material Transfer for Manufacture) so it is available in WIP for
+        # over-consumption during this close.
+        staging_wh = _default_line_staging(wo_name)
+        if staging_wh and wip_wh:
+            _sweep_surplus_to_wip(wo_name, staging_wh, wip_wh, wo)
 
         scrap_wh = None
         if split["reject"] > 0:
@@ -3438,19 +3621,42 @@ def close_production(groups: str = None, lines: str = None,
     # Single Factory-Settings validation across everything being closed.
     _validate_close_production(line_list, all_ended_wos)
 
+    # Lock every Work Order we are about to close, in deterministic order, so a
+    # concurrent Close Production (double-click / retry) blocks here and then
+    # sees the committed Completed status instead of re-booking Manufacture.
+    _lock_work_orders_for_update([wo["name"] for wo in all_ended_wos])
+
     completed_wos = []
+    skipped_wos = []
     for entry in prepared:
         splits = _calculate_proportional_split(
             entry["ended_wos"], entry["good_qty"], entry["reject_qty"], entry["packaging_items"],
         )
         for wo_data in entry["ended_wos"]:
+            # Re-read status under the lock: another request may have completed
+            # this Work Order while we were waiting to acquire the lock.
+            current_status = frappe.db.get_value("Work Order", wo_data["name"], "status")
+            if current_status == "Completed":
+                skipped_wos.append(wo_data["name"])
+                continue
             _close_single_wo(wo_data, splits[wo_data["name"]], entry["batch_no"])
             completed_wos.append(wo_data["name"])
+
+    if not completed_wos:
+        # Everything was already closed by a concurrent/earlier request — treat
+        # as a successful no-op rather than throwing.
+        return {
+            "success": True,
+            "message": "Production already closed for the selected work order(s)",
+            "completed_wos": [],
+            "skipped_wos": skipped_wos,
+        }
 
     return {
         "success": True,
         "message": f"Successfully closed production for {len(completed_wos)} work order(s)",
         "completed_wos": completed_wos,
+        "skipped_wos": skipped_wos,
     }
 
 @frappe.whitelist()

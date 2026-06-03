@@ -952,9 +952,21 @@ function init_operator_hub($root) {
 
   // ---------- Buttons ----------
   async function doStart() {
-    await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
-    flashStatus(`Started — ${state.current_wo}`, 'success');
-    await updateAfterAction();
+    // In-flight guard: the Start RPC now triggers Staging -> WIP transfer and
+    // fails hard if it cannot complete, so a repeated click while it is pending
+    // must not fire a second transfer. refreshButtonStates() restores the
+    // correct enabled/disabled state once the request settles.
+    if (state.__starting) return;
+    state.__starting = true;
+    $('#btn-start', $root).prop('disabled', true);
+    try {
+      await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
+      flashStatus(`Started — ${state.current_wo}`, 'success');
+      await updateAfterAction();
+    } finally {
+      state.__starting = false;
+      refreshButtonStates();
+    }
   }
 
   $('#btn-start',$root).on('click', () => {
@@ -2745,7 +2757,13 @@ function init_operator_hub($root) {
       fields,
       size: 'extra-large',
       primary_action_label:'Close Production',
-      primary_action: (v) => {
+      primary_action: async (v) => {
+        // In-flight guard: ignore repeat clicks while a close is already
+        // running. The button is disabled synchronously below before we await
+        // the RPC, so a second queued click lands here and bails out.
+        const $btn = d.get_primary_btn();
+        if ($btn.prop('disabled')) return;
+
         const batchPattern = /^[A-Za-z]{3}-\d{3}$/;
         const payload = [];
         const batchSeen = new Map(); // batch_no -> production_item
@@ -2807,17 +2825,22 @@ function init_operator_hub($root) {
           });
         }
 
+        // Disable synchronously (before any await) so a double-click cannot
+        // fire a second close_production. Re-enable only on error.
         setStatus('Closing production…');
-        rpc('isnack.api.mes_ops.close_production', {
-          groups: JSON.stringify(payload),
-          lines: JSON.stringify(state.current_lines),
-        }).then(() => {
+        $btn.prop('disabled', true).text(__('Closing…'));
+        try {
+          await rpc('isnack.api.mes_ops.close_production', {
+            groups: JSON.stringify(payload),
+            lines: JSON.stringify(state.current_lines),
+          });
           d.hide();
           flashStatus(`Production closed for ${endedWOs.length} work order(s)`, 'success');
-          load_queue();
-        }).catch(err => {
+          await load_queue();
+        } catch (err) {
           console.error('close_production failed', err);
-        });
+          $btn.prop('disabled', false).text(__('Close Production'));
+        }
       },
     });
 
