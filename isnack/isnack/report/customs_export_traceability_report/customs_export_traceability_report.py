@@ -996,7 +996,7 @@ def get_export_excel(filters):
 	# A) Report header (written once)
 	# ---------------------------------------------------------------------------
 	_write_merged_row(
-		"Customs Export Traceability Report",
+		"Consumption Form / Fiche de Côsommation",
 		font=_bold_font(size=14),
 		align=ALIGN_CENTER,
 	)
@@ -1157,7 +1157,7 @@ def get_export_excel(filters):
 		ws.append([""] * TOTAL_COLS)
 		# "Raw Material" spans cols 1-4
 		rm_group_cell = ws.cell(row=grp_row_idx, column=1)
-		rm_group_cell.value = "Raw Material"
+		rm_group_cell.value = "Raw Material Consumed"
 		rm_group_cell.font = WHITE_BOLD
 		rm_group_cell.fill = FILL_RM_GROUP
 		rm_group_cell.alignment = ALIGN_CENTER
@@ -1255,6 +1255,6 @@ def get_export_excel(filters):
 	file_content = base64.b64encode(buf.read()).decode("utf-8")
 
 	timestamp = now_datetime().strftime("%Y%m%d_%H%M%S")
-	file_name = f"Customs_Export_Traceability_Report_{timestamp}.xlsx"
+	file_name = f"Consumption_Form_{timestamp}.xlsx"
 
 	return {"file_content": file_content, "file_name": file_name}
