@@ -625,7 +625,7 @@ def _fetch_pr_details(pr_names):
 # ---------------------------------------------------------------------------
 
 def _fetch_pr_item_qty(pr_batch_keys):
-	"""Return {(pr_name, item_code, batch_no): received_qty}"""
+	"""Return {(pr_name, item_code, batch_no): received_qty_in_stock_uom}"""
 	if not pr_batch_keys:
 		return {}
 
@@ -634,10 +634,12 @@ def _fetch_pr_item_qty(pr_batch_keys):
 		if not (pr_name and item_code and batch_no):
 			continue
 
-		# Strategy a: direct batch_no on Purchase Receipt Item
+		# Strategy a: direct batch_no on Purchase Receipt Item.
+		# Use stock_qty so PR Qty is in the stock UOM (matches Consumed Qty /
+		# Balance Stock), not the purchase/transaction UOM.
 		direct_qty = frappe.db.sql(
 			"""
-			SELECT IFNULL(SUM(pri.qty), 0)
+			SELECT IFNULL(SUM(pri.stock_qty), 0)
 			FROM `tabPurchase Receipt Item` pri
 			WHERE pri.parent = %s
 			  AND pri.item_code = %s
