@@ -817,6 +817,15 @@ def get_print_html(filters):
 			return ""
 		return frappe.utils.escape_html(str(val))
 
+	def _num2(val):
+		"""Format numeric quantities to 2 decimal places; blank if empty/None."""
+		if val is None or val == "":
+			return ""
+		try:
+			return f"{float(val):.2f}"
+		except (TypeError, ValueError):
+			return _v(val)
+
 	# Build structured context for the template
 	invoices_list = []
 	for si_name, rows in invoices_grouped.items():
@@ -856,13 +865,13 @@ def get_print_html(filters):
 			row_list.append({
 				"rm_item_code": _v(row.get("rm_item_code")),
 				"rm_item_name": _v(row.get("rm_item_name")),
-				"consumed_qty": _v(row.get("consumed_qty")),
+				"consumed_qty": _num2(row.get("consumed_qty")),
 				"rm_batch_no": _v(row.get("rm_batch_no")),
 				"purchase_receipt": _v(row.get("purchase_receipt")),
 				"purchase_receipt_date": _v(row.get("purchase_receipt_date")),
 				"supplier_name": _v(row.get("supplier_name")),
-				"pr_qty": _v(row.get("pr_qty")),
-				"balance_stock": _v(row.get("balance_stock")),
+				"pr_qty": _num2(row.get("pr_qty")),
+				"balance_stock": _num2(row.get("balance_stock")),
 				"customs_document_no": _v(row.get("customs_document_no")),
 			})
 
@@ -1217,6 +1226,11 @@ def get_export_excel(filters):
 			if pr_date:
 				date_cell = ws.cell(row=data_row_idx, column=6)
 				date_cell.number_format = "YYYY-MM-DD"
+			# Show qty columns to 2 decimal places: Consumed Qty (3), PR Qty (8), Balance Stock (9)
+			for qty_col in (3, 8, 9):
+				qty_cell = ws.cell(row=data_row_idx, column=qty_col)
+				if isinstance(qty_cell.value, float):
+					qty_cell.number_format = "0.00"
 
 		_write_blank_row()
 
