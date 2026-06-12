@@ -51,7 +51,8 @@ def get_columns():
 		{"label": _("Sales Qty"), "fieldname": "sales_qty", "fieldtype": "Float", "width": 90},
 		{"label": _("Sales UOM"), "fieldname": "sales_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Stock Qty"), "fieldname": "stock_qty", "fieldtype": "Float", "width": 90},
-		{"label": _("FG Total Weight"), "fieldname": "fg_total_weight", "fieldtype": "Float", "precision": 3, "width": 120},
+		{"label": _("FG Net Weight"), "fieldname": "fg_net_weight", "fieldtype": "Float", "precision": 3, "width": 110},
+		{"label": _("FG Gross Weight"), "fieldname": "fg_gross_weight", "fieldtype": "Float", "precision": 3, "width": 110},
 		{"label": _("FG Weight UOM"), "fieldname": "fg_weight_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
 		{"label": _("FG Total Volume"), "fieldname": "fg_total_volume", "fieldtype": "Float", "precision": 3, "width": 120},
 		{"label": _("FG Volume UOM"), "fieldname": "fg_volume_uom", "fieldtype": "Link", "options": "UOM", "width": 100},
@@ -155,11 +156,15 @@ def get_data(filters):
 					pr_name = rm.get("purchase_receipt")
 					pr = pr_details.get(pr_name) or {} if pr_name else {}
 
-					# Calculate FG total weight and volume (based on sales qty)
+					# Calculate FG net/gross weight and volume (based on sales qty).
+					# Item.weight_per_unit is the GROSS weight (net + tare); the net
+					# weight per unit is stored on custom_net_weight_per_unit.
 					_sales_qty = frappe.utils.flt(si_row.qty)
-					_weight_per_unit = frappe.utils.flt(si_row.get("weight_per_unit"))
+					_gross_weight_per_unit = frappe.utils.flt(si_row.get("weight_per_unit"))
+					_net_weight_per_unit = frappe.utils.flt(si_row.get("custom_net_weight_per_unit"))
 					_volume_per_unit = frappe.utils.flt(si_row.get("custom_volume_per_unit"))
-					_fg_total_weight = frappe.utils.flt(_sales_qty * _weight_per_unit, 3) if (_sales_qty and _weight_per_unit) else None
+					_fg_net_weight = frappe.utils.flt(_sales_qty * _net_weight_per_unit, 3) if (_sales_qty and _net_weight_per_unit) else None
+					_fg_gross_weight = frappe.utils.flt(_sales_qty * _gross_weight_per_unit, 3) if (_sales_qty and _gross_weight_per_unit) else None
 					_fg_total_volume = frappe.utils.flt(_sales_qty * _volume_per_unit, 3) if (_sales_qty and _volume_per_unit) else None
 
 					row = frappe._dict(
@@ -177,7 +182,8 @@ def get_data(filters):
 						sales_qty=si_row.qty,
 						sales_uom=si_row.uom,
 						stock_qty=si_row.stock_qty,
-						fg_total_weight=_fg_total_weight,
+						fg_net_weight=_fg_net_weight,
+						fg_gross_weight=_fg_gross_weight,
 						fg_weight_uom=si_row.get("weight_uom") or None,
 						fg_total_volume=_fg_total_volume,
 						fg_volume_uom=si_row.get("custom_volume_uom") or None,
@@ -310,6 +316,7 @@ def _fetch_si_items(filters):
 			sii.batch_no,
 			sii.serial_and_batch_bundle,
 			item.weight_per_unit,
+			item.custom_net_weight_per_unit,
 			item.weight_uom,
 			item.custom_volume_per_unit,
 			item.custom_volume_uom
@@ -828,6 +835,15 @@ def get_print_html(filters):
 		except (TypeError, ValueError):
 			return _v(val)
 
+	def _num3(val):
+		"""Format numeric weights/volumes to 3 decimal places; blank if empty/None."""
+		if val is None or val == "":
+			return ""
+		try:
+			return f"{float(val):.3f}"
+		except (TypeError, ValueError):
+			return _v(val)
+
 	# Build structured context for the template
 	invoices_list = []
 	for si_name, rows in invoices_grouped.items():
@@ -852,7 +868,8 @@ def get_print_html(filters):
 					"fg_item_name": _v(row.get("fg_item_name")),
 					"sales_qty": _v(row.get("sales_qty")),
 					"sales_uom": _v(row.get("sales_uom")),
-					"fg_total_weight": _v(row.get("fg_total_weight")),
+					"fg_net_weight": _v(row.get("fg_net_weight")),
+					"fg_gross_weight": _v(row.get("fg_gross_weight")),
 					"fg_weight_uom": _v(row.get("fg_weight_uom")),
 					"fg_total_volume": _v(row.get("fg_total_volume")),
 					"fg_volume_uom": _v(row.get("fg_volume_uom")),
@@ -877,6 +894,23 @@ def get_print_html(filters):
 				"customs_document_no": _v(row.get("customs_document_no")),
 			})
 
+		# --- Header totals: net/gross weight and volume (one row per SI line) ---
+		_seen_total_idx = set()
+		_tot_net = _tot_gross = _tot_vol = 0.0
+		_wt_uom = _vol_uom = ""
+		for _r in rows:
+			_li = _r.get("si_item_idx")
+			if _li in _seen_total_idx:
+				continue
+			_seen_total_idx.add(_li)
+			_tot_net += frappe.utils.flt(_r.get("fg_net_weight"))
+			_tot_gross += frappe.utils.flt(_r.get("fg_gross_weight"))
+			_tot_vol += frappe.utils.flt(_r.get("fg_total_volume"))
+			if not _wt_uom and _r.get("fg_weight_uom"):
+				_wt_uom = _r.get("fg_weight_uom")
+			if not _vol_uom and _r.get("fg_volume_uom"):
+				_vol_uom = _r.get("fg_volume_uom")
+
 		invoices_list.append({
 			"si_name": _v(si_name),
 			"posting_date": _v(first.get("posting_date")),
@@ -891,6 +925,12 @@ def get_print_html(filters):
 			"customer_address": _v(si_extra.get("address_display") or si_extra.get("customer_address")),
 			"company_address": _v(si_extra.get("company_address_display")),
 			"total_amount": _v(si_extra.get("rounded_total") or si_extra.get("grand_total")),
+			"total_net_weight": _num3(_tot_net) if _tot_net else "",
+			"total_gross_weight": _num3(_tot_gross) if _tot_gross else "",
+			"total_volume": _num3(_tot_vol) if _tot_vol else "",
+			"net_weight_uom": _v(_wt_uom),
+			"gross_weight_uom": _v(_wt_uom),
+			"volume_uom": _v(_vol_uom),
 			"fg_items": fg_items,
 			"rows": row_list,
 		})
@@ -974,8 +1014,8 @@ def get_export_excel(filters):
 	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 
-	# FG table: 12 cols; RM table: 10 cols → use 12 as total width
-	TOTAL_COLS = 12
+	# FG table: 13 cols; RM table: 10 cols → use 13 as total width
+	TOTAL_COLS = 13
 
 	wb = Workbook()
 	ws = wb.active
@@ -1040,7 +1080,8 @@ def get_export_excel(filters):
 		"FG Item Name",
 		"Sold Qty",
 		"UOM",
-		"Total Weight",
+		"Net Weight",
+		"Gross Weight",
 		"Weight UOM",
 		"Total Volume",
 		"Volume UOM",
@@ -1128,11 +1169,17 @@ def get_export_excel(filters):
 			except (TypeError, ValueError):
 				sales_qty = str(sales_qty) if sales_qty is not None else ""
 
-			fg_total_weight = row.get("fg_total_weight")
+			fg_net_weight = row.get("fg_net_weight")
 			try:
-				fg_total_weight = float(fg_total_weight) if fg_total_weight is not None else ""
+				fg_net_weight = float(fg_net_weight) if fg_net_weight is not None else ""
 			except (TypeError, ValueError):
-				fg_total_weight = str(fg_total_weight) if fg_total_weight is not None else ""
+				fg_net_weight = str(fg_net_weight) if fg_net_weight is not None else ""
+
+			fg_gross_weight = row.get("fg_gross_weight")
+			try:
+				fg_gross_weight = float(fg_gross_weight) if fg_gross_weight is not None else ""
+			except (TypeError, ValueError):
+				fg_gross_weight = str(fg_gross_weight) if fg_gross_weight is not None else ""
 
 			fg_total_volume = row.get("fg_total_volume")
 			try:
@@ -1146,7 +1193,8 @@ def get_export_excel(filters):
 				row.get("fg_item_name") or "",
 				sales_qty,
 				row.get("sales_uom") or "",
-				fg_total_weight,
+				fg_net_weight,
+				fg_gross_weight,
 				row.get("fg_weight_uom") or "",
 				fg_total_volume,
 				row.get("fg_volume_uom") or "",
@@ -1156,10 +1204,33 @@ def get_export_excel(filters):
 			]
 			data_row_idx = ws.max_row + 1
 			ws.append(fg_row + [""] * (TOTAL_COLS - len(fg_row)))
-			# Format date cell (Mfg Date is now column 12)
+			# Format date cell (Mfg Date is now column 13)
 			if mfg_date:
-				date_cell = ws.cell(row=data_row_idx, column=12)
+				date_cell = ws.cell(row=data_row_idx, column=13)
 				date_cell.number_format = "YYYY-MM-DD"
+
+		# — FG totals: net / gross weight and volume (one row per SI line) —
+		_seen_total_idx = set()
+		_tot_net = _tot_gross = _tot_vol = 0.0
+		_wt_uom = _vol_uom = ""
+		for _r in rows:
+			_li = _r.get("si_item_idx")
+			if _li in _seen_total_idx:
+				continue
+			_seen_total_idx.add(_li)
+			_tot_net += frappe.utils.flt(_r.get("fg_net_weight"))
+			_tot_gross += frappe.utils.flt(_r.get("fg_gross_weight"))
+			_tot_vol += frappe.utils.flt(_r.get("fg_total_volume"))
+			if not _wt_uom and _r.get("fg_weight_uom"):
+				_wt_uom = _r.get("fg_weight_uom")
+			if not _vol_uom and _r.get("fg_volume_uom"):
+				_vol_uom = _r.get("fg_volume_uom")
+		_totals_text = (
+			f"Total Net Weight: {_tot_net:.3f} {_wt_uom}".rstrip()
+			+ "    |    " + f"Total Gross Weight: {_tot_gross:.3f} {_wt_uom}".rstrip()
+			+ "    |    " + f"Total Volume: {_tot_vol:.3f} {_vol_uom}".rstrip()
+		)
+		_write_merged_row(_totals_text, font=_bold_font(size=9), fill=FILL_INV_HEADER)
 
 		_write_blank_row()
 
@@ -1255,7 +1326,7 @@ def get_export_excel(filters):
 	# ---------------------------------------------------------------------------
 	# Column widths (reasonable fixed widths)
 	# ---------------------------------------------------------------------------
-	col_widths = [6, 20, 30, 10, 10, 14, 12, 14, 12, 22, 25, 15]
+	col_widths = [6, 20, 30, 10, 10, 14, 14, 12, 14, 12, 22, 25, 15]
 	for i, width in enumerate(col_widths, start=1):
 		ws.column_dimensions[get_column_letter(i)].width = width
 

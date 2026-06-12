@@ -185,6 +185,23 @@
   .fg-items-table tbody tr:nth-child(even) td {
     background: #dce9f5;
   }
+  .fg-totals {
+    margin-top: 5px;
+    text-align: right;
+    font-size: 9px;
+    color: #1a3d5c;
+  }
+  .fg-totals .fg-total-item {
+    margin-left: 18px;
+    white-space: nowrap;
+  }
+  .fg-totals .fg-total-label {
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 8px;
+    letter-spacing: 0.03em;
+    color: #2c5f8a;
+  }
   .footer-end {
     margin-top: 20px;
     text-align: center;
@@ -293,7 +310,8 @@
           <th>FG Item Name</th>
           <th class="num-col">Sold Qty</th>
           <th>UOM</th>
-          <th class="num-col">Total Weight</th>
+          <th class="num-col">Net Weight</th>
+          <th class="num-col">Gross Weight</th>
           <th>Weight UOM</th>
           <th class="num-col">Total Volume</th>
           <th>Volume UOM</th>
@@ -310,7 +328,8 @@
           <td>{{ fg.fg_item_name }}</td>
           <td class="num-col">{{ fg.sales_qty }}</td>
           <td>{{ fg.sales_uom }}</td>
-          <td class="num-col">{{ fg.fg_total_weight }}</td>
+          <td class="num-col">{{ fg.fg_net_weight }}</td>
+          <td class="num-col">{{ fg.fg_gross_weight }}</td>
           <td>{{ fg.fg_weight_uom }}</td>
           <td class="num-col">{{ fg.fg_total_volume }}</td>
           <td>{{ fg.fg_volume_uom }}</td>
@@ -321,6 +340,11 @@
         {% endfor %}
       </tbody>
     </table>
+    <div class="fg-totals">
+      <span class="fg-total-item"><span class="fg-total-label">Total Net Weight:</span> {{ invoice.total_net_weight if invoice.total_net_weight else "&mdash;" }} {{ invoice.net_weight_uom }}</span>
+      <span class="fg-total-item"><span class="fg-total-label">Total Gross Weight:</span> {{ invoice.total_gross_weight if invoice.total_gross_weight else "&mdash;" }} {{ invoice.gross_weight_uom }}</span>
+      <span class="fg-total-item"><span class="fg-total-label">Total Volume:</span> {{ invoice.total_volume if invoice.total_volume else "&mdash;" }} {{ invoice.volume_uom }}</span>
+    </div>
   </div>
   {% endif %}
 </div>
