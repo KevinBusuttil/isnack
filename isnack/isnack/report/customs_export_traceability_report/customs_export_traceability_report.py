@@ -1322,6 +1322,12 @@ def get_export_excel(filters):
 		font=_normal_font(size=8),
 		align=ALIGN_CENTER,
 	)
+	_write_blank_row()
+	_write_merged_row(
+		"Je dis bien que le produit indiqué sur la présente facture ne fait l'objet d'aucune saisie ni jugement",
+		font=_bold_font(size=14),
+		align=ALIGN_CENTER,
+	)
 
 	# ---------------------------------------------------------------------------
 	# Column widths (reasonable fixed widths)
