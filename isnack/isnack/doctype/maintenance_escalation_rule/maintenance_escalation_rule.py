@@ -4,10 +4,11 @@ from frappe.model.document import Document
 
 class MaintenanceEscalationRule(Document):
     def validate(self):
-        if not (self.days_before_due or self.days_after_due):
-            frappe.throw(
-                frappe._("Set either 'Days Before Due' or 'Days After Due'.")
-            )
+        # days_before_due = days_after_due = 0 is valid: it means "due today".
+        if (self.days_before_due or 0) < 0:
+            frappe.throw(frappe._("'Days Before Due' cannot be negative."))
+        if (self.days_after_due or 0) < 0:
+            frappe.throw(frappe._("'Days After Due' cannot be negative."))
         if not (
             self.notify_technician
             or self.notify_maintenance_manager
