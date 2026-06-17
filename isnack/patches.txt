@@ -7,3 +7,7 @@
 isnack.patches.v1_0.set_consume_on_scan_always_true
 isnack.patches.v1_0.mark_existing_end_shift_returns_received
 isnack.patches.v1_0.backfill_surplus_originating_work_orders
+isnack.patches.v1_0.setup_maintenance_roles
+isnack.patches.v1_0.add_maintenance_custom_fields
+isnack.patches.v1_0.seed_maintenance_escalation_rules
+isnack.patches.v1_0.backfill_operational_status

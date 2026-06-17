@@ -173,6 +173,9 @@ doc_events = {
     "Sales Invoice": {
         "validate": "isnack.overrides.sales_invoice.quantise_item_currency_fields",
     },
+    "Asset Maintenance Log": {
+        "validate": "isnack.overrides.asset_maintenance_log.set_operational_defaults",
+    },
 }
 
 # doc_events = {
@@ -186,23 +189,14 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"isnack.tasks.all"
-# 	],
-# 	"daily": [
-# 		"isnack.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"isnack.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"isnack.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"isnack.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+    "daily": [
+        "isnack.api.maintenance_tasks.sync_operational_statuses",
+        "isnack.api.maintenance_tasks.send_upcoming_maintenance_reminders",
+        "isnack.api.maintenance_tasks.escalate_overdue_maintenance",
+        "isnack.api.maintenance_tasks.check_required_spare_parts",
+    ],
+}
 
 # Testing
 # -------

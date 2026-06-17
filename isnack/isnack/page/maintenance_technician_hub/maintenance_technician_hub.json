@@ -1,0 +1,24 @@
+{
+ "content": null,
+ "creation": "2026-06-17 09:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-06-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "maintenance-technician-hub",
+ "owner": "Administrator",
+ "page_name": "maintenance-technician-hub",
+ "roles": [
+  {"role": "Maintenance Technician"},
+  {"role": "Maintenance Supervisor"},
+  {"role": "Maintenance Manager"},
+  {"role": "System Manager"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Maintenance Technician Hub"
+}
