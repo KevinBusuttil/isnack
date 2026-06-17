@@ -129,9 +129,19 @@
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Batch Explorer",
+   "link_count": 0,
+   "link_to": "batch-explorer",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-06-02 20:02:55.881237",
+ "modified": "2026-06-16 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory",
