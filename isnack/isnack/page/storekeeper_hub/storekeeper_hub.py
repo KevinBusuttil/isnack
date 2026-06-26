@@ -657,7 +657,13 @@ def create_consolidated_transfers(
             batch_info_map[item_code] = None
 
     wo_order = _order_wos_fifo(selected_wos)
-    remaining = {wo: _remaining_map_for_wo(wo) for wo in wo_order}
+    # Allocate against the same DIRECT leaf BOM rows the UI displays and stages
+    # against. Using the exploded map here would let a parent WO (e.g. an FG
+    # produced from sub-assembly WOs) claim its sub-assemblies' raw materials,
+    # which are never staged for the parent — producing inconsistent staged
+    # status and mis-allocated transfers. For BOMs without sub-assemblies the
+    # leaf and exploded maps are identical, so this is a no-op there.
+    remaining = {wo: _remaining_leaf_map_for_wo(wo) for wo in wo_order}
 
     # Record which WOs had demand for each item BEFORE allocation consumes the
     # remaining map. A surplus item's "originating WOs" are all selected WOs that
@@ -1503,7 +1509,8 @@ def get_consolidated_remaining(selected_wos=None, item_code: str | None = None):
     total = 0.0
     uom = None
     for wo in selected_wos:
-        rem = _remaining_map_for_wo(wo).get(item_code)
+        # Leaf map for consistency with the cart display and allocation.
+        rem = _remaining_leaf_map_for_wo(wo).get(item_code)
         if rem:
             total += float(rem.get("qty") or 0)
             uom = uom or rem.get("uom")

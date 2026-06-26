@@ -306,25 +306,37 @@ def _apply_pre_consumed_cost_to_finished_item(se, work_order: str, finished_qty:
             break
 
 
-def _get_bom_items_for_quantity(bom_no: str, qty: float) -> list:
+def _get_bom_items_for_quantity(bom_no: str, qty: float, exploded: bool = True) -> list:
     """
     Get BOM items scaled for the production quantity.
-    
+
     Args:
         bom_no: BOM name
         qty: Production quantity
-    
+        exploded: When True, return the fully-exploded leaf raw materials. When
+            False, return the BOM's direct components, keeping each sub-assembly
+            as its own line instead of expanding it into its raw materials.
+            Callers tied to a Work Order should pass
+            ``bool(wo.use_multi_level_bom)`` so a parent Work Order that produces
+            from separate sub-assembly Work Orders consumes the sub-assemblies
+            directly rather than their underlying raw materials. This mirrors
+            ERPNext's own behaviour, which threads the same flag through
+            ``WorkOrder.set_required_items`` and ``make_stock_entry``
+            (``fetch_exploded=self.use_multi_level_bom``).
+
     Returns:
         list: [{"item_code": str, "qty": float, "uom": str, ...}, ...]
     """
     from erpnext.manufacturing.doctype.bom.bom import get_bom_items_as_dict
-    
-    # Get BOM items (exploded if multi-level)
+
+    # Explode only when the caller asks for it (i.e. the WO uses a multi-level
+    # BOM). Otherwise return the direct BOM components so sub-assemblies are not
+    # replaced by their raw materials.
     items_dict = get_bom_items_as_dict(
         bom_no,
         company=frappe.db.get_value("BOM", bom_no, "company"),
         qty=qty,
-        fetch_exploded=1,
+        fetch_exploded=1 if exploded else 0,
         fetch_qty_in_stock_uom=True
     )
     
@@ -674,8 +686,19 @@ def _submitted_mtfm_item_qty_by_key(work_order: str) -> dict[tuple, float]:
 
 
 def _is_fg(item_code: str) -> bool:
-    """Treat sales items as FG by policy (adjust to Item Group if you prefer)."""
-    return bool(frappe.db.get_value("Item", item_code, "is_sales_item"))
+    """Classify a production item as Finished Good (vs Semi-Finished).
+
+    Classification is by Item Group, NOT is_sales_item: a semi-finished good
+    can legitimately be marked sellable (e.g. SFG10002 has is_sales_item = 1),
+    which previously caused it to be mislabelled as a finished good. An item is
+    treated as semi-finished when its Item Group is "Semi-Finished Goods" (or a
+    descendant whose name contains "semi-finished"); everything else produced on
+    a Work Order is a finished good.
+    """
+    item_group = frappe.db.get_value("Item", item_code, "item_group") or ""
+    if "semi-finished" in item_group.strip().lower():
+        return False
+    return True
 
 def _get_item_group(item_code: str) -> Optional[str]:
     return frappe.db.get_value("Item", item_code, "item_group")
@@ -1796,7 +1819,15 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     se.company = wo.company
     se.purpose = "Material Consumption for Manufacture"
     se.work_order = wo.name
-    se.fg_completed_qty = fg_completed_qty  # Set to satisfy ERPNext validation - represents finished goods quantity
+    # ERPNext mandates a non-zero "For Quantity" on Material Consumption for
+    # Manufacture: Stock Entry.validate_work_order() throws
+    # "For Quantity (Manufactured Qty) is mandatory" when fg_completed_qty is
+    # falsy (version-15). Default to the Work Order's planned qty when the
+    # caller does not supply one. This value is only used to pass validation:
+    # ERPNext recomputes produced_qty from submitted *Manufacture* entries
+    # (WorkOrder.update_work_order_qty), so a Material Consumption entry never
+    # inflates produced_qty.
+    se.fg_completed_qty = flt(fg_completed_qty) or flt(wo.qty)
 
     for r in rows:
         item_code = (r.get("item_code") or "").strip()
@@ -2023,7 +2054,7 @@ def get_requestable_items_for_wo(work_order: str):
     if not wo.bom_no:
         return {"items": []}
 
-    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty))
+    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty), exploded=bool(wo.use_multi_level_bom))
     consumed_map = _get_consumed_materials_from_load(work_order)
     sfg_codes = {
         row["item_code"]
@@ -2209,7 +2240,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
 
     # Get BOM items scaled for production quantity
     if wo.bom_no:
-        bom_items = _get_bom_items_for_quantity(wo.bom_no, good)
+        bom_items = _get_bom_items_for_quantity(wo.bom_no, good, exploded=bool(wo.use_multi_level_bom))
         
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
@@ -2390,7 +2421,7 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
     if not wo.bom_no:
         return out
 
-    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty))
+    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty), exploded=bool(wo.use_multi_level_bom))
     consumed_map = _get_consumed_materials_from_load(work_order)
 
     sfg_codes = {row["item_code"] for row in (get_sfg_components_for_wo(work_order).get("items") or [])}
@@ -2492,7 +2523,10 @@ def end_work_order(work_order: str, sfg_usage: str = None,
             sfg_rows = list(sfg_usage)
 
     if sfg_rows:
-        _post_sfg_consumption(wo, sfg_rows, 0)  # fg_completed_qty = 0 since we're not creating FG yet
+        # Record SFG consumption against the parent WO. ERPNext requires a
+        # non-zero For Quantity on this entry; pass the WO qty (does not affect
+        # produced_qty — see _post_sfg_consumption).
+        _post_sfg_consumption(wo, sfg_rows, flt(wo.qty))
 
     # Tolerance-based check: every required (non-SFG) BOM item must be
     # consumed at or above (required - tolerance). Production Managers can
@@ -3316,7 +3350,11 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
             "is_finished_item": 1,
             "t_warehouse": fg_wh,
         }
-        if batch_no:
+        # Only attach a batch when the produced item is batch-tracked. ERPNext's
+        # Batch.validate() rejects batches for items with has_batch_no = 0
+        # ("The selected item cannot have Batch"), so a non-batch SFG must close
+        # without one even if a value was supplied.
+        if has_batch and batch_no:
             _ensure_batch(wo.production_item, batch_no)
             finished_item["batch_no"] = batch_no
             finished_item["use_serial_batch_fields"] = 1
@@ -3338,7 +3376,7 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         packaging_groups = _packaging_groups_global()
 
         if wo.bom_no and total_production_qty > 0:
-            bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty)
+            bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty, exploded=bool(wo.use_multi_level_bom))
 
             for bom_item in bom_items:
                 item_code = bom_item["item_code"]
@@ -3546,20 +3584,6 @@ def close_production(groups: str = None, lines: str = None,
             frappe.throw(_("Good quantity must be greater than zero for {0}").format(label))
         if reject < 0:
             frappe.throw(_("Rejects cannot be negative"))
-        if not bno:
-            label = production_item or _("(unspecified item)")
-            frappe.throw(_("Batch number is required for {0}").format(label))
-        _validate_batch_code_format(bno)
-
-        # Each finished item must own its batch_no. Two different items
-        # cannot share the same batch_id (it would clash on Batch.name).
-        if bno in seen_batch_per_item and production_item and seen_batch_per_item[bno] != production_item:
-            frappe.throw(_(
-                "Batch {0} is assigned to both {1} and {2}. "
-                "Each finished product needs a unique batch number."
-            ).format(bno, seen_batch_per_item[bno], production_item))
-        if production_item:
-            seen_batch_per_item[bno] = production_item
 
         filters = {
             "custom_production_ended": 1,
@@ -3586,7 +3610,7 @@ def close_production(groups: str = None, lines: str = None,
             label = production_item or _("the specified lines")
             frappe.throw(_("No ended work orders found for {0}").format(label))
 
-        # Legacy single-group call: backfill production_item for batch tracking.
+        # Legacy single-group call: backfill production_item before batch logic.
         if not production_item:
             items_in_set = {wo["production_item"] for wo in ended_wos}
             if len(items_in_set) > 1:
@@ -3595,7 +3619,26 @@ def close_production(groups: str = None, lines: str = None,
                     "Use the per-product Close Production dialog so each gets its own batch."
                 ).format(", ".join(sorted(items_in_set))))
             production_item = ended_wos[0]["production_item"]
+
+        # Batch handling is conditional on the finished item being batch-tracked.
+        # Non-batch semi-finished goods (has_batch_no = 0) must close WITHOUT a
+        # batch — ERPNext's Batch.validate() rejects batches for such items.
+        requires_batch = bool(frappe.db.get_value("Item", production_item, "has_batch_no"))
+        if requires_batch:
+            if not bno:
+                frappe.throw(_("Batch number is required for {0}").format(production_item))
+            _validate_batch_code_format(bno)
+            # Each finished item must own its batch_no. Two different items
+            # cannot share the same batch_id (it would clash on Batch.name).
+            if bno in seen_batch_per_item and seen_batch_per_item[bno] != production_item:
+                frappe.throw(_(
+                    "Batch {0} is assigned to both {1} and {2}. "
+                    "Each finished product needs a unique batch number."
+                ).format(bno, seen_batch_per_item[bno], production_item))
             seen_batch_per_item[bno] = production_item
+        else:
+            # Ignore any batch value supplied for a non-batch finished item.
+            bno = None
 
         # Pre-validate scrap warehouse before booking anything when rejects exist.
         if reject > 0:
