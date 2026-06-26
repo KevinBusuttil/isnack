@@ -323,6 +323,29 @@ data model. Confirmed.
 - **P3 — usability / maintainability:**
   C8 (CORN EXTRUSION staging mixes purposes — workable, cleaner if moved).
 
+### Addendum — ERPNext version-15 re-verification
+
+Re-checked the load-bearing claims directly against `frappe/erpnext@version-15`:
+
+- **C3:** `batch.py` `validate()` → `item_has_batch_enabled()`:
+  `if frappe.db.get_value("Item", self.item, "has_batch_no") == 0: frappe.throw(_("The selected item cannot have Batch"))`. Confirmed.
+- **C4:** `stock_entry.py` `validate_work_order()` (purpose list includes
+  `Material Consumption for Manufacture`): `if not self.fg_completed_qty: frappe.throw(_("For Quantity (Manufactured Qty) is mandatory"))`.
+  The `make_stock_entry` "accept 0 qty as well" comment applies only to *Material Transfer*. Confirmed.
+- **C5/C6 (strengthened):** `get_bom_items_as_dict(fetch_exploded=1)` (bom.py) reads
+  **`tabBOM Explosion Item`** (leaves; SFGs with `do_not_explode=0` are replaced by their raw
+  materials). Core ERPNext respects `use_multi_level_bom` precisely where ISNACK hardcodes it:
+  `WorkOrder.set_required_items()` calls `get_bom_items_as_dict(..., fetch_exploded=self.use_multi_level_bom)`,
+  and `make_stock_entry()` sets `stock_entry.use_multi_level_bom = work_order.use_multi_level_bom`.
+  So the *standard* Finish/Manufacture flow on FG10011 (`use_multi_level_bom = 0`) would consume
+  SFG10001 + SFG10002 directly; `_get_bom_items_for_quantity`'s hardcoded `fetch_exploded=1` is
+  the root cause. The recommended fix (mirror `fetch_exploded = wo.use_multi_level_bom`) matches core.
+- **C1/C2 (tightened):** v15 Work Order defaults `fg_warehouse`/`wip_warehouse` only from
+  *Manufacturing Settings* (`default_fg_warehouse`/`default_wip_warehouse`) and only when empty
+  (`validate` and `before_submit`); it never sources `fg_warehouse` from the Item default
+  warehouse. The ISNACK `validate`/`before_insert` hooks run after the controller and override on
+  new docs, so SFG10002's `Stores - ISN` Item default cannot reach `fg_warehouse` on a hub WO.
+
 ### Notes on certainty
 - **Static/deterministic:** warehouse routing (1, 2), the batch throw (3), the
   `fg_completed_qty` throw (4), the hardcoded explosion (5, 6, 7), the WO-tagged staging move
