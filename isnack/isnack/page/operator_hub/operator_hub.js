@@ -2667,6 +2667,7 @@ function init_operator_hub($root) {
           item_name: wo.item_name || wo.production_item,
           work_orders: [],
           packaging_items: [],
+          has_batch_no: false,
         };
         groupByKey.set(key, g);
         productGroups.push(g);
@@ -2686,6 +2687,15 @@ function init_operator_hub($root) {
       } catch (e) {
         console.warn('get_packaging_bom_items_for_ended_wos failed', e);
         g.packaging_items = [];
+      }
+      // Only batch-tracked finished items get a batch field; non-batch SFGs
+      // close without one (ERPNext rejects batches for has_batch_no = 0 items).
+      try {
+        const rb = await frappe.db.get_value('Item', g.production_item, 'has_batch_no');
+        g.has_batch_no = !!(rb && rb.message && rb.message.has_batch_no);
+      } catch (e) {
+        console.warn('has_batch_no lookup failed', e);
+        g.has_batch_no = false;
       }
     }));
 
@@ -2717,13 +2727,21 @@ function init_operator_hub($root) {
       fields.push({ fieldtype: 'Column Break' });
       fields.push({ label:'Total Reject Qty', fieldname:`g${gIdx}_reject_qty`, fieldtype:'Float', default: 0 });
       fields.push({ fieldtype: 'Column Break' });
-      fields.push({
-        label:'Batch No',
-        fieldname:`g${gIdx}_batch_no`,
-        fieldtype:'Data',
-        reqd:1,
-        description: '3 letters + dash + 3 digits (e.g., CGB-151). Dash auto-inserted.',
-      });
+      if (g.has_batch_no) {
+        fields.push({
+          label:'Batch No',
+          fieldname:`g${gIdx}_batch_no`,
+          fieldtype:'Data',
+          reqd:1,
+          description: '3 letters + dash + 3 digits (e.g., CGB-151). Dash auto-inserted.',
+        });
+      } else {
+        fields.push({
+          fieldtype: 'HTML',
+          fieldname: `g${gIdx}_batch_na`,
+          options: `<div class="text-muted small">No batch required (item is not batch-tracked).</div>`,
+        });
+      }
 
       // Row 3: packaging — stacked single column so labels and descriptions
       // never collide regardless of how many packaging items there are.
@@ -2782,31 +2800,34 @@ function init_operator_hub($root) {
             frappe.msgprint(`Reject Qty for ${g.item_name} cannot be negative`);
             return;
           }
-          if (!batchNo) {
-            frappe.msgprint({
-              title: 'Batch Number Required',
-              message: `Batch number is required for ${g.item_name}`,
-              indicator: 'red',
-            });
-            return;
+          // Batch is only required/validated for batch-tracked finished items.
+          if (g.has_batch_no) {
+            if (!batchNo) {
+              frappe.msgprint({
+                title: 'Batch Number Required',
+                message: `Batch number is required for ${g.item_name}`,
+                indicator: 'red',
+              });
+              return;
+            }
+            if (!batchPattern.test(batchNo)) {
+              frappe.msgprint({
+                title: 'Invalid Batch Format',
+                message: `Batch code for ${g.item_name} must be 3 letters + dash + 3 digits (e.g., CGB-151)`,
+                indicator: 'red',
+              });
+              return;
+            }
+            if (batchSeen.has(batchNo) && batchSeen.get(batchNo) !== g.production_item) {
+              frappe.msgprint({
+                title: 'Duplicate Batch Number',
+                message: `Batch ${batchNo} is assigned to multiple products. Each product needs a unique batch number.`,
+                indicator: 'red',
+              });
+              return;
+            }
+            batchSeen.set(batchNo, g.production_item);
           }
-          if (!batchPattern.test(batchNo)) {
-            frappe.msgprint({
-              title: 'Invalid Batch Format',
-              message: `Batch code for ${g.item_name} must be 3 letters + dash + 3 digits (e.g., CGB-151)`,
-              indicator: 'red',
-            });
-            return;
-          }
-          if (batchSeen.has(batchNo) && batchSeen.get(batchNo) !== g.production_item) {
-            frappe.msgprint({
-              title: 'Duplicate Batch Number',
-              message: `Batch ${batchNo} is assigned to multiple products. Each product needs a unique batch number.`,
-              indicator: 'red',
-            });
-            return;
-          }
-          batchSeen.set(batchNo, g.production_item);
 
           const packagingUsage = [];
           g.packaging_items.forEach((item, idx) => {

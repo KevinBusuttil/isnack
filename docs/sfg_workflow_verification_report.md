@@ -250,6 +250,18 @@ data model. Confirmed.
 
 ## 5. Minimal code correction plan (ordered by priority)
 
+> **Implementation status (this branch).** Items 1–6 below are implemented:
+> `_get_bom_items_for_quantity` now takes an `exploded` flag and all four
+> Work-Order-bound callers pass `bool(wo.use_multi_level_bom)` (1, 4);
+> `_post_sfg_consumption` defaults `fg_completed_qty` to the WO qty (2);
+> batch handling is gated on `Item.has_batch_no` in the Operator Hub dialog,
+> `close_production`, and `_close_single_wo` (3); the Storekeeper allocation and
+> per-item resolution use the leaf map for parity with the cart/stage status (5);
+> `_is_fg` classifies by Item Group instead of `is_sales_item` (6). Items 7–8
+> are **master-data / configuration** changes the user must apply in ERPNext
+> (BOM UOM, Item default warehouse, warehouse-map layout) — they are not code.
+
+
 1. **(P0) Respect `Work Order.use_multi_level_bom`.** Add a flag to
    `_get_bom_items_for_quantity(bom_no, qty, exploded=None)` and pass
    `exploded = bool(wo.use_multi_level_bom)` from `_end_wo_consumption_summary` (2393) and
