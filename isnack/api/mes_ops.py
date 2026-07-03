@@ -2620,10 +2620,11 @@ def get_ended_work_orders(lines: str = None):
             if (_line_for_work_order(wo["name"]) in line_list)
         ]
     
-    # Enrich with item names
+    # Enrich with item names and FG/SFG classification (by Item Group, see _is_fg)
     for wo in work_orders:
         wo["item_name"] = frappe.db.get_value("Item", wo["production_item"], "item_name") or wo["production_item"]
-    
+        wo["is_sfg"] = not _is_fg(wo["production_item"])
+
     return {"work_orders": work_orders}
 
 @frappe.whitelist()
