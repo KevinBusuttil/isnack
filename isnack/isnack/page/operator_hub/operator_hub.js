@@ -2668,6 +2668,7 @@ function init_operator_hub($root) {
           work_orders: [],
           packaging_items: [],
           has_batch_no: false,
+          is_sfg: !!wo.is_sfg,
         };
         groupByKey.set(key, g);
         productGroups.push(g);
@@ -2723,7 +2724,11 @@ function init_operator_hub($root) {
         ? `Production Quantities — ${g.item_name}`
         : 'Production Quantities';
       fields.push({ fieldtype: 'Section Break', label: quantitiesLabel });
-      fields.push({ label:'Total Good Qty',   fieldname:`g${gIdx}_good_qty`,   fieldtype:'Float', reqd:1, default: 0 });
+      // Semi-finished groups default to the sum of their WO planned quantities
+      // (the operator adjusts if actual output differed); finished goods start
+      // at 0 because the actual carton count must be entered.
+      const plannedTotal = g.work_orders.reduce((sum, wo) => sum + (parseFloat(wo.qty) || 0), 0);
+      fields.push({ label:'Total Good Qty',   fieldname:`g${gIdx}_good_qty`,   fieldtype:'Float', reqd:1, default: g.is_sfg ? plannedTotal : 0 });
       fields.push({ fieldtype: 'Column Break' });
       fields.push({ label:'Total Reject Qty', fieldname:`g${gIdx}_reject_qty`, fieldtype:'Float', default: 0 });
       fields.push({ fieldtype: 'Column Break' });
