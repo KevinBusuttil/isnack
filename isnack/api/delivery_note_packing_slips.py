@@ -348,8 +348,6 @@ def _create_and_submit_packing_slip(
                 {
                     "pallet_no": pallet.get("pallet_no"),
                     "pallet_type": pallet.get("pallet_type"),
-                    "net_weight_kg": pallet.get("net_weight_kg"),
-                    "gross_weight_kg": pallet.get("gross_weight_kg"),
                     "remarks": pallet.get("remarks"),
                 },
             )
