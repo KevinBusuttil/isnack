@@ -54,6 +54,26 @@ frappe.ui.form.on("Delivery Note Item", {
             isnack_dn_calc_pallet_qty(frm, cdt, cdn);
         }
     },
+
+    custom_pallet_nos(frm, cdt, cdn) {
+        // Assigning a Pallet No implies the type: fill an empty row Pallet
+        // Type from the first referenced pallet in the Pallets table (which
+        // also triggers the Pallet Qty calculation). An already-set type is
+        // never overwritten; save-time validation warns on mismatches.
+        const row = locals[cdt] && locals[cdt][cdn];
+        if (!row || !row.custom_pallet_nos || row.custom_pallet_type) {
+            return;
+        }
+        const first = (String(row.custom_pallet_nos).split(",")[0] || "")
+            .split("-")[0]
+            .trim();
+        const pallet = (frm.doc.custom_pallets || []).find(
+            (p) => cint(p.pallet_no) === cint(first)
+        );
+        if (pallet && pallet.pallet_type) {
+            frappe.model.set_value(cdt, cdn, "custom_pallet_type", pallet.pallet_type);
+        }
+    },
 });
 
 frappe.ui.form.on("Pallet Detail", {
