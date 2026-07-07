@@ -279,6 +279,32 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
 
 
 @frappe.whitelist()
+def get_bundle_batches(bundles) -> dict:
+    """Batch numbers contained in the given Serial and Batch Bundles.
+
+    Used by the Delivery Note form to filter the pallet manifest's Batch
+    picker down to the batches actually selected on the item rows, which may
+    live in a Serial and Batch Bundle rather than the row's batch_no field.
+    Returns ``{bundle_name: [batch_no, ...]}``.
+    """
+    bundles = frappe.parse_json(bundles) if isinstance(bundles, str) else bundles
+    if not bundles:
+        return {}
+
+    result: dict = {}
+    for entry in frappe.get_all(
+        "Serial and Batch Entry",
+        filters={"parent": ["in", bundles], "batch_no": ["is", "set"]},
+        fields=["parent", "batch_no"],
+        parent_doctype="Serial and Batch Bundle",
+    ):
+        result.setdefault(entry.parent, [])
+        if entry.batch_no not in result[entry.parent]:
+            result[entry.parent].append(entry.batch_no)
+    return result
+
+
+@frappe.whitelist()
 def suggest_pallets(doc) -> dict:
     """Build a pallet-manifest suggestion for a (possibly unsaved) Delivery Note.
 

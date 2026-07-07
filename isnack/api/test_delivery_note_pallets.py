@@ -9,6 +9,7 @@ from isnack.api.delivery_note_pallets import (
     _build_pallet_suggestion,
     _pallet_conversion_factor,
     calculate_delivery_note_pallets,
+    get_bundle_batches,
     get_delivery_note_pallet_conversion,
     validate_delivery_note_pallets,
 )
@@ -375,6 +376,28 @@ class TestValidateDeliveryNotePallets(unittest.TestCase):
         )
         validate_delivery_note_pallets(doc)
         mock_msgprint.assert_called_once()
+
+
+class TestGetBundleBatches(unittest.TestCase):
+    """Tests for the Serial and Batch Bundle -> batch numbers helper."""
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(get_bundle_batches([]), {})
+        self.assertEqual(get_bundle_batches(None), {})
+
+    @patch("isnack.api.delivery_note_pallets.frappe.get_all")
+    def test_batches_grouped_and_deduplicated_per_bundle(self, mock_get_all):
+        mock_get_all.return_value = [
+            _FakeRow(parent="SABB-001", batch_no="AAA-005"),
+            _FakeRow(parent="SABB-001", batch_no="ZZZ-005"),
+            _FakeRow(parent="SABB-001", batch_no="AAA-005"),
+            _FakeRow(parent="SABB-002", batch_no="BBB-001"),
+        ]
+        result = get_bundle_batches(["SABB-001", "SABB-002"])
+        self.assertEqual(result["SABB-001"], ["AAA-005", "ZZZ-005"])
+        self.assertEqual(result["SABB-002"], ["BBB-001"])
+        kwargs = mock_get_all.call_args.kwargs
+        self.assertEqual(kwargs.get("parent_doctype"), "Serial and Batch Bundle")
 
 
 if __name__ == "__main__":
