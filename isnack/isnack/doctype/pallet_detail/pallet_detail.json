@@ -8,12 +8,15 @@
  "field_order": [
   "pallet_no",
   "pallet_type",
+  "item_code",
+  "batch_no",
+  "qty",
   "remarks"
  ],
  "fields": [
   {
    "columns": 1,
-   "description": "Stable number item rows reference via Pallet No(s). Auto-numbered when a row is added; unlike the grid's positional No. it never shifts when pallets are removed.",
+   "description": "Physical pallet number. Several rows with the same number describe one (mixed) pallet. Auto-numbered when a row is added.",
    "fieldname": "pallet_no",
    "fieldtype": "Int",
    "in_list_view": 1,
@@ -22,7 +25,8 @@
    "reqd": 1
   },
   {
-   "columns": 4,
+   "columns": 2,
+   "description": "Auto-filled from the first row of the same Pallet No; all rows of one pallet must agree.",
    "fieldname": "pallet_type",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -31,10 +35,34 @@
    "reqd": 1
   },
   {
-   "columns": 5,
+   "columns": 3,
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "batch_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Batch",
+   "options": "Batch"
+  },
+  {
+   "columns": 1,
+   "description": "Exact quantity of this item on this pallet, in the item row's UOM.",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty",
+   "reqd": 1
+  },
+  {
    "fieldname": "remarks",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Remarks"
   }
  ],
@@ -42,7 +70,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-07-07 22:40:15.048838",
+ "modified": "2026-07-07 23:13:44.372543",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Pallet Detail",

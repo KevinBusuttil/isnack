@@ -5,12 +5,14 @@ from frappe.model.document import Document
 
 
 class PalletDetail(Document):
-	"""Child row describing one physical pallet of a shipment.
+	"""One allocation line of the pallet manifest: an exact quantity of an
+	item (optionally batch-specific) stacked on one physical pallet.
 
-	Used as a child table on Delivery Note (``custom_pallets``) and copied onto
-	the auto-created Packing Slip. Item rows reference pallets by number via
-	their ``custom_pallet_nos`` field (e.g. ``"1-3"`` or ``"4,6"``), so several
-	items/batches can share one physical (mixed) pallet.
+	Used as the ``custom_pallets`` child table on Delivery Note and copied
+	onto the auto-created Packing Slip. Several rows sharing a Pallet No
+	describe one mixed pallet; one item split over several pallets simply has
+	several rows. The pallet's type lives on every row of that pallet and
+	must be consistent (validated on the Delivery Note).
 	"""
 
 	pass
