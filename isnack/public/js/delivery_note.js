@@ -54,12 +54,13 @@ frappe.ui.form.on("Delivery Note Item", {
             isnack_dn_calc_pallet_qty(frm, cdt, cdn);
         }
     },
+
 });
 
 frappe.ui.form.on("Pallet Detail", {
-    // Auto-number new pallets so nobody types Pallet No by hand. The explicit
-    // number (not the grid's positional No.) is what item rows reference, so
-    // it must stay stable when other pallet rows are removed.
+    // Default a new manifest row to the highest pallet number in use. The
+    // explicit number (not the grid's positional No.) is what groups rows
+    // into physical pallets, so it must stay stable when rows are removed.
     custom_pallets_add(frm, cdt, cdn) {
         const row = locals[cdt] && locals[cdt][cdn];
         if (!row || row.pallet_no) {
@@ -73,6 +74,48 @@ frappe.ui.form.on("Pallet Detail", {
         });
         row.pallet_no = max + 1;
         frm.refresh_field("custom_pallets");
+    },
+
+    pallet_no(frm, cdt, cdn) {
+        // Rows of one pallet share its type: joining an existing pallet
+        // number fills the Pallet Type from its other rows.
+        const row = locals[cdt] && locals[cdt][cdn];
+        if (!row || !row.pallet_no) {
+            return;
+        }
+        const sibling = (frm.doc.custom_pallets || []).find(
+            (p) =>
+                p.name !== cdn &&
+                cint(p.pallet_no) === cint(row.pallet_no) &&
+                p.pallet_type
+        );
+        if (sibling && sibling.pallet_type !== row.pallet_type) {
+            frappe.model.set_value(cdt, cdn, "pallet_type", sibling.pallet_type);
+        }
+    },
+
+    item_code(frm, cdt, cdn) {
+        // Default Qty to the item's still-unallocated Delivery Note quantity.
+        const row = locals[cdt] && locals[cdt][cdn];
+        if (!row || !row.item_code || flt(row.qty)) {
+            return;
+        }
+        let ordered = 0;
+        (frm.doc.items || []).forEach((item) => {
+            if (item.item_code === row.item_code) {
+                ordered += flt(item.qty);
+            }
+        });
+        let allocated = 0;
+        (frm.doc.custom_pallets || []).forEach((p) => {
+            if (p.name !== cdn && p.item_code === row.item_code) {
+                allocated += flt(p.qty);
+            }
+        });
+        const remaining = ordered - allocated;
+        if (remaining > 0) {
+            frappe.model.set_value(cdt, cdn, "qty", remaining);
+        }
     },
 });
 
@@ -95,18 +138,25 @@ function isnack_dn_set_pallet_type_query(frm) {
     frm.set_query("custom_pallet_type", "items", () => ({
         filters: { name: ["in", allowed] },
     }));
-    // Same restriction for the Pallets table (field may not be migrated yet).
+    // Same restriction for the Pallets table (field may not be migrated yet),
+    // plus limit its Item picker to items actually on this Delivery Note.
     if (frm.fields_dict.custom_pallets) {
         frm.set_query("pallet_type", "custom_pallets", () => ({
             filters: { name: ["in", allowed] },
         }));
+        frm.set_query("item_code", "custom_pallets", () => ({
+            filters: {
+                name: ["in", (frm.doc.items || []).map((i) => i.item_code)],
+            },
+        }));
     }
 }
 
-// "Build Pallets from Items": prefill the Pallets table + row assignments
-// from the per-row Pallet Type/Qty calculation. Full pallets are allocated
-// per row; fractional remainders are packed into shared (mixed) pallets of
-// the same type. The result is a suggestion the user can regroup freely.
+// "Build Pallets from Items": prefill the pallet manifest from the per-row
+// Pallet Type/Qty calculation. Each row fills its full pallets (one manifest
+// line per pallet with the exact quantity); fractional remainders are packed
+// into shared (mixed) pallets of the same type. The result is a suggestion —
+// the user can regroup rows or re-split quantities freely afterwards.
 function isnack_dn_add_build_pallets_button(frm) {
     if (frm.doc.docstatus !== 0 || !frm.fields_dict.custom_pallets) {
         return;
@@ -116,10 +166,7 @@ function isnack_dn_add_build_pallets_button(frm) {
         const run = () => isnack_dn_build_pallets(frm);
         if ((frm.doc.custom_pallets || []).length) {
             frappe.confirm(
-                __(
-                    "This will replace the current Pallets table and the Pallet " +
-                    "No(s) on all item rows. Continue?"
-                ),
+                __("This will replace the current Pallets table. Continue?"),
                 run
             );
         } else {
@@ -138,28 +185,27 @@ function isnack_dn_build_pallets(frm) {
         })
         .then((r) => {
             const result = (r && r.message) || {};
-            const pallets = result.pallets || [];
-            const assignments = result.assignments || {};
+            const allocations = result.allocations || [];
 
             frm.clear_table("custom_pallets");
-            pallets.forEach((p) => {
+            const pallet_numbers = new Set();
+            allocations.forEach((a) => {
                 const row = frm.add_child("custom_pallets");
-                row.pallet_no = p.pallet_no;
-                row.pallet_type = p.pallet_type;
-            });
-
-            (frm.doc.items || []).forEach((item) => {
-                item.custom_pallet_nos = assignments[item.name] || null;
+                row.pallet_no = a.pallet_no;
+                row.pallet_type = a.pallet_type;
+                row.item_code = a.item_code;
+                row.batch_no = a.batch_no || null;
+                row.qty = a.qty;
+                pallet_numbers.add(a.pallet_no);
             });
 
             frm.refresh_field("custom_pallets");
-            frm.refresh_field("items");
             frm.dirty();
 
-            if (pallets.length) {
+            if (allocations.length) {
                 frappe.show_alert({
                     message: __("Built {0} pallet(s) from the item rows.", [
-                        pallets.length,
+                        pallet_numbers.size,
                     ]),
                     indicator: "green",
                 });

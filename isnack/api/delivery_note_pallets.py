@@ -156,76 +156,20 @@ def get_delivery_note_pallet_conversion(item_code: str, from_uom: str, to_uom: s
 
 
 # ---------------------------------------------------------------------------
-# Physical pallets (custom_pallets table + per-row Pallet No(s) assignment)
+# Pallet manifest (custom_pallets table)
 #
-# The Pallets child table on the Delivery Note lists each physical pallet
-# (number + type). Item rows declare which pallets they are stacked on via
-# the free-text `custom_pallet_nos` field ("1-3", "4,6"), so several
-# items/batches can share one mixed pallet. The per-row Pallet Type/Qty
-# fields above remain as a calculator; `suggest_pallets` turns them into a
-# prefilled pallet table that the user can then regroup.
+# The Pallets child table on the Delivery Note is an allocation manifest:
+# each row is an exact quantity of an item (optionally batch-specific) on one
+# physical pallet. Rows sharing a Pallet No form one mixed pallet; an item
+# split over several pallets simply has several rows. The per-row Pallet
+# Type/Qty fields above remain a calculator; `suggest_pallets` turns them
+# into a prefilled manifest that the user can then regroup or re-split with
+# exact quantities.
 # ---------------------------------------------------------------------------
 
 # Remainders differing from a whole pallet by less than this are snapped to
 # the whole pallet, so 2.99/3.01 pallets both suggest 3 full pallets.
 _FRACTION_SNAP = 0.02
-
-
-def parse_pallet_nos(value) -> list[int]:
-    """Parse a Pallet No(s) string like ``"1-3,6"`` into ``[1, 2, 3, 6]``.
-
-    Raises ValueError on anything that does not parse to positive integers
-    (callers turn this into a user-facing message with row context).
-    """
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text:
-        return []
-
-    numbers: set[int] = set()
-    for token in text.split(","):
-        token = token.strip()
-        if not token:
-            raise ValueError(f"empty entry in {text!r}")
-        if "-" in token:
-            start_text, _, end_text = token.partition("-")
-            start, end = int(start_text.strip()), int(end_text.strip())
-            if start <= 0 or end < start:
-                raise ValueError(f"invalid range {token!r}")
-            numbers.update(range(start, end + 1))
-        else:
-            number = int(token)
-            if number <= 0:
-                raise ValueError(f"invalid pallet number {token!r}")
-            numbers.add(number)
-    return sorted(numbers)
-
-
-def parse_pallet_nos_for_print(value) -> list[int]:
-    """Lenient variant for Jinja print formats: bad input yields []."""
-    try:
-        return parse_pallet_nos(value)
-    except (ValueError, TypeError):
-        return []
-
-
-def format_pallet_nos(numbers) -> str:
-    """Format ``[1, 2, 3, 6]`` as ``"1-3,6"`` (inverse of parse_pallet_nos)."""
-    numbers = sorted(set(int(n) for n in numbers or []))
-    if not numbers:
-        return ""
-
-    parts: list[str] = []
-    start = prev = numbers[0]
-    for number in numbers[1:] + [None]:
-        if number is not None and number == prev + 1:
-            prev = number
-            continue
-        parts.append(str(start) if start == prev else f"{start}-{prev}")
-        if number is not None:
-            start = prev = number
-    return ",".join(parts)
 
 
 def _row_pallet_quantity(row: dict) -> Optional[float]:
@@ -252,32 +196,41 @@ def _row_pallet_quantity(row: dict) -> Optional[float]:
 
 
 def _build_pallet_suggestion(rows: list[dict]) -> dict:
-    """Build a pallet table suggestion from item-row pallet quantities.
+    """Build a pallet manifest suggestion from item-row pallet quantities.
 
-    Each row first receives its whole ("full") pallets; fractional remainders
-    are then packed first-fit, in row order, into shared pallets of the same
-    pallet type — which is exactly the mixed-pallet case the table exists for.
-    Returns::
+    Each row first fills its whole ("full") pallets — one allocation line per
+    pallet, carrying qty / pallet-qty units each, so quantities always sum to
+    the row exactly. Fractional remainders are then packed first-fit, in row
+    order, into shared pallets of the same pallet type — the mixed-pallet
+    case the manifest exists for. Returns::
 
-        {"pallets": [{"pallet_no": int, "pallet_type": str}, ...],
-         "assignments": {row_key: "1-3,7", ...},
+        {"allocations": [{"pallet_no": int, "pallet_type": str,
+                          "item_code": str, "batch_no": str | None,
+                          "qty": float}, ...],
          "unassigned": [{"idx": int, "item_code": str, "reason": str}, ...]}
     """
-    pallets: list[dict] = []
-    assignments: dict = {}
+    allocations: list[dict] = []
     unassigned: list[dict] = []
     # Open shared pallets per pallet type: [pallet_no, used capacity 0..1]
     open_shared: dict[str, list[list]] = {}
-    next_no = 1
+    counter = {"next_no": 1}
 
-    def _new_pallet(pallet_type: str) -> int:
-        nonlocal next_no
-        pallets.append({"pallet_no": next_no, "pallet_type": pallet_type})
-        next_no += 1
-        return next_no - 1
+    def _new_pallet_no() -> int:
+        counter["next_no"] += 1
+        return counter["next_no"] - 1
+
+    def _allocate(pallet_no, row, qty):
+        allocations.append(
+            {
+                "pallet_no": pallet_no,
+                "pallet_type": row.get("custom_pallet_type"),
+                "item_code": row.get("item_code"),
+                "batch_no": row.get("batch_no"),
+                "qty": flt(qty, 4),
+            }
+        )
 
     for row in rows:
-        row_key = row.get("name") or f"idx-{row.get('idx')}"
         if not row.get("custom_pallet_type") or flt(row.get("qty")) <= 0:
             continue
 
@@ -293,6 +246,7 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
             continue
 
         pallet_type = row.get("custom_pallet_type")
+        qty = flt(row.get("qty"))
         full = int(pallet_qty + 1e-9)
         fraction = pallet_qty - full
         if fraction < _FRACTION_SNAP:
@@ -301,29 +255,35 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
             full += 1
             fraction = 0.0
 
-        numbers = [_new_pallet(pallet_type) for _ in range(full)]
+        # Units per full pallet, derived from the effective pallet quantity so
+        # the allocation lines always sum back to the row quantity exactly
+        # (including manual overrides, where qty/pallet is an even split).
+        effective = full + fraction
+        per_pallet = qty / effective if effective else 0
+
+        for _unused in range(full):
+            _allocate(_new_pallet_no(), row, per_pallet)
 
         if fraction:
+            remainder_qty = qty - per_pallet * full
             shared = open_shared.setdefault(pallet_type, [])
             slot = next((s for s in shared if s[1] + fraction <= 1.0 + 1e-6), None)
             if slot is None:
-                slot = [_new_pallet(pallet_type), 0.0]
+                slot = [_new_pallet_no(), 0.0]
                 shared.append(slot)
             slot[1] += fraction
-            numbers.append(slot[0])
+            _allocate(slot[0], row, remainder_qty)
 
-        if numbers:
-            assignments[row_key] = format_pallet_nos(numbers)
-
-    return {"pallets": pallets, "assignments": assignments, "unassigned": unassigned}
+    allocations.sort(key=lambda a: a["pallet_no"])
+    return {"allocations": allocations, "unassigned": unassigned}
 
 
 @frappe.whitelist()
 def suggest_pallets(doc) -> dict:
-    """Build a pallet-table suggestion for a (possibly unsaved) Delivery Note.
+    """Build a pallet-manifest suggestion for a (possibly unsaved) Delivery Note.
 
     Called from the Delivery Note form with the current document as JSON; the
-    client applies the returned pallets/assignments to the form. Pure
+    client applies the returned allocations to the Pallets table. Pure
     suggestion — nothing is saved here.
     """
     doc = frappe.parse_json(doc)
@@ -331,85 +291,90 @@ def suggest_pallets(doc) -> dict:
 
 
 def validate_delivery_note_pallets(doc, method=None):
-    """Delivery Note `validate` hook: keep the pallet table and row assignments coherent.
+    """Delivery Note `validate` hook: keep the pallet manifest coherent.
 
-    Everything is optional — Delivery Notes without pallet data are untouched.
-    Structural problems (bad numbers, references to missing pallets) block
-    saving; softer inconsistencies only warn.
+    Everything is optional — Delivery Notes without a manifest are untouched.
+    Structural problems (bad numbers, conflicting pallet types, missing item
+    or quantity) block saving; allocation totals that do not match the item
+    rows only warn, so drafts can be saved mid-editing.
     """
-    pallet_rows = doc.get("custom_pallets") or []
-    item_rows = doc.get("items") or []
-    has_assignments = any(row.get("custom_pallet_nos") for row in item_rows)
-    if not pallet_rows and not has_assignments:
+    allocations = doc.get("custom_pallets") or []
+    if not allocations:
         return
 
-    numbers: set[int] = set()
-    for pallet in pallet_rows:
-        number = cint(pallet.get("pallet_no"))
+    types_by_no: dict[int, str] = {}
+    for allocation in allocations:
+        number = cint(allocation.get("pallet_no"))
         if number <= 0:
             frappe.throw(
                 _("Pallets table: row {0} needs a positive Pallet No.").format(
-                    pallet.get("idx")
+                    allocation.get("idx")
                 )
             )
-        if number in numbers:
+        pallet_type = allocation.get("pallet_type")
+        if not pallet_type:
             frappe.throw(
-                _("Pallets table: Pallet No {0} is listed more than once.").format(number)
+                _("Pallets table: row {0} (Pallet {1}) needs a Pallet Type.").format(
+                    allocation.get("idx"), number
+                )
             )
-        numbers.add(number)
-        if not pallet.get("pallet_type"):
+        if number in types_by_no and types_by_no[number] != pallet_type:
             frappe.throw(
-                _("Pallets table: Pallet No {0} needs a Pallet Type.").format(number)
+                _(
+                    "Pallets table: Pallet No {0} has conflicting Pallet Types "
+                    "({1} and {2}). All rows of one pallet must agree."
+                ).format(number, types_by_no[number], pallet_type)
+            )
+        types_by_no.setdefault(number, pallet_type)
+        if not allocation.get("item_code"):
+            frappe.throw(
+                _("Pallets table: row {0} (Pallet {1}) needs an Item.").format(
+                    allocation.get("idx"), number
+                )
+            )
+        if flt(allocation.get("qty")) <= 0:
+            frappe.throw(
+                _("Pallets table: row {0} (Pallet {1}) needs a Qty above zero.").format(
+                    allocation.get("idx"), number
+                )
             )
 
-    types_by_number = {
-        cint(p.get("pallet_no")): p.get("pallet_type") for p in pallet_rows
-    }
-    referenced: set[int] = set()
-    type_mismatch_rows: list = []
+    # Soft cross-check: for items that appear in the manifest, compare the
+    # allocated total against the Delivery Note quantity (per item + batch).
+    allocated: dict = {}
+    for allocation in allocations:
+        key = (allocation.get("item_code"), allocation.get("batch_no") or "")
+        allocated[key] = flt(allocated.get(key)) + flt(allocation.get("qty"))
 
-    for row in item_rows:
-        raw = row.get("custom_pallet_nos")
-        if not raw:
+    ordered: dict = {}
+    for row in doc.get("items") or []:
+        key = (row.get("item_code"), row.get("batch_no") or "")
+        ordered[key] = flt(ordered.get(key)) + flt(row.get("qty"))
+
+    problems = []
+    for key, total in allocated.items():
+        item_code, batch_no = key
+        label = f"{item_code} ({batch_no})" if batch_no else item_code
+        if key not in ordered:
+            # Batch-agnostic fallback: manifest may omit or add the batch split.
+            batchless_total = sum(
+                qty for (item, _batch), qty in ordered.items() if item == item_code
+            )
+            if not batchless_total:
+                problems.append(_("{0}: not on this Delivery Note").format(label))
             continue
-        try:
-            row_numbers = parse_pallet_nos(raw)
-        except ValueError:
-            frappe.throw(
-                _(
-                    "Items row {0}: could not read Pallet No(s) {1}. Use numbers, "
-                    "commas and ranges, e.g. \"1-3\" or \"4,6\"."
-                ).format(row.get("idx"), frappe.bold(raw))
+        if abs(total - ordered[key]) > 0.001:
+            problems.append(
+                _("{0}: {1} allocated vs {2} on the Delivery Note").format(
+                    label, flt(total, 4), flt(ordered[key], 4)
+                )
             )
-        missing = [n for n in row_numbers if n not in numbers]
-        if missing:
-            frappe.throw(
-                _(
-                    "Items row {0}: Pallet No(s) {1} do not exist in the Pallets table."
-                ).format(row.get("idx"), ", ".join(str(n) for n in missing))
-            )
-        referenced.update(row_numbers)
 
-        row_type = row.get("custom_pallet_type")
-        if row_type and any(types_by_number.get(n) != row_type for n in row_numbers):
-            type_mismatch_rows.append(row.get("idx"))
-
-    if pallet_rows and has_assignments:
-        unreferenced = sorted(numbers - referenced)
-        if unreferenced:
-            frappe.msgprint(
-                _("Pallet(s) {0} have no item rows assigned to them.").format(
-                    format_pallet_nos(unreferenced)
-                ),
-                indicator="orange",
-                alert=True,
-            )
-    if type_mismatch_rows:
+    if problems:
         frappe.msgprint(
-            _(
-                "Items row(s) {0}: the row Pallet Type differs from the type of the "
-                "assigned pallet(s)."
-            ).format(", ".join(str(i) for i in type_mismatch_rows)),
+            _("Pallet manifest quantities do not match the items: {0}").format(
+                "; ".join(problems)
+            ),
             indicator="orange",
             alert=True,
         )

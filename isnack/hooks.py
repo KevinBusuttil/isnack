@@ -80,7 +80,6 @@ jinja = {
     "methods": [
         "isnack.utils.qr.get_qr_code",
         "isnack.utils.sales_print_format.get_item_discounts",
-        "isnack.api.delivery_note_pallets.parse_pallet_nos_for_print",
     ]
 }
 
