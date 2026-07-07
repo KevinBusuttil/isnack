@@ -16,6 +16,7 @@ frappe.ui.form.on("Delivery Note", {
     refresh(frm) {
         // Re-assert the Pallet Type filter (allowed UOMs may already be cached).
         isnack_dn_set_pallet_type_query(frm);
+        isnack_dn_add_build_pallets_button(frm);
     },
 });
 
@@ -74,6 +75,93 @@ function isnack_dn_set_pallet_type_query(frm) {
     frm.set_query("custom_pallet_type", "items", () => ({
         filters: { name: ["in", allowed] },
     }));
+    // Same restriction for the Pallets table (field may not be migrated yet).
+    if (frm.fields_dict.custom_pallets) {
+        frm.set_query("pallet_type", "custom_pallets", () => ({
+            filters: { name: ["in", allowed] },
+        }));
+    }
+}
+
+// "Build Pallets from Items": prefill the Pallets table + row assignments
+// from the per-row Pallet Type/Qty calculation. Full pallets are allocated
+// per row; fractional remainders are packed into shared (mixed) pallets of
+// the same type. The result is a suggestion the user can regroup freely.
+function isnack_dn_add_build_pallets_button(frm) {
+    if (frm.doc.docstatus !== 0 || !frm.fields_dict.custom_pallets) {
+        return;
+    }
+
+    frm.add_custom_button(__("Build Pallets from Items"), () => {
+        const run = () => isnack_dn_build_pallets(frm);
+        if ((frm.doc.custom_pallets || []).length) {
+            frappe.confirm(
+                __(
+                    "This will replace the current Pallets table and the Pallet " +
+                    "No(s) on all item rows. Continue?"
+                ),
+                run
+            );
+        } else {
+            run();
+        }
+    });
+}
+
+function isnack_dn_build_pallets(frm) {
+    frappe
+        .call({
+            method: "isnack.api.delivery_note_pallets.suggest_pallets",
+            args: { doc: frm.doc },
+            freeze: true,
+            freeze_message: __("Building pallets..."),
+        })
+        .then((r) => {
+            const result = (r && r.message) || {};
+            const pallets = result.pallets || [];
+            const assignments = result.assignments || {};
+
+            frm.clear_table("custom_pallets");
+            pallets.forEach((p) => {
+                const row = frm.add_child("custom_pallets");
+                row.pallet_no = p.pallet_no;
+                row.pallet_type = p.pallet_type;
+            });
+
+            (frm.doc.items || []).forEach((item) => {
+                item.custom_pallet_nos = assignments[item.name] || null;
+            });
+
+            frm.refresh_field("custom_pallets");
+            frm.refresh_field("items");
+            frm.dirty();
+
+            if (pallets.length) {
+                frappe.show_alert({
+                    message: __("Built {0} pallet(s) from the item rows.", [
+                        pallets.length,
+                    ]),
+                    indicator: "green",
+                });
+            } else {
+                frappe.msgprint(
+                    __(
+                        "No pallets could be built. Set a Pallet Type (and a UOM " +
+                        "conversion) on the item rows first."
+                    )
+                );
+            }
+
+            (result.unassigned || []).forEach((row) => {
+                frappe.msgprint(
+                    __("Row {0} ({1}) was not assigned to a pallet: {2}", [
+                        row.idx,
+                        row.item_code,
+                        row.reason,
+                    ])
+                );
+            });
+        });
 }
 
 // Recalculate Pallet Qty + Conversion Factor for a single Delivery Note Item.
