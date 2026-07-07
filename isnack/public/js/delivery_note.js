@@ -56,6 +56,26 @@ frappe.ui.form.on("Delivery Note Item", {
     },
 });
 
+frappe.ui.form.on("Pallet Detail", {
+    // Auto-number new pallets so nobody types Pallet No by hand. The explicit
+    // number (not the grid's positional No.) is what item rows reference, so
+    // it must stay stable when other pallet rows are removed.
+    custom_pallets_add(frm, cdt, cdn) {
+        const row = locals[cdt] && locals[cdt][cdn];
+        if (!row || row.pallet_no) {
+            return;
+        }
+        let max = 0;
+        (frm.doc.custom_pallets || []).forEach((p) => {
+            if (p.name !== cdn && cint(p.pallet_no) > max) {
+                max = cint(p.pallet_no);
+            }
+        });
+        row.pallet_no = max + 1;
+        frm.refresh_field("custom_pallets");
+    },
+});
+
 // Load the allowed pallet UOMs from Factory Settings and cache them on the form.
 function isnack_dn_load_allowed_pallet_uoms(frm) {
     frappe
