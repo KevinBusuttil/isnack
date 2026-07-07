@@ -79,7 +79,8 @@ doctype_list_js = {
 jinja = {
     "methods": [
         "isnack.utils.qr.get_qr_code",
-        "isnack.utils.sales_print_format.get_item_discounts",        
+        "isnack.utils.sales_print_format.get_item_discounts",
+        "isnack.api.delivery_note_pallets.parse_pallet_nos_for_print",
     ]
 }
 
@@ -167,7 +168,10 @@ doc_events = {
         "validate": "isnack.overrides.item.sync_weight_per_unit",
     },
     "Delivery Note": {
-        "validate": "isnack.api.delivery_note_pallets.calculate_delivery_note_pallets",
+        "validate": [
+            "isnack.api.delivery_note_pallets.calculate_delivery_note_pallets",
+            "isnack.api.delivery_note_pallets.validate_delivery_note_pallets",
+        ],
         "before_submit": "isnack.api.delivery_note_packing_slips.auto_create_packing_slips_before_submit",
     },
     "Sales Invoice": {

@@ -63,9 +63,13 @@ def auto_create_packing_slips_before_submit(doc, method=None):
     if _check_existing_packing_slips(doc, expected_keys) == "already_done":
         return
 
+    pallet_numbers_by_group = _resolve_group_pallet_numbers(doc, groups)
+
     created = []
     for case_no, (group_key, group) in enumerate(groups.items(), start=1):
-        ps_name = _create_and_submit_packing_slip(doc, group_key, group, case_no)
+        ps_name = _create_and_submit_packing_slip(
+            doc, group_key, group, case_no, pallet_numbers_by_group.get(group_key) or set()
+        )
         if ps_name:
             created.append(ps_name)
 
@@ -227,7 +231,44 @@ def _check_existing_packing_slips(doc, expected_keys: set) -> str:
     )
 
 
-def _create_and_submit_packing_slip(doc, group_key: str, group: dict, case_no: int):
+def _resolve_group_pallet_numbers(doc, groups: dict) -> dict:
+    """Decide which physical pallets (custom_pallets rows) each group's Packing Slip carries.
+
+    With a single group, the whole pallet table goes onto its Packing Slip.
+    With several groups, each gets the pallets referenced by its rows'
+    Pallet No(s); pallets referenced by no group at all are attached to the
+    first group so every pallet appears on exactly one slip. A pallet shared
+    by rows of different Sales Orders is copied to each of those slips.
+    """
+    from isnack.api.delivery_note_pallets import parse_pallet_nos_for_print
+
+    pallet_rows = doc.get("custom_pallets") or []
+    if not pallet_rows:
+        return {group_key: set() for group_key in groups}
+
+    all_numbers = {cint(p.get("pallet_no")) for p in pallet_rows}
+
+    if len(groups) == 1:
+        return {group_key: set(all_numbers) for group_key in groups}
+
+    numbers_by_group: dict = {}
+    for group_key, group in groups.items():
+        referenced: set = set()
+        for item in group["dn_items"]:
+            referenced.update(parse_pallet_nos_for_print(item.get("custom_pallet_nos")))
+        numbers_by_group[group_key] = referenced & all_numbers
+
+    orphans = all_numbers - set().union(*numbers_by_group.values())
+    if orphans:
+        first_group_key = next(iter(groups))
+        numbers_by_group[first_group_key] |= orphans
+
+    return numbers_by_group
+
+
+def _create_and_submit_packing_slip(
+    doc, group_key: str, group: dict, case_no: int, pallet_numbers: set
+):
     """Create and submit one Packing Slip for a single Sales Order group."""
     sales_order = group["sales_order"]
     reference = _reference_key(doc.name, group_key)
@@ -268,6 +309,7 @@ def _create_and_submit_packing_slip(doc, group_key: str, group: dict, case_no: i
                     "custom_pallet_conversion_factor"
                 ),
                 "custom_pallet_qty_manual": item.get("custom_pallet_qty_manual"),
+                "custom_pallet_nos": item.get("custom_pallet_nos"),
             },
         )
 
@@ -291,6 +333,26 @@ def _create_and_submit_packing_slip(doc, group_key: str, group: dict, case_no: i
 
     if not ps.get("items"):
         return None
+
+    # Copy the physical pallet rows this slip covers. Guarded by a meta check
+    # so Delivery Notes keep submitting before the custom_pallets field has
+    # been migrated onto Packing Slip.
+    if pallet_numbers and ps.meta.get_field("custom_pallets"):
+        for pallet in sorted(
+            doc.get("custom_pallets") or [], key=lambda p: cint(p.get("pallet_no"))
+        ):
+            if cint(pallet.get("pallet_no")) not in pallet_numbers:
+                continue
+            ps.append(
+                "custom_pallets",
+                {
+                    "pallet_no": pallet.get("pallet_no"),
+                    "pallet_type": pallet.get("pallet_type"),
+                    "net_weight_kg": pallet.get("net_weight_kg"),
+                    "gross_weight_kg": pallet.get("gross_weight_kg"),
+                    "remarks": pallet.get("remarks"),
+                },
+            )
 
     try:
         ps.flags.ignore_permissions = True
