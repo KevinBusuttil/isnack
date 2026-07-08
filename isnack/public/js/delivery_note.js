@@ -17,12 +17,22 @@ frappe.ui.form.on("Delivery Note", {
         // Re-assert the Pallet Type filter (allowed UOMs may already be cached).
         isnack_dn_set_pallet_type_query(frm);
         isnack_dn_add_build_pallets_button(frm);
+        isnack_dn_refresh_batch_cache(frm);
     },
 });
 
 frappe.ui.form.on("Delivery Note Item", {
     item_code(frm, cdt, cdn) {
         isnack_dn_calc_pallet_qty(frm, cdt, cdn);
+        isnack_dn_refresh_batch_cache(frm);
+    },
+
+    batch_no(frm) {
+        isnack_dn_refresh_batch_cache(frm);
+    },
+
+    serial_and_batch_bundle(frm) {
+        isnack_dn_refresh_batch_cache(frm);
     },
 
     qty(frm, cdt, cdn) {
@@ -139,7 +149,9 @@ function isnack_dn_set_pallet_type_query(frm) {
         filters: { name: ["in", allowed] },
     }));
     // Same restriction for the Pallets table (field may not be migrated yet),
-    // plus limit its Item picker to items actually on this Delivery Note.
+    // plus limit its Item picker to items actually on this Delivery Note and
+    // its Batch picker to that item's batches — ideally only the batches
+    // selected on the item rows (including Serial and Batch Bundle contents).
     if (frm.fields_dict.custom_pallets) {
         frm.set_query("pallet_type", "custom_pallets", () => ({
             filters: { name: ["in", allowed] },
@@ -149,7 +161,67 @@ function isnack_dn_set_pallet_type_query(frm) {
                 name: ["in", (frm.doc.items || []).map((i) => i.item_code)],
             },
         }));
+        frm.set_query("batch_no", "custom_pallets", (doc, cdt, cdn) => {
+            const row = locals[cdt] && locals[cdt][cdn];
+            const item_code = row && row.item_code;
+            if (!item_code) {
+                return {
+                    filters: {
+                        item: ["in", (frm.doc.items || []).map((i) => i.item_code)],
+                    },
+                };
+            }
+            const known =
+                (frm.__isnack_dn_batches_by_item || {})[item_code] || [];
+            if (known.length) {
+                return { filters: { name: ["in", known] } };
+            }
+            return { filters: { item: item_code } };
+        });
     }
+}
+
+// Cache the batches selected on the item rows per item, so the pallet
+// manifest's Batch picker can be narrowed to them. Batches may sit directly
+// on the row (batch_no) or inside its Serial and Batch Bundle, whose entries
+// are fetched server-side.
+function isnack_dn_refresh_batch_cache(frm) {
+    const by_item = {};
+    const bundle_rows = [];
+    (frm.doc.items || []).forEach((item) => {
+        if (!item.item_code) {
+            return;
+        }
+        by_item[item.item_code] = by_item[item.item_code] || [];
+        if (item.batch_no && !by_item[item.item_code].includes(item.batch_no)) {
+            by_item[item.item_code].push(item.batch_no);
+        }
+        if (item.serial_and_batch_bundle) {
+            bundle_rows.push([item.item_code, item.serial_and_batch_bundle]);
+        }
+    });
+
+    if (!bundle_rows.length) {
+        frm.__isnack_dn_batches_by_item = by_item;
+        return;
+    }
+
+    frappe
+        .call({
+            method: "isnack.api.delivery_note_pallets.get_bundle_batches",
+            args: { bundles: bundle_rows.map((b) => b[1]) },
+        })
+        .then((r) => {
+            const by_bundle = (r && r.message) || {};
+            bundle_rows.forEach(([item_code, bundle]) => {
+                (by_bundle[bundle] || []).forEach((batch) => {
+                    if (!by_item[item_code].includes(batch)) {
+                        by_item[item_code].push(batch);
+                    }
+                });
+            });
+            frm.__isnack_dn_batches_by_item = by_item;
+        });
 }
 
 // "Build Pallets from Items": prefill the pallet manifest from the per-row
