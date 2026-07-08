@@ -18,7 +18,7 @@ from typing import Optional
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt
+from frappe.utils import cint, flt, getdate, nowdate
 
 
 def _allowed_pallet_uoms() -> list[str]:
@@ -365,6 +365,8 @@ def validate_delivery_note_pallets(doc, method=None):
                 )
             )
 
+    _validate_manifest_batches(doc, allocations)
+
     # Soft cross-check: for items that appear in the manifest, compare the
     # allocated total against the Delivery Note quantity (per item + batch).
     allocated: dict = {}
@@ -404,3 +406,70 @@ def validate_delivery_note_pallets(doc, method=None):
             indicator="orange",
             alert=True,
         )
+
+
+def _get_available_batch_qty(batch_no: str, warehouse: str, item_code: str) -> float:
+    """Current stock-UOM availability of a batch in a warehouse.
+
+    Thin seam over erpnext's get_batch_qty (imported lazily so this module
+    stays importable in plain unit tests), patched out in tests.
+    """
+    from erpnext.stock.doctype.batch.batch import get_batch_qty
+
+    return flt(get_batch_qty(batch_no=batch_no, warehouse=warehouse, item_code=item_code))
+
+
+def _validate_manifest_batches(doc, allocations) -> None:
+    """Hard guardrails on manifest batches: no expired batch, no over-allocation.
+
+    - A batch whose expiry_date lies before the posting date blocks saving.
+    - Per (item, batch, warehouse), the allocated total (converted to the
+      stock UOM via the item row's conversion factor) must not exceed the
+      batch's current availability in that warehouse. The warehouse is the
+      matching item row's, falling back to the document's source warehouse;
+      when no warehouse can be determined the availability check is skipped.
+    """
+    posting_date = getdate(doc.get("posting_date") or nowdate())
+
+    warehouse_by_item: dict = {}
+    conversion_by_item: dict = {}
+    for row in doc.get("items") or []:
+        if row.get("item_code") not in warehouse_by_item and row.get("warehouse"):
+            warehouse_by_item[row.get("item_code")] = row.get("warehouse")
+        if row.get("item_code") not in conversion_by_item:
+            conversion_by_item[row.get("item_code")] = flt(row.get("conversion_factor")) or 1.0
+
+    totals: dict = {}
+    for allocation in allocations:
+        batch_no = allocation.get("batch_no")
+        if not batch_no:
+            continue
+        item_code = allocation.get("item_code")
+        warehouse = warehouse_by_item.get(item_code) or doc.get("set_warehouse")
+        key = (item_code, batch_no, warehouse)
+        stock_qty = flt(allocation.get("qty")) * conversion_by_item.get(item_code, 1.0)
+        totals[key] = flt(totals.get(key)) + stock_qty
+
+    checked_expiry: set = set()
+    for (item_code, batch_no, warehouse), stock_qty in totals.items():
+        if batch_no not in checked_expiry:
+            checked_expiry.add(batch_no)
+            expiry = frappe.db.get_value("Batch", batch_no, "expiry_date")
+            if expiry and getdate(expiry) < posting_date:
+                frappe.throw(
+                    _(
+                        "Pallets table: Batch {0} expired on {1} and cannot be "
+                        "put on a pallet."
+                    ).format(batch_no, frappe.utils.formatdate(expiry))
+                )
+
+        if not warehouse:
+            continue
+        available = _get_available_batch_qty(batch_no, warehouse, item_code)
+        if stock_qty > available + 0.001:
+            frappe.throw(
+                _(
+                    "Pallets table: {0} of Batch {1} allocated, but only {2} "
+                    "is available in {3}."
+                ).format(flt(stock_qty, 4), batch_no, flt(available, 4), warehouse)
+            )

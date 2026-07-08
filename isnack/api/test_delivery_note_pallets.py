@@ -378,6 +378,109 @@ class TestValidateDeliveryNotePallets(unittest.TestCase):
         mock_msgprint.assert_called_once()
 
 
+class TestManifestBatchGuardrails(unittest.TestCase):
+    """Tests for the expired-batch and batch-availability guardrails."""
+
+    @staticmethod
+    def _doc(alloc_qty=6.0, batch="AAA-005", conversion=1.0, warehouse="FG - ISN"):
+        items = [
+            _FakeRow(
+                item_code="FG10010",
+                qty=10.0,
+                batch_no=None,
+                warehouse=warehouse,
+                conversion_factor=conversion,
+                idx=1,
+            )
+        ]
+        pallets = [
+            _FakeRow(
+                pallet_no=1,
+                pallet_type="EURO 1",
+                item_code="FG10010",
+                batch_no=batch,
+                qty=alloc_qty,
+                idx=1,
+            )
+        ]
+        doc = _FakePalletDoc(items=items, pallets=pallets)
+        doc._values["posting_date"] = "2026-07-08"
+        doc._values["set_warehouse"] = None
+        return doc
+
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_valid_batch_within_stock_passes(
+        self, mock_get_value, mock_msgprint, mock_available
+    ):
+        mock_get_value.return_value = "2026-11-30"
+        mock_available.return_value = 100.0
+        validate_delivery_note_pallets(self._doc(alloc_qty=10.0))
+        mock_available.assert_called_once_with("AAA-005", "FG - ISN", "FG10010")
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_expired_batch_throws(self, mock_get_value, mock_available, _throw):
+        mock_get_value.return_value = "2026-07-07"
+        mock_available.return_value = 100.0
+        with self.assertRaises(ValueError):
+            validate_delivery_note_pallets(self._doc())
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_over_allocation_throws(
+        self, mock_get_value, mock_msgprint, mock_available, _throw
+    ):
+        mock_get_value.return_value = None
+        mock_available.return_value = 3.0
+        with self.assertRaises(ValueError):
+            validate_delivery_note_pallets(self._doc(alloc_qty=6.0))
+
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_conversion_factor_converts_to_stock_uom(
+        self, mock_get_value, mock_msgprint, mock_available
+    ):
+        # 6 cartons x 21 pkt/carton = 126 stock units, above 100 available.
+        mock_get_value.return_value = None
+        mock_available.return_value = 100.0
+        with patch(
+            "isnack.api.delivery_note_pallets.frappe.throw",
+            side_effect=ValueError,
+        ):
+            with self.assertRaises(ValueError):
+                validate_delivery_note_pallets(
+                    self._doc(alloc_qty=6.0, conversion=21.0)
+                )
+
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_no_warehouse_skips_availability(
+        self, mock_get_value, mock_msgprint, mock_available
+    ):
+        mock_get_value.return_value = None
+        validate_delivery_note_pallets(self._doc(alloc_qty=10.0, warehouse=None))
+        mock_available.assert_not_called()
+
+    @patch("isnack.api.delivery_note_pallets._get_available_batch_qty")
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    def test_batchless_allocation_skips_checks(self, mock_msgprint, mock_available):
+        validate_delivery_note_pallets(self._doc(alloc_qty=10.0, batch=None))
+        mock_available.assert_not_called()
+
+
 class TestGetBundleBatches(unittest.TestCase):
     """Tests for the Serial and Batch Bundle -> batch numbers helper."""
 
