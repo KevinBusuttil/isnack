@@ -7,10 +7,12 @@ from unittest.mock import patch
 from isnack.api.delivery_note_pallets import (
     _apply_pallet_calculation,
     _build_pallet_suggestion,
+    _expand_rows_by_batch,
     _pallet_conversion_factor,
     calculate_delivery_note_pallets,
     get_bundle_batches,
     get_delivery_note_pallet_conversion,
+    suggest_pallets,
     validate_delivery_note_pallets,
 )
 
@@ -376,6 +378,116 @@ class TestValidateDeliveryNotePallets(unittest.TestCase):
         )
         validate_delivery_note_pallets(doc)
         mock_msgprint.assert_called_once()
+
+
+class TestPalletBatchGate(unittest.TestCase):
+    """Pallets may only be built once the item rows carry their batches."""
+
+    @staticmethod
+    def _row(idx=1, item="FG10010", batch=None, bundle=None, pallet_type="EURO 1"):
+        return {
+            "name": f"r{idx}",
+            "idx": idx,
+            "item_code": item,
+            "qty": 10,
+            "uom": "Carton",
+            "batch_no": batch,
+            "serial_and_batch_bundle": bundle,
+            "custom_pallet_type": pallet_type,
+            "custom_pallet_conversion_factor": 77.0,
+            "conversion_factor": 21.0,
+        }
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    @patch("isnack.api.delivery_note_pallets.frappe.get_cached_value")
+    @patch("isnack.api.delivery_note_pallets.frappe.parse_json", side_effect=lambda v: v)
+    def test_build_blocked_without_batches(self, _parse, mock_cached, _throw):
+        mock_cached.return_value = 1  # has_batch_no
+        with self.assertRaises(ValueError):
+            suggest_pallets({"items": [self._row()]})
+
+    @patch("isnack.api.delivery_note_pallets.frappe.get_cached_value")
+    @patch("isnack.api.delivery_note_pallets.frappe.parse_json", side_effect=lambda v: v)
+    def test_build_passes_with_row_batch(self, _parse, mock_cached):
+        mock_cached.return_value = 1
+        result = suggest_pallets({"items": [self._row(batch="AAA-005")]})
+        self.assertEqual(result["allocations"][0]["batch_no"], "AAA-005")
+
+    @patch("isnack.api.delivery_note_pallets.frappe.get_cached_value")
+    @patch("isnack.api.delivery_note_pallets.frappe.parse_json", side_effect=lambda v: v)
+    def test_non_batch_item_is_not_gated(self, _parse, mock_cached):
+        mock_cached.return_value = 0
+        result = suggest_pallets({"items": [self._row(item="PM40020")]})
+        self.assertEqual(len(result["allocations"]), 1)
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    @patch("isnack.api.delivery_note_pallets.frappe.get_cached_value")
+    def test_manual_manifest_blocked_without_row_batches(self, mock_cached, _throw):
+        mock_cached.return_value = 1
+        doc = _FakePalletDoc(
+            items=[
+                _FakeRow(
+                    item_code="FG10010",
+                    qty=10,
+                    uom="Carton",
+                    conversion_factor=1.0,
+                    batch_no=None,
+                    serial_and_batch_bundle=None,
+                    warehouse=None,
+                    idx=1,
+                )
+            ],
+            pallets=[
+                _FakeRow(
+                    pallet_no=1,
+                    pallet_type="EURO 1",
+                    item_code="FG10010",
+                    batch_no=None,
+                    qty=10,
+                    uom="Carton",
+                    idx=1,
+                )
+            ],
+        )
+        with self.assertRaises(ValueError):
+            validate_delivery_note_pallets(doc)
+
+
+class TestExpandRowsByBatch(unittest.TestCase):
+    """Bundle rows are split into one sub-row per batch for Build."""
+
+    @patch("isnack.api.delivery_note_pallets._get_bundle_batch_quantities")
+    def test_bundle_split_converts_stock_qty_to_row_uom(self, mock_quantities):
+        # 63 + 147 stock units at 21/carton -> 3 + 7 cartons.
+        mock_quantities.return_value = {
+            "SABB-001": [("AAA-005", 63.0), ("ZZZ-005", 147.0)]
+        }
+        rows = _expand_rows_by_batch(
+            [
+                {
+                    "item_code": "FG10010",
+                    "qty": 10,
+                    "conversion_factor": 21.0,
+                    "serial_and_batch_bundle": "SABB-001",
+                }
+            ]
+        )
+        self.assertEqual(
+            [(r["batch_no"], r["qty"]) for r in rows],
+            [("AAA-005", 3.0), ("ZZZ-005", 7.0)],
+        )
+
+    @patch("isnack.api.delivery_note_pallets._get_bundle_batch_quantities")
+    def test_rows_without_bundle_pass_through(self, mock_quantities):
+        mock_quantities.return_value = {}
+        rows = _expand_rows_by_batch([{"item_code": "FG10010", "qty": 10}])
+        self.assertEqual(rows, [{"item_code": "FG10010", "qty": 10}])
 
 
 class TestManifestItemCap(unittest.TestCase):

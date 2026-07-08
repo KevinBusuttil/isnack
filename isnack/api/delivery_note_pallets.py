@@ -305,16 +305,118 @@ def get_bundle_batches(bundles) -> dict:
     return result
 
 
+def _is_batch_item(item_code: str) -> bool:
+    """True when the item is batch-tracked (Item.has_batch_no)."""
+    if not item_code:
+        return False
+    return bool(cint(frappe.get_cached_value("Item", item_code, "has_batch_no")))
+
+
+def _missing_batch_rows(rows) -> list:
+    """Palletised, batch-tracked rows that carry neither a batch nor a bundle.
+
+    These block pallet building: the manifest is meant to be batch-exact, so
+    batches must be selected on the item rows first. Non-batch-tracked items
+    (e.g. packaging sold as items) are never blocked.
+    """
+    missing = []
+    for row in rows:
+        if not row.get("custom_pallet_type") or flt(row.get("qty")) <= 0:
+            continue
+        if not _is_batch_item(row.get("item_code")):
+            continue
+        if not row.get("batch_no") and not row.get("serial_and_batch_bundle"):
+            missing.append(row)
+    return missing
+
+
+def _get_bundle_batch_quantities(bundles) -> dict:
+    """Per-batch stock quantities of the given Serial and Batch Bundles.
+
+    Returns ``{bundle_name: [(batch_no, abs_stock_qty), ...]}``. Outward
+    bundles (deliveries) store negative quantities; absolute values are
+    returned.
+    """
+    if not bundles:
+        return {}
+
+    result: dict = {}
+    for entry in frappe.get_all(
+        "Serial and Batch Entry",
+        filters={"parent": ["in", list(bundles)], "batch_no": ["is", "set"]},
+        fields=["parent", "batch_no", "qty"],
+        parent_doctype="Serial and Batch Bundle",
+    ):
+        result.setdefault(entry.parent, []).append(
+            (entry.batch_no, abs(flt(entry.qty)))
+        )
+    return result
+
+
+def _expand_rows_by_batch(rows) -> list:
+    """Split rows whose batches live in a Serial and Batch Bundle into one
+    sub-row per batch, so the built manifest is batch-exact.
+
+    Bundle entry quantities are stock-UOM; they are converted back to the
+    row UOM via the row's conversion factor. A manual Pallet Qty override is
+    scaled proportionally onto the sub-rows so its total is respected.
+    """
+    bundle_quantities = _get_bundle_batch_quantities(
+        {row.get("serial_and_batch_bundle") for row in rows if row.get("serial_and_batch_bundle")}
+    )
+
+    expanded = []
+    for row in rows:
+        entries = bundle_quantities.get(row.get("serial_and_batch_bundle"))
+        if not entries:
+            expanded.append(row)
+            continue
+        conversion = flt(row.get("conversion_factor")) or 1.0
+        row_qty = flt(row.get("qty"))
+        for batch_no, stock_qty in entries:
+            sub = dict(row)
+            sub["batch_no"] = batch_no
+            sub["qty"] = stock_qty / conversion
+            if (
+                row.get("custom_pallet_qty_manual")
+                and flt(row.get("custom_pallet_qty")) > 0
+                and row_qty
+            ):
+                sub["custom_pallet_qty"] = flt(row.get("custom_pallet_qty")) * (
+                    (stock_qty / conversion) / row_qty
+                )
+            expanded.append(sub)
+    return expanded
+
+
 @frappe.whitelist()
 def suggest_pallets(doc) -> dict:
     """Build a pallet-manifest suggestion for a (possibly unsaved) Delivery Note.
 
     Called from the Delivery Note form with the current document as JSON; the
     client applies the returned allocations to the Pallets table. Pure
-    suggestion — nothing is saved here.
+    suggestion — nothing is saved here. Batch-tracked rows must carry their
+    batch (or bundle) first, and bundle rows are expanded so every allocation
+    line is batch-exact.
     """
     doc = frappe.parse_json(doc)
-    return _build_pallet_suggestion(doc.get("items") or [])
+    rows = doc.get("items") or []
+
+    missing = _missing_batch_rows(rows)
+    if missing:
+        frappe.throw(
+            _(
+                "Select batch numbers on the Delivery Note items before building "
+                "pallets: {0}."
+            ).format(
+                ", ".join(
+                    _("Row {0} ({1})").format(row.get("idx"), row.get("item_code"))
+                    for row in missing
+                )
+            )
+        )
+
+    return _build_pallet_suggestion(_expand_rows_by_batch(rows))
 
 
 def validate_delivery_note_pallets(doc, method=None):
@@ -365,6 +467,31 @@ def validate_delivery_note_pallets(doc, method=None):
                     allocation.get("idx"), number
                 )
             )
+
+    # A manifest may only exist once the batch-tracked items it covers have
+    # their batches selected on the item rows (directly or via a Serial and
+    # Batch Bundle) — same gate as the Build button, applied to manual entry.
+    manifest_items = {a.get("item_code") for a in allocations}
+    blockers = [
+        row
+        for row in doc.get("items") or []
+        if row.get("item_code") in manifest_items
+        and _is_batch_item(row.get("item_code"))
+        and not row.get("batch_no")
+        and not row.get("serial_and_batch_bundle")
+    ]
+    if blockers:
+        frappe.throw(
+            _(
+                "Select batch numbers on the Delivery Note items before adding "
+                "pallets: {0}."
+            ).format(
+                ", ".join(
+                    _("Row {0} ({1})").format(row.get("idx"), row.get("item_code"))
+                    for row in blockers
+                )
+            )
+        )
 
     _validate_manifest_item_caps(doc, allocations)
     _validate_manifest_batches(doc, allocations)
