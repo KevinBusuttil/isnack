@@ -105,9 +105,19 @@ frappe.ui.form.on("Pallet Detail", {
     },
 
     item_code(frm, cdt, cdn) {
-        // Default Qty to the item's still-unallocated Delivery Note quantity.
+        // Default UOM from the matching item row, and Qty to the item's
+        // still-unallocated Delivery Note quantity.
         const row = locals[cdt] && locals[cdt][cdn];
-        if (!row || !row.item_code || flt(row.qty)) {
+        if (!row || !row.item_code) {
+            return;
+        }
+        const item_row = (frm.doc.items || []).find(
+            (i) => i.item_code === row.item_code
+        );
+        if (item_row && item_row.uom && !row.uom) {
+            frappe.model.set_value(cdt, cdn, "uom", item_row.uom);
+        }
+        if (flt(row.qty)) {
             return;
         }
         let ordered = 0;
@@ -283,6 +293,7 @@ function isnack_dn_build_pallets(frm) {
                 row.item_code = a.item_code;
                 row.batch_no = a.batch_no || null;
                 row.qty = a.qty;
+                row.uom = a.uom || null;
                 pallet_numbers.add(a.pallet_no);
             });
 

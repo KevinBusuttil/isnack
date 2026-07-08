@@ -378,6 +378,102 @@ class TestValidateDeliveryNotePallets(unittest.TestCase):
         mock_msgprint.assert_called_once()
 
 
+class TestManifestItemCap(unittest.TestCase):
+    """Tests for the hard cap: pallets must not exceed the Delivery Note item qty."""
+
+    @staticmethod
+    def _item(qty, uom="Carton", conversion=21.0, idx=1):
+        return _FakeRow(
+            item_code="FG10010",
+            qty=qty,
+            uom=uom,
+            conversion_factor=conversion,
+            batch_no=None,
+            warehouse=None,
+            idx=idx,
+        )
+
+    @staticmethod
+    def _allocation(qty, uom="Carton", no=1, idx=1):
+        return _FakeRow(
+            pallet_no=no,
+            pallet_type="EURO 1",
+            item_code="FG10010",
+            batch_no=None,
+            qty=qty,
+            uom=uom,
+            idx=idx,
+        )
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    def test_over_allocation_across_multiple_lines_throws(self, _throw):
+        # Same item on two DN lines: 6 + 4 = 10 cartons; 13 on pallets.
+        doc = _FakePalletDoc(
+            items=[self._item(6), self._item(4, idx=2)],
+            pallets=[
+                self._allocation(3, no=1),
+                self._allocation(10, no=2, idx=2),
+            ],
+        )
+        with self.assertRaises(ValueError):
+            validate_delivery_note_pallets(doc)
+
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    def test_exact_coverage_across_lines_passes(self, mock_msgprint):
+        doc = _FakePalletDoc(
+            items=[self._item(6), self._item(4, idx=2)],
+            pallets=[
+                self._allocation(3, no=1),
+                self._allocation(7, no=2, idx=2),
+            ],
+        )
+        validate_delivery_note_pallets(doc)
+        mock_msgprint.assert_not_called()
+
+    @patch(
+        "isnack.api.delivery_note_pallets.frappe.throw",
+        side_effect=ValueError,
+    )
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    def test_mixed_uom_lines_compared_in_stock_uom(self, mock_msgprint, _throw):
+        # 5 Cartons x 21 + 10 Pkt x 1 = 115 stock units ordered.
+        items = [
+            self._item(5, uom="Carton", conversion=21.0),
+            self._item(10, uom="Pkt", conversion=1.0, idx=2),
+        ]
+        ok_doc = _FakePalletDoc(
+            items=items,
+            pallets=[
+                self._allocation(5, uom="Carton", no=1),
+                self._allocation(10, uom="Pkt", no=2, idx=2),
+            ],
+        )
+        validate_delivery_note_pallets(ok_doc)
+        mock_msgprint.assert_not_called()
+
+        over_doc = _FakePalletDoc(
+            items=items,
+            pallets=[
+                self._allocation(5, uom="Carton", no=1),
+                self._allocation(11, uom="Pkt", no=2, idx=2),
+            ],
+        )
+        with self.assertRaises(ValueError):
+            validate_delivery_note_pallets(over_doc)
+
+    @patch("isnack.api.delivery_note_pallets.frappe.msgprint")
+    def test_under_allocation_warns(self, mock_msgprint):
+        doc = _FakePalletDoc(
+            items=[self._item(10)],
+            pallets=[self._allocation(4)],
+        )
+        validate_delivery_note_pallets(doc)
+        mock_msgprint.assert_called_once()
+
+
 class TestManifestBatchGuardrails(unittest.TestCase):
     """Tests for the expired-batch and batch-availability guardrails."""
 
