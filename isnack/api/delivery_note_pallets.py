@@ -227,6 +227,7 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
                 "item_code": row.get("item_code"),
                 "batch_no": row.get("batch_no"),
                 "qty": flt(qty, 4),
+                "uom": row.get("uom"),
             }
         )
 
@@ -365,43 +366,102 @@ def validate_delivery_note_pallets(doc, method=None):
                 )
             )
 
+    _validate_manifest_item_caps(doc, allocations)
     _validate_manifest_batches(doc, allocations)
 
-    # Soft cross-check: for items that appear in the manifest, compare the
-    # allocated total against the Delivery Note quantity (per item + batch).
-    allocated: dict = {}
-    for allocation in allocations:
-        key = (allocation.get("item_code"), allocation.get("batch_no") or "")
-        allocated[key] = flt(allocated.get(key)) + flt(allocation.get("qty"))
+
+def _dn_uom_maps(doc) -> tuple:
+    """Stock-UOM conversion maps derived from the Delivery Note item rows.
+
+    Returns ``(row_factor_by_item, row_factor_by_item_uom)``: the first row's
+    conversion factor per item (fallback), and the factor per (item, uom)
+    pair actually present on the rows.
+    """
+    row_factor_by_item: dict = {}
+    row_factor_by_item_uom: dict = {}
+    for row in doc.get("items") or []:
+        item_code = row.get("item_code")
+        factor = flt(row.get("conversion_factor")) or 1.0
+        row_factor_by_item.setdefault(item_code, factor)
+        if row.get("uom"):
+            row_factor_by_item_uom.setdefault((item_code, row.get("uom")), factor)
+    return row_factor_by_item, row_factor_by_item_uom
+
+
+def _allocation_stock_factor(
+    allocation, row_factor_by_item: dict, row_factor_by_item_uom: dict
+) -> float:
+    """Stock-UOM units per one manifest-row unit.
+
+    Resolution: the (item, uom) factor from a matching Delivery Note row,
+    then the item's own UOM conversion table (1.0 for the stock UOM itself),
+    then the first row's factor for the item — so a manifest row without a
+    UOM behaves exactly as before the field existed.
+    """
+    item_code = allocation.get("item_code")
+    uom = allocation.get("uom")
+    if uom:
+        factor = row_factor_by_item_uom.get((item_code, uom))
+        if factor:
+            return factor
+        if uom == frappe.get_cached_value("Item", item_code, "stock_uom"):
+            return 1.0
+        factor = _item_uom_factor(item_code, uom)
+        if factor:
+            return flt(factor)
+    return row_factor_by_item.get(item_code, 1.0)
+
+
+def _validate_manifest_item_caps(doc, allocations) -> None:
+    """Hard cap: pallets must not carry more of an item than the Delivery Note ships.
+
+    Quantities are compared in the stock UOM, aggregated over ALL Delivery
+    Note rows of the item (the same item may appear on several lines, possibly
+    in different UOMs). Exceeding the cap blocks saving; covering less only
+    warns (a draft may be palletised halfway); manifest items missing from
+    the Delivery Note entirely also warn.
+    """
+    row_factor_by_item, row_factor_by_item_uom = _dn_uom_maps(doc)
 
     ordered: dict = {}
     for row in doc.get("items") or []:
-        key = (row.get("item_code"), row.get("batch_no") or "")
-        ordered[key] = flt(ordered.get(key)) + flt(row.get("qty"))
+        item_code = row.get("item_code")
+        factor = flt(row.get("conversion_factor")) or 1.0
+        ordered[item_code] = flt(ordered.get(item_code)) + flt(row.get("qty")) * factor
 
-    problems = []
-    for key, total in allocated.items():
-        item_code, batch_no = key
-        label = f"{item_code} ({batch_no})" if batch_no else item_code
-        if key not in ordered:
-            # Batch-agnostic fallback: manifest may omit or add the batch split.
-            batchless_total = sum(
-                qty for (item, _batch), qty in ordered.items() if item == item_code
-            )
-            if not batchless_total:
-                problems.append(_("{0}: not on this Delivery Note").format(label))
+    allocated: dict = {}
+    for allocation in allocations:
+        item_code = allocation.get("item_code")
+        factor = _allocation_stock_factor(
+            allocation, row_factor_by_item, row_factor_by_item_uom
+        )
+        allocated[item_code] = (
+            flt(allocated.get(item_code)) + flt(allocation.get("qty")) * factor
+        )
+
+    warnings = []
+    for item_code, total in allocated.items():
+        if item_code not in ordered:
+            warnings.append(_("{0}: not on this Delivery Note").format(item_code))
             continue
-        if abs(total - ordered[key]) > 0.001:
-            problems.append(
-                _("{0}: {1} allocated vs {2} on the Delivery Note").format(
-                    label, flt(total, 4), flt(ordered[key], 4)
+        if total > ordered[item_code] + 0.001:
+            frappe.throw(
+                _(
+                    "Pallets table: {0} of {1} allocated across pallets, but the "
+                    "Delivery Note only ships {2} (stock UOM)."
+                ).format(flt(total, 4), item_code, flt(ordered[item_code], 4))
+            )
+        if total < ordered[item_code] - 0.001:
+            warnings.append(
+                _("{0}: {1} of {2} on pallets").format(
+                    item_code, flt(total, 4), flt(ordered[item_code], 4)
                 )
             )
 
-    if problems:
+    if warnings:
         frappe.msgprint(
-            _("Pallet manifest quantities do not match the items: {0}").format(
-                "; ".join(problems)
+            _("Pallet manifest does not fully match the items: {0}").format(
+                "; ".join(warnings)
             ),
             indicator="orange",
             alert=True,
@@ -430,14 +490,12 @@ def _validate_manifest_batches(doc, allocations) -> None:
       when no warehouse can be determined the availability check is skipped.
     """
     posting_date = getdate(doc.get("posting_date") or nowdate())
+    row_factor_by_item, row_factor_by_item_uom = _dn_uom_maps(doc)
 
     warehouse_by_item: dict = {}
-    conversion_by_item: dict = {}
     for row in doc.get("items") or []:
         if row.get("item_code") not in warehouse_by_item and row.get("warehouse"):
             warehouse_by_item[row.get("item_code")] = row.get("warehouse")
-        if row.get("item_code") not in conversion_by_item:
-            conversion_by_item[row.get("item_code")] = flt(row.get("conversion_factor")) or 1.0
 
     totals: dict = {}
     for allocation in allocations:
@@ -447,7 +505,9 @@ def _validate_manifest_batches(doc, allocations) -> None:
         item_code = allocation.get("item_code")
         warehouse = warehouse_by_item.get(item_code) or doc.get("set_warehouse")
         key = (item_code, batch_no, warehouse)
-        stock_qty = flt(allocation.get("qty")) * conversion_by_item.get(item_code, 1.0)
+        stock_qty = flt(allocation.get("qty")) * _allocation_stock_factor(
+            allocation, row_factor_by_item, row_factor_by_item_uom
+        )
         totals[key] = flt(totals.get(key)) + stock_qty
 
     checked_expiry: set = set()

@@ -352,6 +352,7 @@ def _create_and_submit_packing_slip(
                     "item_code": allocation.get("item_code"),
                     "batch_no": allocation.get("batch_no"),
                     "qty": allocation.get("qty"),
+                    "uom": allocation.get("uom"),
                     "remarks": allocation.get("remarks"),
                 },
             )
