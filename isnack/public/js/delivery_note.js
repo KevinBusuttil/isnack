@@ -176,7 +176,22 @@ function isnack_dn_set_pallet_type_query(frm) {
             if (known.length) {
                 return { filters: { name: ["in", known] } };
             }
-            return { filters: { item: item_code } };
+            // No batches picked on the rows yet: fall back to ERPNext's
+            // standard batch search, which hides expired batches and only
+            // offers stock available in the warehouse on the posting date.
+            const item_row = (frm.doc.items || []).find(
+                (i) => i.item_code === item_code
+            );
+            return {
+                query: "erpnext.controllers.queries.get_batch_no",
+                filters: {
+                    item_code: item_code,
+                    warehouse:
+                        (item_row && item_row.warehouse) ||
+                        frm.doc.set_warehouse,
+                    posting_date: frm.doc.posting_date,
+                },
+            };
         });
     }
 }
