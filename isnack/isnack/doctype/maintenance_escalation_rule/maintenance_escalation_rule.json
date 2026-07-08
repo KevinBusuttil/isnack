@@ -1,0 +1,155 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:MNT-ESC-{#####}",
+ "creation": "2026-06-17 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "rule_name",
+  "company",
+  "enabled",
+  "timing_section",
+  "days_before_due",
+  "days_after_due",
+  "column_break_timing",
+  "repeat_daily_until_resolved",
+  "notify_section",
+  "notify_technician",
+  "notify_maintenance_manager",
+  "notify_operations_manager",
+  "column_break_notify",
+  "notification_channel"
+ ],
+ "fields": [
+  {
+   "fieldname": "rule_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Rule Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "timing_section",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "description": "Trigger this many days BEFORE the due date (leave 0 to ignore).",
+   "fieldname": "days_before_due",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Days Before Due"
+  },
+  {
+   "description": "Trigger this many days AFTER the due date (leave 0 to ignore).",
+   "fieldname": "days_after_due",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Days After Due"
+  },
+  {
+   "fieldname": "column_break_timing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "If set, keep notifying every day while the task remains open.",
+   "fieldname": "repeat_daily_until_resolved",
+   "fieldtype": "Check",
+   "label": "Repeat Daily Until Resolved"
+  },
+  {
+   "fieldname": "notify_section",
+   "fieldtype": "Section Break",
+   "label": "Recipients"
+  },
+  {
+   "default": "1",
+   "fieldname": "notify_technician",
+   "fieldtype": "Check",
+   "label": "Notify Technician"
+  },
+  {
+   "default": "0",
+   "fieldname": "notify_maintenance_manager",
+   "fieldtype": "Check",
+   "label": "Notify Maintenance Manager"
+  },
+  {
+   "default": "0",
+   "fieldname": "notify_operations_manager",
+   "fieldtype": "Check",
+   "label": "Notify Operations Manager"
+  },
+  {
+   "fieldname": "column_break_notify",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Notification Log",
+   "fieldname": "notification_channel",
+   "fieldtype": "Select",
+   "label": "Notification Channel",
+   "options": "Notification Log\nEmail\nBoth"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Maintenance Escalation Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

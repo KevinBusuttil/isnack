@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-06-17 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sequence",
+  "instruction",
+  "input_type",
+  "required",
+  "is_safety_step",
+  "expected_value",
+  "min_value",
+  "max_value",
+  "uom",
+  "requires_photo",
+  "requires_comment"
+ ],
+ "fields": [
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Seq"
+  },
+  {
+   "columns": 4,
+   "fieldname": "instruction",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Instruction",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "Checkbox",
+   "fieldname": "input_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Input Type",
+   "options": "Checkbox\nPass/Fail\nNumber\nText\nReading\nPhoto\nSignature"
+  },
+  {
+   "default": "0",
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Required"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_safety_step",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Safety Step"
+  },
+  {
+   "fieldname": "expected_value",
+   "fieldtype": "Data",
+   "label": "Expected Value"
+  },
+  {
+   "fieldname": "min_value",
+   "fieldtype": "Float",
+   "label": "Min Value"
+  },
+  {
+   "fieldname": "max_value",
+   "fieldtype": "Float",
+   "label": "Max Value"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM"
+  },
+  {
+   "default": "0",
+   "fieldname": "requires_photo",
+   "fieldtype": "Check",
+   "label": "Requires Photo"
+  },
+  {
+   "default": "0",
+   "fieldname": "requires_comment",
+   "fieldtype": "Check",
+   "label": "Requires Comment"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Maintenance Checklist Template Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
