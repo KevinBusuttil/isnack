@@ -474,5 +474,63 @@ class TestAutoCreateOrchestration(unittest.TestCase):
         mock_create.assert_not_called()
 
 
+class TestDnItemBatchSplits(unittest.TestCase):
+    """Packing Slip lines per batch for bundle-tracked Delivery Note rows."""
+
+    BUNDLES = {"SABB-9": [("B-207", 63.0), ("B-208", 147.0)]}
+
+    def test_bundle_split_converts_and_orders(self):
+        item = _Row(
+            item_code="FG10010",
+            qty=10.0,
+            batch_no=None,
+            conversion_factor=21.0,
+            serial_and_batch_bundle="SABB-9",
+        )
+        self.assertEqual(
+            dnps._dn_item_batch_splits(item, 10.0, self.BUNDLES),
+            [("B-207", 3.0), ("B-208", 7.0)],
+        )
+
+    def test_partial_pack_qty_scales_splits(self):
+        item = _Row(
+            item_code="FG10010",
+            qty=10.0,
+            batch_no=None,
+            conversion_factor=21.0,
+            serial_and_batch_bundle="SABB-9",
+        )
+        self.assertEqual(
+            dnps._dn_item_batch_splits(item, 5.0, self.BUNDLES),
+            [("B-207", 1.5), ("B-208", 3.5)],
+        )
+
+    def test_row_without_bundle_stays_single_line(self):
+        item = _Row(
+            item_code="FG10005",
+            qty=10.0,
+            batch_no="AAA-005",
+            conversion_factor=1.0,
+            serial_and_batch_bundle=None,
+        )
+        self.assertEqual(
+            dnps._dn_item_batch_splits(item, 10.0, self.BUNDLES),
+            [("AAA-005", 10.0)],
+        )
+
+    def test_rounding_residue_absorbed_by_last_line(self):
+        item = _Row(
+            item_code="X",
+            qty=100.0,
+            batch_no=None,
+            conversion_factor=0.03,
+            serial_and_batch_bundle="S",
+        )
+        splits = dnps._dn_item_batch_splits(
+            item, 100.0, {"S": [("A", 1.0), ("B", 1.0), ("C", 1.0)]}
+        )
+        self.assertAlmostEqual(sum(qty for _batch, qty in splits), 100.0, places=9)
+
+
 if __name__ == "__main__":
     unittest.main()

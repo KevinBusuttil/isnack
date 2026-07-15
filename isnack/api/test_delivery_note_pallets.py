@@ -8,6 +8,7 @@ from isnack.api.delivery_note_pallets import (
     _apply_pallet_calculation,
     _build_pallet_suggestion,
     _expand_rows_by_batch,
+    get_dn_item_bundle_batches,
     _pallet_conversion_factor,
     calculate_delivery_note_pallets,
     get_bundle_batches,
@@ -709,6 +710,38 @@ class TestGetBundleBatches(unittest.TestCase):
         self.assertEqual(result["SABB-002"], ["BBB-001"])
         kwargs = mock_get_all.call_args.kwargs
         self.assertEqual(kwargs.get("parent_doctype"), "Serial and Batch Bundle")
+
+
+class TestGetDnItemBundleBatches(unittest.TestCase):
+    """Print-fallback helper: batch lines from a DN row's bundle."""
+
+    def test_no_dn_detail_returns_empty(self):
+        self.assertEqual(get_dn_item_bundle_batches(None), [])
+
+    @patch("isnack.api.delivery_note_pallets.frappe.get_all")
+    @patch("isnack.api.delivery_note_pallets.frappe.db.get_value")
+    def test_lines_converted_to_row_uom_with_expiry(self, mock_get_value, mock_get_all):
+        def get_value(doctype, name, fieldname=None, as_dict=False, **kwargs):
+            if doctype == "Delivery Note Item":
+                return _FakeRow(serial_and_batch_bundle="SABB-9", conversion_factor=21.0)
+            if doctype == "Batch" and name == "B-207":
+                return "2026-10-31"
+            return None
+
+        mock_get_value.side_effect = get_value
+        mock_get_all.return_value = [
+            _FakeRow(batch_no="B-207", qty=-63.0),
+            _FakeRow(batch_no="B-208", qty=-147.0),
+        ]
+
+        lines = get_dn_item_bundle_batches("d2")
+
+        self.assertEqual(
+            [(line["batch_no"], line["qty"]) for line in lines],
+            [("B-207", 3.0), ("B-208", 7.0)],
+        )
+        self.assertEqual(lines[0]["expiry_date"], "2026-10-31")
+        self.assertIsNone(lines[1]["expiry_date"])
 
 
 if __name__ == "__main__":

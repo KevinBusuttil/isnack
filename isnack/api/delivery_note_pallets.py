@@ -389,6 +389,45 @@ def _expand_rows_by_batch(rows) -> list:
     return expanded
 
 
+def get_dn_item_bundle_batches(dn_detail) -> list:
+    """Batch lines of a Delivery Note row's Serial and Batch Bundle (Jinja method).
+
+    Print-format fallback for Packing Slip Item rows whose batch_no is blank
+    because the source Delivery Note row tracks batches via a Serial and
+    Batch Bundle (pre-existing documents; new Packing Slips are split per
+    batch at creation). Returns ``[{"batch_no", "qty", "expiry_date"}, ...]``
+    with qty in the Delivery Note row's UOM; [] when there is no bundle.
+    """
+    if not dn_detail:
+        return []
+    row = frappe.db.get_value(
+        "Delivery Note Item",
+        dn_detail,
+        ["serial_and_batch_bundle", "conversion_factor"],
+        as_dict=True,
+    )
+    if not row or not row.get("serial_and_batch_bundle"):
+        return []
+
+    conversion = flt(row.get("conversion_factor")) or 1.0
+    lines = []
+    for entry in frappe.get_all(
+        "Serial and Batch Entry",
+        filters={"parent": row.get("serial_and_batch_bundle"), "batch_no": ["is", "set"]},
+        fields=["batch_no", "qty"],
+        parent_doctype="Serial and Batch Bundle",
+        order_by="idx",
+    ):
+        lines.append(
+            {
+                "batch_no": entry.batch_no,
+                "qty": abs(flt(entry.qty)) / conversion,
+                "expiry_date": frappe.db.get_value("Batch", entry.batch_no, "expiry_date"),
+            }
+        )
+    return lines
+
+
 @frappe.whitelist()
 def suggest_pallets(doc) -> dict:
     """Build a pallet-manifest suggestion for a (possibly unsaved) Delivery Note.

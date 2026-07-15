@@ -64,11 +64,17 @@ def auto_create_packing_slips_before_submit(doc, method=None):
         return
 
     allocations_by_group = _resolve_group_allocations(doc, groups)
+    bundle_quantities = _dn_bundle_quantities(groups)
 
     created = []
     for case_no, (group_key, group) in enumerate(groups.items(), start=1):
         ps_name = _create_and_submit_packing_slip(
-            doc, group_key, group, case_no, allocations_by_group.get(group_key) or []
+            doc,
+            group_key,
+            group,
+            case_no,
+            allocations_by_group.get(group_key) or [],
+            bundle_quantities,
         )
         if ps_name:
             created.append(ps_name)
@@ -270,8 +276,61 @@ def _resolve_group_allocations(doc, groups: dict) -> dict:
     return allocations_by_group
 
 
+def _dn_bundle_quantities(groups: dict) -> dict:
+    """Per-batch stock quantities of every Serial and Batch Bundle in the groups."""
+    from isnack.api.delivery_note_pallets import _get_bundle_batch_quantities
+
+    bundles = {
+        item.get("serial_and_batch_bundle")
+        for group in groups.values()
+        for item in group["dn_items"]
+        if item.get("serial_and_batch_bundle")
+    }
+    return _get_bundle_batch_quantities(bundles)
+
+
+def _dn_item_batch_splits(item, pack_qty: float, bundle_quantities: dict) -> list:
+    """Packing Slip lines for one Delivery Note row: ``[(batch_no, qty), ...]``.
+
+    A row whose batches live in a Serial and Batch Bundle is split into one
+    line per batch, so the Packing Slip shows each batch with its own
+    quantity (Packing Slip Item.batch_no is single-valued). Bundle entry
+    quantities are stock-UOM and converted to the row UOM; they are scaled
+    to pack_qty and the last line absorbs rounding residue so the lines sum
+    to pack_qty exactly (the v15 status updater sums lines per dn_detail, so
+    the Delivery Note packed-qty check still balances). Rows without a
+    bundle stay one line, carrying the row's own batch_no (possibly None).
+    """
+    entries = [
+        (batch_no, flt(stock_qty))
+        for batch_no, stock_qty in bundle_quantities.get(
+            item.get("serial_and_batch_bundle")
+        ) or []
+        if flt(stock_qty) > 0
+    ]
+    if not entries:
+        return [(item.get("batch_no"), pack_qty)]
+
+    conversion = flt(item.get("conversion_factor")) or 1.0
+    row_qty = flt(item.get("qty"))
+    scale = (pack_qty / row_qty) if row_qty else 1.0
+    splits = [
+        [batch_no, flt(stock_qty / conversion * scale, 4)]
+        for batch_no, stock_qty in entries
+    ]
+    residue = flt(pack_qty - sum(qty for _batch, qty in splits), 4)
+    if residue:
+        splits[-1][1] = flt(splits[-1][1] + residue, 4)
+    return [(batch_no, qty) for batch_no, qty in splits if qty > 0]
+
+
 def _create_and_submit_packing_slip(
-    doc, group_key: str, group: dict, case_no: int, pallet_allocations: list
+    doc,
+    group_key: str,
+    group: dict,
+    case_no: int,
+    pallet_allocations: list,
+    bundle_quantities: dict,
 ):
     """Create and submit one Packing Slip for a single Sales Order group."""
     sales_order = group["sales_order"]
@@ -294,27 +353,36 @@ def _create_and_submit_packing_slip(
         pack_qty = flt(item.get("qty")) - flt(item.get("packed_qty"))
         if pack_qty <= 0:
             continue
-        ps.append(
-            "items",
-            {
-                "item_code": item.item_code,
-                "item_name": item.get("item_name"),
-                "description": item.get("description"),
-                "qty": pack_qty,
-                "stock_uom": item.get("uom"),
-                "batch_no": item.get("batch_no"),
-                "dn_detail": item.name,
-                # Pallet fields are Delivery Note specific; copy the snapshot
-                # onto the Packing Slip Item row. Coverage is always full here
-                # (see _check_existing_packing_slips), so no scaling is needed.
-                "custom_pallet_type": item.get("custom_pallet_type"),
-                "custom_pallet_qty": item.get("custom_pallet_qty"),
-                "custom_pallet_conversion_factor": item.get(
-                    "custom_pallet_conversion_factor"
-                ),
-                "custom_pallet_qty_manual": item.get("custom_pallet_qty_manual"),
-            },
-        )
+        # One Packing Slip line per batch (bundle rows are split), so the
+        # print shows each batch with its own quantity and expiry.
+        for batch_no, split_qty in _dn_item_batch_splits(item, pack_qty, bundle_quantities):
+            fraction = (split_qty / pack_qty) if pack_qty else 0
+            ps.append(
+                "items",
+                {
+                    "item_code": item.item_code,
+                    "item_name": item.get("item_name"),
+                    "description": item.get("description"),
+                    "qty": split_qty,
+                    "stock_uom": item.get("uom"),
+                    "batch_no": batch_no,
+                    "dn_detail": item.name,
+                    # Pallet fields are Delivery Note specific; copy the
+                    # snapshot onto the Packing Slip Item row, scaling the
+                    # estimated Pallet Qty to this line's share so per-line
+                    # figures stay proportional across batch splits.
+                    "custom_pallet_type": item.get("custom_pallet_type"),
+                    "custom_pallet_qty": (
+                        flt(item.get("custom_pallet_qty")) * fraction
+                        if item.get("custom_pallet_qty")
+                        else item.get("custom_pallet_qty")
+                    ),
+                    "custom_pallet_conversion_factor": item.get(
+                        "custom_pallet_conversion_factor"
+                    ),
+                    "custom_pallet_qty_manual": item.get("custom_pallet_qty_manual"),
+                },
+            )
 
     for packed_item in group["packed_items"]:
         pack_qty = flt(packed_item.get("qty")) - flt(packed_item.get("packed_qty"))
