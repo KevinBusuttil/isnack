@@ -2473,6 +2473,27 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
     return out
 
 
+def _close_sfg_at_end_enabled() -> bool:
+    """Factory Settings toggle: when on, a semi-finished Work Order is received
+    into stock (Manufacture Stock Entry) and completed directly at End WO, so
+    its output exists in the Semi-finished warehouse before the parent
+    finished-good WO consumes it. When off (default), semi-finished WOs are
+    closed at Close Production like finished goods (legacy behaviour)."""
+    return bool(getattr(_fs(), "close_sfg_wo_at_end", 0))
+
+
+def _wo_closes_at_end(production_item: str) -> bool:
+    """True when End WO should also receive + complete this Work Order
+    (structural mode): the Factory Settings toggle is on, the item is
+    semi-finished, and it is not batch-tracked. A batch-tracked item is left
+    to Close Production, which is where its batch number is collected."""
+    if not _close_sfg_at_end_enabled():
+        return False
+    if _is_fg(production_item):
+        return False
+    return not bool(frappe.db.get_value("Item", production_item, "has_batch_no"))
+
+
 @frappe.whitelist()
 def get_end_wo_summary(work_order: str):
     """Snapshot used by the Operator Hub End WO dialog.
@@ -2485,19 +2506,36 @@ def get_end_wo_summary(work_order: str):
     summary["sfg_items"] = (get_sfg_components_for_wo(work_order) or {}).get("items") or []
     user_roles = set(frappe.get_roles(frappe.session.user))
     summary["can_override"] = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
+
+    # Structural-mode context: the dialog shows Good/Reject output fields when
+    # this WO produces a semi-finished item and the Factory Settings toggle is on.
+    wo_row = frappe.db.get_value(
+        "Work Order", work_order, ["production_item", "qty"], as_dict=True
+    )
+    summary["is_sfg_wo"] = bool(wo_row) and not _is_fg(wo_row.production_item)
+    summary["close_at_end"] = bool(wo_row) and _wo_closes_at_end(wo_row.production_item)
+    summary["planned_qty"] = flt(wo_row.qty) if wo_row else 0
     return summary
 
 
 @frappe.whitelist()
 def end_work_order(work_order: str, sfg_usage: str = None,
-                   override_reason: str = None):
+                   override_reason: str = None,
+                   good_qty=None, reject_qty=0):
     """
     End a work order - consume SFG materials and mark as ended.
-    Does NOT create Manufacture Stock Entry.
-    
+
+    Legacy mode: does NOT create the Manufacture Stock Entry (that happens at
+    Close Production). Structural mode (Factory Settings → "Close Semi-finished
+    WOs at End WO"): a WO producing a semi-finished item is additionally
+    received into stock and completed here, using good_qty/reject_qty.
+
     Args:
         work_order: Work Order name
         sfg_usage: JSON string of SFG items to consume [{"item_code": "...", "qty": ...}]
+        override_reason: Production Manager reason to force-end below tolerance
+        good_qty: actual good output (semi-finished WOs in structural mode only)
+        reject_qty: actual rejected output (same scope as good_qty)
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -2570,6 +2608,39 @@ def end_work_order(work_order: str, sfg_usage: str = None,
                 "End WO override by {0}. Shortfall (>{1}% tolerance): {2}. Reason: {3}"
             ).format(frappe.session.user, summary["tolerance_pct"], short_summary, reason),
         )
+
+    # Structural mode: a semi-finished WO is received into stock and completed
+    # right here, so its output exists in the Semi-finished warehouse before
+    # the parent finished-good WO consumes it at its own End WO (otherwise the
+    # consumption precedes the receipt and trips ERPNext's negative-stock
+    # validation). Close Production then only ever sees finished goods.
+    if _wo_closes_at_end(wo.production_item):
+        good = flt(good_qty)
+        reject = flt(reject_qty or 0)
+        if good <= 0:
+            frappe.throw(_("Good quantity is required to end this semi-finished Work Order"))
+        if reject < 0:
+            frappe.throw(_("Rejects cannot be negative"))
+        if reject > 0 and not _default_line_scrap(wo.name):
+            line = _line_for_work_order(wo.name) or "?"
+            frappe.throw(_(
+                "Scrap warehouse is not configured for line {0} (Work Order {1}). "
+                "Set scrap_warehouse in Factory Settings → Line Warehouse Map before "
+                "ending production with rejects."
+            ).format(line, wo.name))
+
+        # Same lock + idempotent close used by Close Production, batchless
+        # (semi-finished items are not batch-tracked; _close_single_wo skips
+        # the batch for has_batch_no = 0 items regardless).
+        _lock_work_orders_for_update([wo.name])
+        _close_single_wo(
+            {"name": wo.name},
+            {"good": good, "reject": reject, "packaging": []},
+            None,
+        )
+        wo.add_comment("Info", _("Semi-finished output received into stock at End WO (Good={0:.2f}, Rejects={1:.2f})").format(good, reject))
+        return {"success": True, "closed": True,
+                "message": "Work Order ended and output received into stock"}
 
     # Mark as ended
     wo.db_set("custom_production_ended", 1, commit=True)
@@ -3379,6 +3450,17 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         if wo.bom_no and total_production_qty > 0:
             bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty, exploded=bool(wo.use_multi_level_bom))
 
+            # Semi-finished components live in the Semi-finished warehouse, not
+            # WIP (their consumption at End WO sources from there, see
+            # _post_sfg_consumption). Any remainder consumed here must come
+            # from the same place, otherwise the row hits WIP where SFG stock
+            # never resides and fails ERPNext's negative-stock validation.
+            sfg_codes = {
+                row["item_code"]
+                for row in (get_sfg_components_for_wo(wo_name).get("items") or [])
+            }
+            sfg_src_wh = _default_sfg_source(wo_name)
+
             for bom_item in bom_items:
                 item_code = bom_item["item_code"]
                 group = (_get_item_group(item_code) or "").strip().lower()
@@ -3390,11 +3472,14 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
 
                 if abs(remaining_qty) > QTY_EPSILON:
                     if remaining_qty > 0:
+                        src_wh = wip_wh
+                        if item_code in sfg_codes and sfg_src_wh:
+                            src_wh = sfg_src_wh
                         se.append("items", {
                             "item_code": item_code,
                             "qty": remaining_qty,
                             "uom": bom_item["uom"],
-                            "s_warehouse": wip_wh,
+                            "s_warehouse": src_wh,
                             "is_finished_item": 0,
                         })
                     else:

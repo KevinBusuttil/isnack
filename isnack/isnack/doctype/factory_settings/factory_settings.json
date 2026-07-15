@@ -15,6 +15,7 @@
   "close_production_section",
   "close_production_validation_mode",
   "close_production_min_wo_count",
+  "close_sfg_wo_at_end",
   "storekeeper_hub_section",
   "stock_entry_button_roles",
   "item_group_policies_section",
@@ -110,6 +111,13 @@
    "fieldtype": "Int",
    "label": "Minimum WO Count",
    "non_negative": 1
+  },
+  {
+   "default": "0",
+   "description": "When enabled, ending a Work Order that produces a semi-finished item asks for the actual good/reject output and immediately books the Manufacture Stock Entry (receiving the item into the Semi-finished warehouse) and completes the Work Order. Close Production then handles finished goods only. When disabled, semi-finished Work Orders are closed at Close Production (legacy behaviour).",
+   "fieldname": "close_sfg_wo_at_end",
+   "fieldtype": "Check",
+   "label": "Close Semi-finished WOs at End WO"
   },
   {
    "fieldname": "storekeeper_hub_section",

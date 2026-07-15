@@ -2534,9 +2534,24 @@ function init_operator_hub($root) {
     const sfgRows = summary.sfg_items || [];
     const canEnd = !!summary.can_end;
     const canOverride = !!summary.can_override;
+    // Structural mode (Factory Settings → Close Semi-finished WOs at End WO):
+    // this WO produces a semi-finished item that is received into stock and
+    // completed right now, so the operator declares the actual output here.
+    const closeAtEnd = !!summary.close_at_end;
 
     const fields = [];
     fields.push({ fieldtype: 'HTML', fieldname: 'consumption_summary' });
+
+    if (closeAtEnd) {
+      fields.push({ fieldtype: 'Section Break', label: 'Semi-finished output (received into stock now)' });
+      fields.push({
+        label: 'Good Qty', fieldname: 'end_good_qty', fieldtype: 'Float', reqd: 1,
+        default: summary.planned_qty || 0,
+        description: 'Prefilled with the planned quantity — adjust to the actual output.',
+      });
+      fields.push({ fieldtype: 'Column Break' });
+      fields.push({ label: 'Reject Qty', fieldname: 'end_reject_qty', fieldtype: 'Float', default: 0 });
+    }
 
     if (sfgRows.length) {
       fields.push({ fieldtype: 'Section Break', label: 'Semi-finished usage (slurry / rice mix)' });
@@ -2573,7 +2588,7 @@ function init_operator_hub($root) {
     const dialog_opts = {
       title: 'End Work Order',
       fields,
-      primary_action_label: 'End WO',
+      primary_action_label: closeAtEnd ? 'End & Receive WO' : 'End WO',
       primary_action: (v) => {
         // Re-evaluate using the most recently rendered summary.
         if (!canEnd && !canOverride) {
@@ -2582,6 +2597,10 @@ function init_operator_hub($root) {
         }
         if (!canEnd && canOverride && !(v.override_reason || '').trim()) {
           flashStatus('Reason for shortfall is required to override', 'warning');
+          return;
+        }
+        if (closeAtEnd && !(parseFloat(v.end_good_qty) > 0)) {
+          flashStatus('Good quantity is required to end this Work Order', 'warning');
           return;
         }
         setStatus('Ending work order…');
@@ -2595,12 +2614,16 @@ function init_operator_hub($root) {
           sfg_usage: JSON.stringify(sfgUsage),
         };
         if (!canEnd && canOverride) args.override_reason = (v.override_reason || '').trim();
+        if (closeAtEnd) {
+          args.good_qty = parseFloat(v.end_good_qty) || 0;
+          args.reject_qty = parseFloat(v.end_reject_qty) || 0;
+        }
         rpc('isnack.api.mes_ops.end_work_order', args).then(async () => {
           d.hide();
           const endedWo = state.current_wo;
           state.current_production_ended = true;
           refreshButtonStates();
-          flashStatus(`Ended — ${endedWo}`, 'success');
+          flashStatus(closeAtEnd ? `Ended & received into stock — ${endedWo}` : `Ended — ${endedWo}`, 'success');
           await load_queue();
           if (endedWo && (state.orders || []).find(o => o.name === endedWo)) {
             set_active_work_order(endedWo);

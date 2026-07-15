@@ -312,6 +312,19 @@ Click **End WO** (enabled when WO is not already ended) to mark production as ph
    - The Work Order is flagged `custom_production_ended = 1`.
 4. The WO moves out of the active queue and awaits **Close Production**.
 
+**Semi-finished Work Orders — structural mode.** When Factory Settings →
+**Close Semi-finished WOs at End WO** is enabled and the WO's production item
+is semi-finished (Item Group based, see `_is_fg`), the End WO dialog
+additionally asks for **Good Qty** (prefilled with the planned quantity) and
+**Reject Qty**. On submit the server books the `Manufacture` Stock Entry
+immediately (receiving the output into the Semi-finished warehouse, batchless)
+and sets the WO to `Completed`, so it never appears in Close Production. This
+guarantees the semi-finished stock exists *before* the parent finished-good
+WO's End WO consumes it — with the toggle off, that consumption happens before
+the receipt (booked only at Close Production) and fails ERPNext's
+negative-stock validation unless buffer stock exists. With the toggle off the
+legacy behaviour above applies unchanged.
+
 ---
 
 ### 11. Close Production
@@ -353,6 +366,7 @@ All hub behaviour is controlled by the **Factory Settings** Single doctype (Syst
 | `material_overconsumption_threshold` | Maximum % over BOM requirement before scan/manual-load is blocked (default: 150%). |
 | `close_production_validation_mode` | No Validation / All WOs on Line Must Be Ended / Minimum Number of WOs. |
 | `close_production_min_wo_count` | Minimum ended WO count for the "Minimum Number" mode. |
+| `close_sfg_wo_at_end` | When enabled, semi-finished WOs are received into stock and completed at End WO (structural mode); Close Production then handles finished goods only. Off = legacy: SFG WOs close at Close Production. |
 | `pallet_uom_options` | Allowed pallet types (e.g. EURO 1, EURO 4) shown in the Operator Hub pallet label dialog. |
 | `default_fg_label_print_format` | Print format for FG carton labels in Operator Hub. |
 | `default_label_print_format` | Print format for per-item staging labels in Storekeeper Hub. |
