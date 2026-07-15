@@ -357,6 +357,16 @@ When the machine has finished processing the batch:
 
 > **Note:** Clicking End WO does **not** yet create the Finished Goods stock entry. That happens in the next step, Close Production.
 
+#### Ending a Work Order that *produces* a semi-finished item (mix / slurry)
+
+If your site has enabled **Factory Settings → Close Semi-finished WOs at End WO**, ending a Work Order whose product is itself a semi-finished item works slightly differently:
+
+1. The End WO dialog also shows **Good Qty** — pre-filled with the planned quantity, adjust it to the actual output — and **Reject Qty**.
+2. The button reads **End & Receive WO**. On submit, the output is immediately received into the **Semi-finished warehouse** and the Work Order is set straight to **Completed**. No batch number is asked (semi-finished items are not batch-tracked), and the WO does **not** appear in Close Production later.
+3. Because the stock is received right away, the finished product's Work Order can consume it the same shift. **Always end the semi-finished Work Order before ending the finished product's Work Order** — the mix must be received before it can be consumed.
+
+If the setting is off (legacy behaviour), semi-finished Work Orders are ended like any other WO and closed later in Close Production.
+
 #### Step 8 — Close Production
 
 When all Work Orders on the line have been ended, click **Close Production**.
@@ -390,6 +400,8 @@ Click **Submit**. The system:
 - Sets Work Order WO-2026-00101 to **Completed**.
 
 > **Tip — Batch code format:** iSnack uses a 7-character code `YYM-DDS`. Letters represent numbers: A=0, B=1 … J=9. Example: `CGB-151` → year 26 (`CG`), month Feb (`B`), day 15, batch sequence 1. So `CGB-151` = 26 February 15, first batch of the day.
+
+> **Semi-finished products in this dialog:** the dialog groups ended Work Orders by product, one section each. Groups for semi-finished items (e.g., corn mix, slurry) show **no Batch No field** — semi-finished items are not batch-tracked — and their **Total Good Qty is pre-filled with the sum of the group's Work Order quantities** (adjust to actual output). If your site has **Close Semi-finished WOs at End WO** enabled, semi-finished Work Orders are already completed at End WO and do not appear here at all: Close Production then contains finished products only.
 
 #### Step 9 — Print FG (pallet) labels
 
@@ -470,6 +482,21 @@ No stock movement is created for a rejected scan. Simply scan the correct item.
 The **over-consumption threshold** controls how much extra you can record beyond the BOM requirement. The default is **150%** — meaning you can consume up to 1.5× the BOM quantity before the system blocks further consumption.
 
 If your process regularly requires more than this, ask your IT administrator or factory manager to adjust the threshold in **Factory Settings → Over-consumption Threshold**. The setting applies per line.
+
+---
+
+### "Why does End WO ask me for Good and Reject quantities on my mix / slurry Work Order?"
+
+Your site has **Factory Settings → Close Semi-finished WOs at End WO** enabled. For Work Orders that produce a semi-finished item, ending the WO also receives the output into the Semi-finished warehouse and completes the Work Order in one step (the button reads **End & Receive WO**). The Good Qty is pre-filled with the planned quantity — just correct it to the actual output and submit. You will not see these Work Orders in Close Production afterwards; that is expected.
+
+---
+
+### "I get a negative stock error when ending the finished product's Work Order"
+
+The finished product's End WO consumes the semi-finished items (mix / slurry) from the Semi-finished warehouse, so those items must already be **in stock** at that moment:
+
+- If **Close Semi-finished WOs at End WO** is enabled: end the semi-finished Work Orders (mix / slurry) *first* — that receives their output into stock — then end the finished product's Work Order.
+- If it is disabled (legacy behaviour): the semi-finished stock only enters the warehouse when the semi-finished Work Orders are closed via **Close Production**. Run Close Production for the mixing/slurry line *before* ending the finished product's Work Order, or ask your administrator to enable the setting.
 
 ---
 
