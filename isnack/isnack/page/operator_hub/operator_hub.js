@@ -2557,12 +2557,35 @@ function init_operator_hub($root) {
       fields.push({ fieldtype: 'Section Break', label: 'Semi-finished usage (slurry / rice mix)' });
       fields.push({ fieldtype: 'HTML', fieldname: 'sfg_help' });
       sfgRows.forEach((row, idx) => {
+        // Availability context from get_end_wo_summary: stock in the SFG
+        // source warehouse, planned requirement, and Work Orders that should
+        // have produced the item but have not put it into stock yet.
+        let desc = row.uom ? `UOM: ${row.uom}` : '';
+        if (row.available_qty !== undefined) {
+          desc += `${desc ? ' · ' : ''}Available: ${row.available_qty} ${row.uom || ''}`
+                + (row.source_warehouse ? ` in ${row.source_warehouse}` : '');
+        }
+        if (row.required_qty) {
+          desc += `${desc ? ' · ' : ''}Planned: ${row.required_qty} ${row.uom || ''}`;
+        }
+        const short = (row.available_qty !== undefined) && (row.required_qty || 0) > row.available_qty;
+        const pendingEnded = (row.pending_wos || []).filter(w => w.ended).map(w => w.name);
+        const pendingOpen = (row.pending_wos || []).filter(w => !w.ended).map(w => w.name);
+        if (short && pendingEnded.length) {
+          desc += `<br><span class="text-danger">WO(s) ${pendingEnded.join(', ')} ended but not closed — run Close Production for their line first.</span>`;
+        }
+        if (short && pendingOpen.length) {
+          desc += `<br><span class="text-danger">WO(s) ${pendingOpen.join(', ')} not ended yet.</span>`;
+        }
+        if (short && !pendingEnded.length && !pendingOpen.length) {
+          desc += `<br><span class="text-danger">Available stock is below the planned requirement.</span>`;
+        }
         fields.push({
           label: `${(row.item_code || '')} — ${(row.item_name || '')}`,
           fieldname: `sfg_${idx}`,
           fieldtype: 'Float',
           default: 0,
-          description: row.uom ? `UOM: ${row.uom}` : '',
+          description: desc,
         });
       });
     }

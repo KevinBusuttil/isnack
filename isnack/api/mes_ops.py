@@ -1793,10 +1793,84 @@ def get_sfg_components_for_wo(work_order: str):
                 "item_code": row.item_code,
                 "item_name": row.get("item_name") or row.item_code,
                 "uom": row.uom or frappe.db.get_value("Item", row.item_code, "stock_uom") or "Nos",
+                "qty": flt(row.qty),
             }
         )
 
-    return {"items": items}
+    return {"items": items, "bom_quantity": flt(bom.quantity) or 1.0}
+
+
+def _sfg_available_qty(item_code: str, warehouse: str) -> float:
+    """Current stock of a semi-finished item in its source warehouse."""
+    if not (item_code and warehouse):
+        return 0.0
+    from erpnext.stock.utils import get_stock_balance
+
+    try:
+        return flt(get_stock_balance(item_code, warehouse))
+    except Exception:
+        return 0.0
+
+
+def _pending_sfg_work_orders(item_code: str) -> list[dict]:
+    """Submitted Work Orders for this item whose output is not yet in stock.
+
+    Ended-but-not-closed WOs (legacy mode strandings) are the usual reason a
+    semi-finished item shows no stock at End WO; still-open WOs mean the item
+    has not been produced yet at all.
+    """
+    rows = frappe.get_all(
+        "Work Order",
+        filters={
+            "production_item": item_code,
+            "docstatus": 1,
+            "status": ["not in", ["Completed", "Stopped", "Closed"]],
+        },
+        fields=["name", "status", "custom_production_ended"],
+        order_by="creation asc",
+    )
+    return [
+        {"name": r.name, "status": r.status, "ended": bool(r.custom_production_ended)}
+        for r in rows
+    ]
+
+
+def _validate_sfg_availability(usage: dict, warehouse: str) -> None:
+    """Guardrail: entered SFG usage must be coverable by actual stock.
+
+    Fails fast with an actionable message (naming the Work Orders that should
+    have produced the missing stock) instead of letting ERPNext's valuation /
+    negative-stock errors reach the operator. ``usage`` maps item_code to the
+    total quantity entered in the End WO dialog.
+    """
+    problems = []
+    for item_code, qty in usage.items():
+        available = _sfg_available_qty(item_code, warehouse)
+        if flt(qty) <= available + QTY_EPSILON:
+            continue
+
+        item_name = frappe.db.get_value("Item", item_code, "item_name") or item_code
+        line = _("{0} ({1}): {2} entered, {3} available in {4}.").format(
+            item_name, item_code, flt(qty, 4), flt(available, 4), warehouse
+        )
+        pending = _pending_sfg_work_orders(item_code)
+        ended = [w["name"] for w in pending if w["ended"]]
+        still_open = [w["name"] for w in pending if not w["ended"]]
+        if ended:
+            line += " " + _(
+                "Work Order(s) {0} are ended but not closed — run Close "
+                "Production for their line first."
+            ).format(", ".join(ended))
+        if still_open:
+            line += " " + _(
+                "Work Order(s) {0} have not been ended yet — end them first."
+            ).format(", ".join(still_open))
+        problems.append(line)
+
+    if problems:
+        frappe.throw(
+            _("Insufficient semi-finished stock:") + "<br>" + "<br>".join(problems)
+        )
 
 def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     """Post Material Consumption for Manufacture for semi-finished items.
@@ -1815,9 +1889,27 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     # Default SFG source – from Factory Settings, or Semi-finished - ISN, or default
     default_sfg_wh = _default_sfg_source(wo.name)
 
+    # Guardrail: verify the entered quantities are actually in stock before
+    # building the Stock Entry, so the operator gets an actionable message
+    # instead of ERPNext's valuation / negative-stock errors.
+    usage: dict = {}
+    for r in rows:
+        item_code = (r.get("item_code") or "").strip()
+        try:
+            qty = float(r.get("qty") or 0)
+        except Exception:
+            qty = 0.0
+        if item_code and qty > 0:
+            usage[item_code] = usage.get(item_code, 0.0) + qty
+    _validate_sfg_availability(usage, default_sfg_wh)
+
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Material Consumption for Manufacture"
+    # stock_entry_type is the mandatory field in v15 (purpose is derived from
+    # it only when set_stock_entry_type() is explicitly called); without this
+    # the insert fails with "Value missing for Stock Entry: Stock Entry Type".
+    se.stock_entry_type = "Material Consumption for Manufacture"
     se.work_order = wo.name
     # ERPNext mandates a non-zero "For Quantity" on Material Consumption for
     # Manufacture: Stock Entry.validate_work_order() throws
@@ -2503,7 +2595,8 @@ def get_end_wo_summary(work_order: str):
     """
     _require_roles(ROLES_OPERATOR)
     summary = _end_wo_consumption_summary(work_order)
-    summary["sfg_items"] = (get_sfg_components_for_wo(work_order) or {}).get("items") or []
+    sfg_components = get_sfg_components_for_wo(work_order) or {}
+    summary["sfg_items"] = sfg_components.get("items") or []
     user_roles = set(frappe.get_roles(frappe.session.user))
     summary["can_override"] = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
 
@@ -2515,6 +2608,20 @@ def get_end_wo_summary(work_order: str):
     summary["is_sfg_wo"] = bool(wo_row) and not _is_fg(wo_row.production_item)
     summary["close_at_end"] = bool(wo_row) and _wo_closes_at_end(wo_row.production_item)
     summary["planned_qty"] = flt(wo_row.qty) if wo_row else 0
+
+    # SFG availability context for the dialog: current stock in the source
+    # warehouse, the planned requirement scaled to this WO, and any Work
+    # Orders that should have produced the item but have not put it in stock
+    # yet (ended-but-not-closed, or still open).
+    if summary["sfg_items"]:
+        sfg_src_wh = _default_sfg_source(work_order)
+        bom_quantity = flt(sfg_components.get("bom_quantity")) or 1.0
+        wo_qty = flt(wo_row.qty) if wo_row else 0.0
+        for row in summary["sfg_items"]:
+            row["source_warehouse"] = sfg_src_wh
+            row["available_qty"] = _sfg_available_qty(row["item_code"], sfg_src_wh)
+            row["required_qty"] = flt(flt(row.get("qty")) * wo_qty / bom_quantity, 4)
+            row["pending_wos"] = _pending_sfg_work_orders(row["item_code"])
     return summary
 
 
