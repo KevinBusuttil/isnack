@@ -1911,6 +1911,13 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     # the insert fails with "Value missing for Stock Entry: Stock Entry Type".
     se.stock_entry_type = "Material Consumption for Manufacture"
     se.work_order = wo.name
+    # v15's StockEntry.validate() zeroes fg_completed_qty whenever from_bom is
+    # unset ("if not self.from_bom: self.fg_completed_qty = 0.0"), so the doc
+    # would save with 0 and submit would then fail validate_work_order with
+    # "For Quantity (Manufactured Qty) is mandatory". Mirror the LOAD-flow
+    # consumption builder, which sets both and submits fine.
+    se.from_bom = 1
+    se.bom_no = wo.bom_no
     # ERPNext mandates a non-zero "For Quantity" on Material Consumption for
     # Manufacture: Stock Entry.validate_work_order() throws
     # "For Quantity (Manufactured Qty) is mandatory" when fg_completed_qty is
