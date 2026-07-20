@@ -1818,6 +1818,10 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
     se.purpose = "Material Consumption for Manufacture"
+    # stock_entry_type is the mandatory field in v15 (purpose is derived from
+    # it only when set_stock_entry_type() is explicitly called); without this
+    # the insert fails with "Value missing for Stock Entry: Stock Entry Type".
+    se.stock_entry_type = "Material Consumption for Manufacture"
     se.work_order = wo.name
     # ERPNext mandates a non-zero "For Quantity" on Material Consumption for
     # Manufacture: Stock Entry.validate_work_order() throws
