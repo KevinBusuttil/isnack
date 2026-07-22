@@ -927,7 +927,10 @@ def _parse_gs1_or_basic(code: str) -> dict:
         if item: out["item_code"] = item
 
     if "item_code" not in out:
-        parts = s.split("|")
+        # Basic "ITEM|BATCH|QTY" fallback. Some USB scanners on a different
+        # keyboard layout emit "~" instead of "|", so treat "~" as an alias for
+        # "|" here (the canonical printed payload stays pipe-separated).
+        parts = s.replace("~", "|").split("|")
         if len(parts) >= 1: out["item_code"] = parts[0]
         if len(parts) >= 2: out["batch_no"] = _process_batch_spaces(parts[1])
         if len(parts) >= 3:
