@@ -14,6 +14,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _process_batch_spaces,
 )
 from isnack.utils.printing import get_label_printer
+from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
 
 # ============================================================
 # Factory Settings helpers (Single doctype)
@@ -894,49 +895,6 @@ def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
     if not exists:
         return False, _("Item {0} not in BOM {1}").format(item_code, bom)
     return True, "OK"
-
-def _parse_gs1_or_basic(code: str) -> dict:
-    out: dict = {}
-    s = code or ""
-    if s.startswith(("]d2", "]C1", "]Q3")):
-        s = s[3:]
-
-    def grab(ai, ln=None):
-        idx = s.find(ai)
-        if idx < 0:
-            return None
-        val = s[idx + len(ai):]
-        if ln:
-            return val[:ln]
-        end = val.find("(")
-        return val if end < 0 else val[:end]
-
-    gtin = grab("(01)", 14)
-    if gtin: out["gtin"] = gtin
-    batch = grab("(10)")
-    if batch: out["batch_no"] = _process_batch_spaces(batch)
-    exp = grab("(17)", 6)
-    if exp: out["expiry"] = exp
-    qty = grab("(30)") or grab("(37)")
-    if qty:
-        try: out["qty"] = float(qty)
-        except Exception: pass
-
-    if "gtin" in out:
-        item = frappe.db.get_value("Item Barcode", {"barcode": out["gtin"]}, "parent")
-        if item: out["item_code"] = item
-
-    if "item_code" not in out:
-        # Basic "ITEM|BATCH|QTY" fallback. Some USB scanners on a different
-        # keyboard layout emit "~" instead of "|", so treat "~" as an alias for
-        # "|" here (the canonical printed payload stays pipe-separated).
-        parts = s.replace("~", "|").split("|")
-        if len(parts) >= 1: out["item_code"] = parts[0]
-        if len(parts) >= 2: out["batch_no"] = _process_batch_spaces(parts[1])
-        if len(parts) >= 3:
-            try: out["qty"] = float(parts[2])
-            except Exception: pass
-    return out
 
 def _scan_cache_key(work_order: str, raw_code: str) -> str:
     h = hashlib.sha1((work_order + "|" + raw_code).encode("utf-8")).hexdigest()
