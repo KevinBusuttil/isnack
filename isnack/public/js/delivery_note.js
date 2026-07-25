@@ -9,6 +9,10 @@
 // the number of row-UOM units contained in one selected Pallet Type UOM.
 
 frappe.ui.form.on("Delivery Note", {
+    setup(frm) {
+        isnack_dn_install_label_scanner(frm);
+    },
+
     onload(frm) {
         isnack_dn_load_allowed_pallet_uoms(frm);
     },
@@ -138,6 +142,181 @@ frappe.ui.form.on("Pallet Detail", {
         }
     },
 });
+
+// ---------------------------------------------------------------------------
+// Label scanning: teach the standard Scan Barcode field to read the
+// ITEM|BATCH|QTY QR labels printed from the Operator Hub.
+//
+// The BarcodeScanner instance created by erpnext.TransactionController.setup
+// is replaced with a subclass pointing at the isnack scan endpoint. While the
+// feature is disabled in Factory Settings that endpoint proxies straight to
+// erpnext.stock.utils.scan_barcode, so scanning behaves exactly as stock
+// ERPNext; when a label is recognised the response carries isnack_* extras
+// that drive the behaviours below (label-qty increments, a duplicate-label
+// guard, and the restriction to items already on the Delivery Note).
+// ---------------------------------------------------------------------------
+
+const ISNACK_DN_SCAN_API = "isnack.api.delivery_note_scan.scan_delivery_note_code";
+
+let isnack_dn_scanner_cls = null;
+
+function isnack_dn_get_scanner_class() {
+    if (isnack_dn_scanner_cls) {
+        return isnack_dn_scanner_cls;
+    }
+    if (!window.erpnext || !erpnext.utils || !erpnext.utils.BarcodeScanner) {
+        return null;
+    }
+
+    isnack_dn_scanner_cls = class IsnackDNLabelScanner extends erpnext.utils.BarcodeScanner {
+        constructor(opts) {
+            super(
+                Object.assign(
+                    {
+                        scan_api: ISNACK_DN_SCAN_API,
+                        play_success_sound: "submit",
+                        play_fail_sound: "error",
+                    },
+                    opts
+                )
+            );
+            // Raw payloads already applied on this form, to catch the same
+            // physical label being scanned twice: every label is one carton
+            // or pallet, so a repeat is almost always a double count.
+            this.isnack_seen_labels = {};
+        }
+
+        process_scan() {
+            this.isnack_last_input = (this.scan_barcode_field.value || "").trim();
+            return super.process_scan();
+        }
+
+        update_table(data) {
+            this.isnack_scan = null;
+            if (!data || !data.isnack_label_scan) {
+                return super.update_table(data);
+            }
+            this.isnack_scan = {
+                qty: flt(data.isnack_scanned_qty),
+                qty_mode: data.isnack_qty_mode || "Increment by Label Qty",
+                stock_uom: data.isnack_stock_uom || null,
+            };
+
+            if (
+                cint(data.isnack_restrict_to_existing_items) &&
+                !(this.frm.doc[this.items_table_name] || []).some(
+                    (r) => r.item_code === data.item_code
+                )
+            ) {
+                this.show_alert(
+                    __("Item {0} is not on this Delivery Note.", [data.item_code]),
+                    "red"
+                );
+                this.clean_up();
+                return Promise.reject();
+            }
+
+            const raw = this.isnack_last_input;
+            const apply = () =>
+                super.update_table(data).then((row) => {
+                    if (raw) {
+                        this.isnack_seen_labels[raw] =
+                            (this.isnack_seen_labels[raw] || 0) + 1;
+                    }
+                    if (data.isnack_stock_warning) {
+                        this.show_alert(data.isnack_stock_warning, "orange", 6);
+                    }
+                    return row;
+                });
+
+            if (raw && this.isnack_seen_labels[raw]) {
+                return new Promise((resolve, reject) => {
+                    frappe.confirm(
+                        __(
+                            "This exact label ({0}) was already scanned on this Delivery Note. Apply it again?",
+                            [frappe.utils.escape_html(raw)]
+                        ),
+                        () => apply().then(resolve, reject),
+                        () => {
+                            this.clean_up();
+                            reject();
+                        }
+                    );
+                });
+            }
+            return apply();
+        }
+
+        set_item(row, item_code, barcode, batch_no, serial_no) {
+            const scan = this.isnack_scan;
+            if (!scan || scan.qty_mode === "Increment by 1") {
+                return super.set_item(row, item_code, barcode, batch_no, serial_no);
+            }
+
+            return new Promise((resolve) => {
+                const is_existing_row = !!row.item_code;
+
+                // Label quantities are printed in the item's stock UOM;
+                // convert when an existing row sells in another UOM.
+                let qty = scan.qty;
+                if (
+                    qty &&
+                    is_existing_row &&
+                    scan.stock_uom &&
+                    row[this.uom_field] &&
+                    row[this.uom_field] !== scan.stock_uom &&
+                    flt(row.conversion_factor)
+                ) {
+                    qty = flt(
+                        qty / flt(row.conversion_factor),
+                        precision(this.qty_field, row)
+                    );
+                }
+
+                frappe.flags.trigger_from_barcode_scanner = true;
+                const values = { item_code: item_code, use_serial_batch_fields: 1.0 };
+
+                if (scan.qty_mode === "Assign Batch Only" && is_existing_row) {
+                    // The batch lands via set_batch_no; the quantity of an
+                    // already-present row is deliberately left alone.
+                    frappe.model
+                        .set_value(row.doctype, row.name, values)
+                        .then(() => resolve(0));
+                    return;
+                }
+
+                if (!qty) {
+                    qty = 1;
+                }
+                values[this.qty_field] = flt(row[this.qty_field] || 0) + qty;
+                frappe.model
+                    .set_value(row.doctype, row.name, values)
+                    .then(() => resolve(qty));
+            });
+        }
+
+        show_scan_message(idx, is_existing_row, qty) {
+            const scan = this.isnack_scan;
+            if (scan && scan.qty_mode === "Assign Batch Only" && is_existing_row) {
+                this.show_alert(__("Row #{0}: Batch assigned", [idx]), "green");
+                return;
+            }
+            super.show_scan_message(idx, is_existing_row, qty);
+        }
+    };
+
+    return isnack_dn_scanner_cls;
+}
+
+function isnack_dn_install_label_scanner(frm) {
+    const cls = isnack_dn_get_scanner_class();
+    // The controller's setup() has already created the stock scanner by the
+    // time this handler runs; without a replacement the form simply keeps
+    // stock scanning behaviour.
+    if (cls && frm.cscript) {
+        frm.cscript.barcode_scanner = new cls({ frm: frm });
+    }
+}
 
 // Load the allowed pallet UOMs from Factory Settings and cache them on the form.
 function isnack_dn_load_allowed_pallet_uoms(frm) {

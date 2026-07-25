@@ -12,6 +12,10 @@
   "scan_dup_ttl_sec",
   "max_active_operators",
   "material_overconsumption_threshold",
+  "dn_scan_column_break",
+  "dn_scan_enabled",
+  "dn_scan_qty_mode",
+  "dn_scan_restrict_to_existing_items",
   "close_production_section",
   "close_production_validation_mode",
   "close_production_min_wo_count",
@@ -89,6 +93,35 @@
    "fieldname": "material_overconsumption_threshold",
    "fieldtype": "Percent",
    "label": "Material Over-consumption Threshold"
+  },
+  {
+   "fieldname": "dn_scan_column_break",
+   "fieldtype": "Column Break",
+   "label": "Delivery Note Label Scanning"
+  },
+  {
+   "default": "0",
+   "description": "Let the Scan Barcode field on Delivery Notes read the ITEM|BATCH|QTY QR labels printed from the Operator Hub and set item batches from them.",
+   "fieldname": "dn_scan_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Delivery Note Label Scanning"
+  },
+  {
+   "default": "Increment by Label Qty",
+   "depends_on": "dn_scan_enabled",
+   "description": "How a scanned label changes the matching item row. \"Increment by Label Qty\" adds the quantity printed on the label; \"Increment by 1\" behaves like a standard barcode scan; \"Assign Batch Only\" never changes the quantity of existing rows.",
+   "fieldname": "dn_scan_qty_mode",
+   "fieldtype": "Select",
+   "label": "Delivery Note Scan Quantity Mode",
+   "options": "Increment by Label Qty\nIncrement by 1\nAssign Batch Only"
+  },
+  {
+   "default": "1",
+   "depends_on": "dn_scan_enabled",
+   "description": "Reject scanned labels for items that are not already on the Delivery Note instead of adding a new row.",
+   "fieldname": "dn_scan_restrict_to_existing_items",
+   "fieldtype": "Check",
+   "label": "Restrict Scans to Items on the Delivery Note"
   },
   {
    "fieldname": "close_production_section",
@@ -282,7 +315,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-28 00:00:00.000000",
+ "modified": "2026-07-24 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory Settings",
