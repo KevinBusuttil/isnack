@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from isnack.overrides.packing_slip import CustomPackingSlip
+from isnack.overrides.packing_slip import CustomPackingSlip, recalculate_stored_weights
 
 
 # Item master weight values keyed by item_code, mirroring the synced
@@ -104,6 +104,69 @@ class TestPackingSlipWeights(unittest.TestCase):
         self.assertEqual(slip.items[1].net_weight, 25.0)
         self.assertEqual(slip.net_weight_pkg, 210.00 + 675.00)
         self.assertEqual(slip.gross_weight_pkg, 292.50 + 675.00)
+
+
+class TestRecalculateStoredWeights(unittest.TestCase):
+    """Backfill for slips already submitted when the setting was introduced."""
+
+    def setUp(self):
+        # one slip: 250 cartons of goods plus 27 pallets, as saved before the rule
+        self.rows = [
+            SimpleNamespace(name="row-fg", item_code="FG10002", qty=250, net_weight=0.840),
+            SimpleNamespace(name="row-pm", item_code="PM40020", qty=27, net_weight=25.0),
+        ]
+        self.stored = {"net_weight_pkg": 885.00}
+        self.writes = []
+
+    def _get_all(self, doctype, **kwargs):
+        if doctype == "Packing Slip":
+            return ["MAT-PAC-2026-00013"]
+        return self.rows
+
+    def _get_value(self, doctype, name, field):
+        if doctype == "Item":
+            return ITEM_WEIGHTS[name]["item_group"]
+        return self.stored[field]
+
+    def _set_value(self, doctype, name, field, value, **kwargs):
+        self.writes.append((doctype, name, field, value))
+        if doctype == "Packing Slip":
+            self.stored[field] = value
+        else:
+            for row in self.rows:
+                if row.name == name:
+                    setattr(row, field, value)
+
+    def _run(self, packaging_groups={"Packaging Materials"}):
+        with patch("isnack.overrides.packing_slip.get_packaging_item_groups",
+                   return_value=set(packaging_groups)), \
+             patch("isnack.overrides.packing_slip.frappe.get_all", self._get_all), \
+             patch("isnack.overrides.packing_slip.frappe.db.get_value", self._get_value), \
+             patch("isnack.overrides.packing_slip.frappe.db.set_value", self._set_value), \
+             patch("isnack.overrides.packing_slip.frappe.db.commit", lambda: None):
+            return recalculate_stored_weights()
+
+    def test_backfill_zeroes_the_packaging_row_and_the_total(self):
+        changed = self._run()
+
+        self.assertEqual(changed, ["MAT-PAC-2026-00013"])
+        self.assertEqual(self.stored["net_weight_pkg"], 210.00)
+        self.assertEqual(self.rows[1].net_weight, 0)
+        # the goods row is left alone
+        self.assertEqual(self.rows[0].net_weight, 0.840)
+        self.assertNotIn("gross_weight_pkg", [w[2] for w in self.writes])
+
+    def test_backfill_is_idempotent(self):
+        self._run()
+        writes_after_first = len(self.writes)
+
+        self.assertEqual(self._run(), [])
+        self.assertEqual(len(self.writes), writes_after_first)
+
+    def test_backfill_noops_when_no_groups_configured(self):
+        self.assertEqual(self._run(packaging_groups=set()), [])
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.stored["net_weight_pkg"], 885.00)
 
 
 if __name__ == "__main__":

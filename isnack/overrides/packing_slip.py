@@ -88,3 +88,84 @@ class CustomPackingSlip(PackingSlip):
 
         self.net_weight_pkg = round(net_weight_pkg, 2)
         self.gross_weight_pkg = round(gross_weight_pkg, 2)
+
+
+def recalculate_stored_weights(names=None, commit=True):
+    """Apply the packaging Net Weight exclusion to already-saved Packing Slips.
+
+    ``calculate_net_total_pkg`` only runs while a document is being saved, so a
+    slip saved before an Item Group was listed under General Settings → Packing
+    keeps its old figures when reprinted. Amending is not a way out either:
+    slips here are auto-created and submitted from ``Delivery Note``
+    ``before_submit``, and ERPNext's ``validate_delivery_note`` refuses to
+    validate a Packing Slip whose Delivery Note has left Draft. Writing the
+    stored fields directly is the only route.
+
+    Only Net Weight moves. Packaging still counts towards Gross Weight, so
+    ``gross_weight_pkg`` is deliberately left alone.
+
+    Safe to re-run -- slips already correct are skipped -- so it is also the
+    way to apply a later change to the configured groups::
+
+        bench --site <site> execute \\
+            isnack.overrides.packing_slip.recalculate_stored_weights
+
+    Returns the names of the slips that changed.
+    """
+    packaging_groups = get_packaging_item_groups()
+    if not packaging_groups:
+        return []
+
+    if isinstance(names, str):
+        names = [names]
+
+    filters = {"docstatus": ["<", 2]}
+    if names:
+        filters["name"] = ["in", names]
+
+    item_groups: dict[str, str] = {}
+    changed = []
+
+    for slip in frappe.get_all("Packing Slip", filters=filters, pluck="name"):
+        rows = frappe.get_all(
+            "Packing Slip Item",
+            filters={"parent": slip, "parenttype": "Packing Slip"},
+            fields=["name", "item_code", "qty", "net_weight"],
+            order_by="idx asc",
+        )
+
+        net_weight_pkg = 0
+        to_zero = []
+        for row in rows:
+            if row.item_code not in item_groups:
+                item_groups[row.item_code] = frappe.db.get_value(
+                    "Item", row.item_code, "item_group"
+                )
+
+            net_weight = flt(row.net_weight)
+            if item_groups[row.item_code] in packaging_groups and net_weight:
+                net_weight = 0
+                to_zero.append(row.name)
+
+            net_weight_pkg += net_weight * flt(row.qty)
+
+        net_weight_pkg = round(net_weight_pkg, 2)
+        stored = flt(frappe.db.get_value("Packing Slip", slip, "net_weight_pkg"))
+        if not to_zero and net_weight_pkg == stored:
+            continue
+
+        # update_modified=False: these are submitted documents being corrected,
+        # not edited, and the timestamp should keep pointing at the real edit.
+        for row_name in to_zero:
+            frappe.db.set_value(
+                "Packing Slip Item", row_name, "net_weight", 0, update_modified=False
+            )
+        frappe.db.set_value(
+            "Packing Slip", slip, "net_weight_pkg", net_weight_pkg, update_modified=False
+        )
+        changed.append(slip)
+
+    if commit:
+        frappe.db.commit()
+
+    return changed
