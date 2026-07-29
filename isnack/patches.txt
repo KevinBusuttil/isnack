@@ -12,3 +12,4 @@ isnack.patches.v1_0.setup_maintenance_roles
 isnack.patches.v1_0.add_maintenance_custom_fields
 isnack.patches.v1_0.seed_maintenance_escalation_rules
 isnack.patches.v1_0.backfill_operational_status
+isnack.patches.v1_0.recalculate_packing_slip_net_weights
