@@ -248,12 +248,18 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
 
         pallet_type = row.get("custom_pallet_type")
         qty = flt(row.get("qty"))
+        before = len(allocations)
         full = int(pallet_qty + 1e-9)
         fraction = pallet_qty - full
-        if fraction < _FRACTION_SNAP:
-            fraction = 0.0
-        elif fraction > 1 - _FRACTION_SNAP:
+        if fraction > 1 - _FRACTION_SNAP:
             full += 1
+            fraction = 0.0
+        elif fraction < _FRACTION_SNAP and full:
+            # Snapping a small remainder away is only safe when there are full
+            # pallets to absorb it: per_pallet is derived from the effective
+            # pallet count below, so those pallets just carry slightly more.
+            # With no full pallet the remainder IS the row -- zeroing it would
+            # make the row vanish from the manifest without a trace.
             fraction = 0.0
 
         # Units per full pallet, derived from the effective pallet quantity so
@@ -274,6 +280,25 @@ def _build_pallet_suggestion(rows: list[dict]) -> dict:
                 shared.append(slot)
             slot[1] += fraction
             _allocate(slot[0], row, remainder_qty)
+
+        # Every unit of a palletised row has to land on some pallet. A shortfall
+        # here means the manifest under-reports the shipment, which is invisible
+        # on the built table itself -- report it instead of losing it quietly.
+        placed = sum(allocation["qty"] for allocation in allocations[before:])
+        if abs(placed - qty) > 0.001:
+            batch = row.get("batch_no")
+            unassigned.append(
+                {
+                    "idx": row.get("idx"),
+                    "item_code": row.get("item_code"),
+                    "reason": (
+                        f"only {flt(placed, 4)} of {flt(qty, 4)} "
+                        f"{row.get('uom') or ''}".strip()
+                        + (f" (batch {batch})" if batch else "")
+                        + " could be placed on a pallet"
+                    ),
+                }
+            )
 
     allocations.sort(key=lambda a: a["pallet_no"])
     return {"allocations": allocations, "unassigned": unassigned}
