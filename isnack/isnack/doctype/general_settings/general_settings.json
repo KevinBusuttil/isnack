@@ -6,7 +6,9 @@
  "engine": "InnoDB",
  "field_order": [
   "sales_section",
-  "allowed_sales_item_groups"
+  "allowed_sales_item_groups",
+  "packing_section",
+  "packaging_item_groups"
  ],
  "fields": [
   {
@@ -20,13 +22,25 @@
    "fieldtype": "Table MultiSelect",
    "label": "Allowed Sales Item Groups",
    "options": "Allowed Sales Item Group"
+  },
+  {
+   "fieldname": "packing_section",
+   "fieldtype": "Section Break",
+   "label": "Packing"
+  },
+  {
+   "description": "Item Groups whose items are packaging (pallets, cartons, wrap). On a Packing Slip these contribute nothing to Net Weight and their full weight to Gross Weight, matching the customs meaning of net weight. Child groups are included. Leave empty to count every item towards Net Weight.",
+   "fieldname": "packaging_item_groups",
+   "fieldtype": "Table MultiSelect",
+   "label": "Packaging Item Groups",
+   "options": "Packaging Item Group"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-02 00:00:00.000000",
+ "modified": "2026-07-29 09:32:05.792020",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "General Settings",
