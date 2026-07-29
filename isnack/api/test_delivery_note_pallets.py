@@ -268,6 +268,56 @@ class TestBuildPalletSuggestion(unittest.TestCase):
         self.assertEqual(len(allocations), 3)
         self.assertAlmostEqual(sum(a["qty"] for a in allocations), 299.0, places=2)
 
+    def test_small_overflow_is_absorbed_by_the_full_pallets(self):
+        # 3.01 pallets -> 3 pallets carrying a little more each, total intact.
+        result = _build_pallet_suggestion([self._row("a", 301)])
+        allocations = result["allocations"]
+        self.assertEqual(len(allocations), 3)
+        self.assertAlmostEqual(sum(a["qty"] for a in allocations), 301.0, places=2)
+        self.assertEqual(result["unassigned"], [])
+
+    def test_quantity_below_the_snap_threshold_still_gets_a_pallet(self):
+        # 1 of 66 per pallet is 0.015 pallets, under _FRACTION_SNAP. With no
+        # full pallet to absorb it there is nothing to snap it into, so it has
+        # to be placed rather than dropped.
+        result = _build_pallet_suggestion(
+            [self._row("a", 1, factor=66, pallet_type="EUR 1 Pallet x 66")]
+        )
+        self.assertEqual(
+            [(a["pallet_no"], a["qty"]) for a in result["allocations"]], [(1, 1.0)]
+        )
+        self.assertEqual(result["unassigned"], [])
+
+    def test_bundle_batches_all_reach_the_manifest(self):
+        """MAT-DN-2026-00016: FG10003 132 Carton split 123/8/1 over 3 batches.
+
+        The 1-carton batch is 0.015 of a pallet and used to be snapped away,
+        leaving 131 of 132 cartons on pallets with no warning.
+        """
+        rows = [
+            self._row("a", 123, factor=66, pallet_type="EUR 1 Pallet x 66",
+                      item_code="FG10003", batch_no="JBJ-777"),
+            self._row("b", 8, factor=66, pallet_type="EUR 1 Pallet x 66",
+                      item_code="FG10003", batch_no="AAA-075"),
+            self._row("c", 1, factor=66, pallet_type="EUR 1 Pallet x 66",
+                      item_code="FG10003", batch_no="AAA-008"),
+        ]
+        result = _build_pallet_suggestion(rows)
+        allocations = result["allocations"]
+
+        self.assertEqual(sum(a["qty"] for a in allocations), 132.0)
+        self.assertEqual(
+            sorted({a["batch_no"] for a in allocations}),
+            ["AAA-008", "AAA-075", "JBJ-777"],
+        )
+        # the three remainders fill one shared pallet exactly: 57 + 8 + 1
+        by_pallet = {}
+        for a in allocations:
+            by_pallet.setdefault(a["pallet_no"], 0)
+            by_pallet[a["pallet_no"]] += a["qty"]
+        self.assertEqual(sorted(by_pallet.values()), [66.0, 66.0])
+        self.assertEqual(result["unassigned"], [])
+
     def test_manual_override_splits_evenly(self):
         row = self._row(
             "a", 500, custom_pallet_qty_manual=1, custom_pallet_qty=2.0
