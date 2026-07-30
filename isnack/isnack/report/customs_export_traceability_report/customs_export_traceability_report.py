@@ -4,6 +4,8 @@
 import base64
 import json
 import os
+import re
+from html import unescape
 from io import BytesIO
 
 import frappe
@@ -792,6 +794,16 @@ def _build_filter_summary(filters):
 	return " \u2502 ".join(parts) if parts else "No additional filters applied"
 
 
+def _format_address_display(addr_html):
+	"""Flatten an HTML address display (<br>-separated lines) to one comma-separated line."""
+	if not addr_html:
+		return ""
+	text = re.sub(r"<br\s*/?>", "\n", str(addr_html), flags=re.IGNORECASE)
+	text = unescape(frappe.utils.strip_html(text))
+	parts = [p.strip(" ,") for p in text.splitlines()]
+	return ", ".join(p for p in parts if p)
+
+
 # ---------------------------------------------------------------------------
 # Print HTML (whitelisted method)
 # ---------------------------------------------------------------------------
@@ -930,7 +942,7 @@ def get_print_html(filters):
 			"territory": _v(si_extra.get("territory")),
 			"customs_export_declaration_no": _v(si_extra.get("custom_customs_document_no")),
 			"remarks": _v(si_extra.get("remarks")),
-			"customer_address": _v(si_extra.get("address_display") or si_extra.get("customer_address")),
+			"customer_address": _v(_format_address_display(si_extra.get("address_display")) or si_extra.get("customer_address")),
 			"company_address": _v(si_extra.get("company_address_display")),
 			"total_amount": _v(si_extra.get("rounded_total") or si_extra.get("grand_total")),
 			"total_net_weight": _num3(_tot_net) if _tot_net else "",
