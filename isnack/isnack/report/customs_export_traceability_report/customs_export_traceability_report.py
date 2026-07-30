@@ -70,6 +70,7 @@ def get_columns():
 		{"label": _("RM Description"), "fieldname": "rm_description", "fieldtype": "Data", "width": 180},
 		{"label": _("RM UOM"), "fieldname": "rm_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Consumed Qty"), "fieldname": "consumed_qty", "fieldtype": "Float", "width": 100},
+		{"label": _("Consumed Cost"), "fieldname": "consumed_cost", "fieldtype": "Currency", "options": "Company:company:default_currency", "width": 110},
 		{"label": _("RM Batch No"), "fieldname": "rm_batch_no", "fieldtype": "Link", "options": "Batch", "width": 130},
 		# D. Purchase / customs traceability
 		{"label": _("Purchase Receipt"), "fieldname": "purchase_receipt", "fieldtype": "Link", "options": "Purchase Receipt", "width": 150},
@@ -201,6 +202,7 @@ def get_data(filters):
 						rm_description=rm.get("description"),
 						rm_uom=rm.get("stock_uom"),
 						consumed_qty=rm.get("qty"),
+						consumed_cost=rm.get("consumed_cost"),
 						rm_batch_no=rm.get("batch_no"),
 						# D
 						purchase_receipt=pr_name,
@@ -470,7 +472,7 @@ def _fetch_rm_consumption(work_orders, filters):
 	Return {work_order: [rm_dict]}
 
 	Each rm_dict has: item_code, item_name, description, stock_uom, qty,
-	                  batch_no, purchase_receipt
+	                  consumed_cost, batch_no, purchase_receipt
 	"""
 	if not work_orders:
 		return {}
@@ -488,6 +490,7 @@ def _fetch_rm_consumption(work_orders, filters):
 			sed.description,
 			sed.stock_uom,
 			sed.qty,
+			sed.basic_rate,
 			sed.batch_no,
 			sed.serial_and_batch_bundle,
 			sed.reference_purchase_receipt
@@ -561,6 +564,11 @@ def _fetch_rm_consumption(work_orders, filters):
 				"batch_no": None,
 				"purchase_receipt": r.reference_purchase_receipt or None,
 			})
+
+		# Consumed cost follows the consumed qty at the stock entry's valuation
+		# rate, so bundle-split rows carry their proportional share of the cost.
+		for rm in rm_dicts:
+			rm["consumed_cost"] = frappe.utils.flt(rm["qty"]) * frappe.utils.flt(r.basic_rate)
 
 		# Fallback: if no purchase_receipt from reference_purchase_receipt, try via batch
 		for rm in rm_dicts:
