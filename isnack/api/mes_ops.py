@@ -580,6 +580,64 @@ ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
 QTY_EPSILON = 0.0001
 
 
+def _wo_allowed_output_qty(wo_qty: float) -> float:
+    """The largest Manufacture quantity ERPNext accepts for a Work Order.
+
+    Mirrors ``StockEntry.validate_finished_goods`` and
+    ``WorkOrder.update_work_order_qty`` (version-15) expression for expression,
+    so the value we produce compares equal — not merely close — to the ceiling
+    those two checks compute.
+    """
+    allowance_percentage = flt(
+        frappe.db.get_single_value(
+            "Manufacturing Settings", "overproduction_percentage_for_work_order"
+        )
+    )
+    return flt(wo_qty) + ((allowance_percentage / 100) * flt(wo_qty))
+
+
+def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> float:
+    """Snap a declared good quantity down to the Work Order's output ceiling
+    when it only exceeds it by a rounding artefact.
+
+    A Work Order created from a split Production Plan carries a repeating
+    quantity (320/3 = 106.666666667). The Operator Hub prefills the End WO
+    "Good Qty" field — and Close Production splits its total — through Frappe
+    Float handling, which rounds to the system float precision, so the operator
+    submits 106.667 for a 106.666666667 Work Order. With
+    ``overproduction_percentage_for_work_order = 0`` that is over the ceiling
+    and ERPNext rejects the Manufacture entry with "For quantity 106.667 should
+    not be greater than allowed quantity 106.666666667".
+
+    Excess within one unit of the qty precision is that rounding artefact and is
+    snapped to the ceiling. Anything larger is a real over-declaration: it is
+    refused here with a message naming the quantities and the setting that
+    governs them, instead of surfacing ERPNext's bare comparison.
+    """
+    good = flt(good)
+    allowed = _wo_allowed_output_qty(wo_qty)
+    if good <= allowed:
+        return good
+
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    if (good - allowed) <= 10 ** -precision:
+        return allowed
+
+    frappe.throw(
+        _(
+            "Good quantity {0} exceeds what Work Order {1} allows ({2}). The "
+            "Work Order is for {3}; raise Manufacturing Settings → "
+            "Overproduction Percentage For Work Order to receive more than "
+            "that."
+        ).format(
+            flt(good, precision),
+            wo_name,
+            flt(allowed, precision),
+            flt(wo_qty, precision),
+        )
+    )
+
+
 # ============================================================
 # Work Order locking + Stock Entry source-of-truth helpers
 # ------------------------------------------------------------
@@ -2690,7 +2748,11 @@ def end_work_order(work_order: str, sfg_usage: str = None,
     # consumption precedes the receipt and trips ERPNext's negative-stock
     # validation). Close Production then only ever sees finished goods.
     if _wo_closes_at_end(wo.production_item):
-        good = flt(good_qty)
+        # The dialog's Good Qty is a Frappe Float, so a Work Order with a
+        # repeating qty (a split Production Plan) comes back rounded up past
+        # what ERPNext will receive. Clamp before the validations below so the
+        # audit comment records the quantity actually booked.
+        good = _clamp_good_qty_to_allowance(wo.name, flt(wo.qty), flt(good_qty))
         reject = flt(reject_qty or 0)
         if good <= 0:
             frappe.throw(_("Good quantity is required to end this semi-finished Work Order"))
@@ -3478,6 +3540,13 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                     "closing production with rejects."
                 ).format(line, wo_name))
 
+        # Single choke point for the declared output: both callers (End WO in
+        # structural mode, and Close Production's proportional split) can hand
+        # us a quantity a rounding step above the Work Order qty, which ERPNext
+        # rejects outright. Clamp once, here, and use the clamped value for the
+        # entry, the BOM scaling and the audit comment alike.
+        good_qty = _clamp_good_qty_to_allowance(wo_name, flt(wo.qty), split["good"])
+
         # Create Manufacture Stock Entry
         se = frappe.new_doc("Stock Entry")
         se.company = wo.company
@@ -3485,14 +3554,14 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         se.stock_entry_type = "Manufacture"
         se.work_order = wo_name
         se.to_warehouse = fg_wh
-        se.fg_completed_qty = split["good"]
+        se.fg_completed_qty = good_qty
         se.from_bom = 1
         se.bom_no = wo.bom_no
 
         # Add finished item
         finished_item = {
             "item_code": wo.production_item,
-            "qty": split["good"],
+            "qty": good_qty,
             "uom": uom,
             "is_finished_item": 1,
             "t_warehouse": fg_wh,
@@ -3512,7 +3581,7 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
 
         # Scale BOM to total throughput (good + reject) so the inputs that went
         # into rejected units are also consumed; otherwise they remain in WIP.
-        total_production_qty = split["good"] + split["reject"]
+        total_production_qty = good_qty + split["reject"]
 
         # Packaging items are handled exclusively by the dedicated packaging
         # loop below (which uses the qty entered at Close Production and the
@@ -3631,7 +3700,7 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 scrap_row["use_serial_batch_fields"] = 1
             se.append("items", scrap_row)
 
-        _apply_pre_consumed_cost_to_finished_item(se, wo_name, split["good"])
+        _apply_pre_consumed_cost_to_finished_item(se, wo_name, good_qty)
 
         se.flags.ignore_permissions = True
         se.insert()
@@ -3653,7 +3722,7 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
 
         wo.reload()
         wo.add_comment("Info", _("Production closed: Good={0:.2f}, Rejects={1:.2f}").format(
-            split["good"], split["reject"]
+            good_qty, split["reject"]
         ))
         wo.flags.ignore_permissions = True
         wo.save()
