@@ -32,6 +32,9 @@ from isnack.api.mes_ops import (
 SPLIT_WO_QTY = 106.666666667
 # What a Frappe Float field returns for that quantity at precision 3.
 ROUNDED_UP_QTY = 106.667
+# What the clamp must return: the largest quantity that is simultaneously at or
+# below the Work Order ceiling AND equal to its own value at precision 3.
+FLOORED_WO_QTY = 106.666
 
 
 class FakeStockEntry:
@@ -65,11 +68,14 @@ def _wo(qty=SPLIT_WO_QTY):
     return wo
 
 
-def _single_value(allowance=0):
-    """frappe.db.get_single_value stub: overproduction allowance + warehouse."""
+def _single_value(allowance=0, material_consumption=1):
+    """frappe.db.get_single_value stub: overproduction allowance, the
+    material-consumption precondition, and the default warehouse."""
 
     def _get(doctype, fieldname, *a, **k):
         if doctype == "Manufacturing Settings":
+            if fieldname == "material_consumption":
+                return material_consumption
             return allowance
         return "Semi-finished - ISN"
 
@@ -105,21 +111,39 @@ class TestClampGoodQtyToAllowance(unittest.TestCase):
              patch.object(mes_ops.frappe, "get_precision", return_value=precision):
             return _clamp_good_qty_to_allowance("MFG-WO-2026-00055", wo_qty, good)
 
-    def test_rounded_up_prefill_is_snapped_to_the_ceiling(self):
+    def test_rounded_up_prefill_is_snapped_below_the_ceiling(self):
         """The reported failure: 106.667 submitted for a 106.666666667 WO."""
-        self.assertEqual(self._clamp(ROUNDED_UP_QTY), SPLIT_WO_QTY)
+        self.assertEqual(self._clamp(ROUNDED_UP_QTY), FLOORED_WO_QTY)
 
-    def test_snapped_value_passes_erpnexts_own_comparison(self):
+    def test_clamped_value_passes_BOTH_erpnext_checks(self):
+        """The two checks pull in opposite directions and only a quantised value
+        satisfies both — this is what makes the raw ceiling wrong."""
         clamped = self._clamp(ROUNDED_UP_QTY)
-        # StockEntry.validate_finished_goods: `if fg_completed_qty > allowed_qty`
+
+        # 1. validate_finished_goods: `if fg_completed_qty > allowed_qty: throw`
         allowed_qty = SPLIT_WO_QTY + ((0 / 100) * SPLIT_WO_QTY)
         self.assertFalse(clamped > allowed_qty)
+
+        # 2. validate_fg_completed_qty: `if fg_completed_qty != flt(total, 3)`
+        #    where total = flt(sum(finished-item qtys), 3). _close_single_wo puts
+        #    the same value on both, so the check reduces to self-consistency
+        #    under rounding — which the raw 106.666666667 fails (it totals to
+        #    106.667) and 106.666 passes.
+        self.assertEqual(clamped, round(clamped, 3))
+        self.assertNotEqual(SPLIT_WO_QTY, round(SPLIT_WO_QTY, 3))
 
     def test_quantity_under_the_ceiling_is_untouched(self):
         self.assertEqual(self._clamp(100.0), 100.0)
 
-    def test_quantity_exactly_at_the_ceiling_is_untouched(self):
-        self.assertEqual(self._clamp(SPLIT_WO_QTY), SPLIT_WO_QTY)
+    def test_fractional_split_under_the_ceiling_is_still_quantised(self):
+        """Close Production splitting 100 over three 50 Kg WOs yields
+        33.333333333333336, which never reaches the over-ceiling branch — it is
+        the early return that has to quantise it, or validate_fg_completed_qty
+        rejects the entry."""
+        self.assertEqual(self._clamp(100 / 3, wo_qty=50.0), 33.333)
+
+    def test_quantity_exactly_at_the_ceiling_is_quantised(self):
+        self.assertEqual(self._clamp(SPLIT_WO_QTY), FLOORED_WO_QTY)
 
     def test_zero_is_left_for_the_callers_own_validation(self):
         """`end_work_order` rejects a zero good qty with its own message; the
@@ -196,22 +220,31 @@ class TestCloseSingleWoClampsDeclaredOutput(unittest.TestCase):
     def test_rounded_prefill_no_longer_exceeds_the_work_order(self):
         se, _ = self._close(ROUNDED_UP_QTY)
 
-        self.assertEqual(se.fg_completed_qty, SPLIT_WO_QTY)
+        self.assertEqual(se.fg_completed_qty, FLOORED_WO_QTY)
         finished = [r for r in se.items if r.get("is_finished_item")]
         self.assertEqual(len(finished), 1)
-        self.assertEqual(finished[0]["qty"], SPLIT_WO_QTY)
+        self.assertEqual(finished[0]["qty"], FLOORED_WO_QTY)
+
+    def test_fg_row_and_for_quantity_agree_under_rounding(self):
+        """validate_fg_completed_qty compares fg_completed_qty against
+        flt(sum(finished-item qtys), 3). They must not diverge, or ERPNext
+        throws "quantity ... and For Quantity ... cannot be different"."""
+        se, _ = self._close(ROUNDED_UP_QTY)
+
+        total = round(sum(r["qty"] for r in se.items if r.get("is_finished_item")), 3)
+        self.assertEqual(se.fg_completed_qty, total)
 
     def test_bom_is_scaled_to_the_clamped_output(self):
         """Consumption must follow the quantity actually received, not the
         rounded-up figure the operator submitted."""
         _, scaled_to = self._close(ROUNDED_UP_QTY)
 
-        self.assertEqual(scaled_to, SPLIT_WO_QTY)
+        self.assertEqual(scaled_to, FLOORED_WO_QTY)
 
     def test_rejects_still_scale_the_bom_on_top_of_the_clamped_good_qty(self):
         _, scaled_to = self._close(ROUNDED_UP_QTY, reject=2.0)
 
-        self.assertAlmostEqual(scaled_to, SPLIT_WO_QTY + 2.0, places=9)
+        self.assertAlmostEqual(scaled_to, FLOORED_WO_QTY + 2.0, places=9)
 
 
 if __name__ == "__main__":

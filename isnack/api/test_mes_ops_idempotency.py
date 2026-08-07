@@ -223,6 +223,7 @@ class TestCloseSingleWoIdempotency(unittest.TestCase):
         with patch.object(mes_ops.frappe, "get_doc", return_value=_wo(qty=332.0)), \
              patch.object(mes_ops, "_submitted_mtfm_qty", return_value=332.0), \
              patch.object(mes_ops, "_submitted_manufacture_qty", return_value=332.0), \
+             patch.object(mes_ops.frappe, "get_precision", return_value=3), \
              patch.object(mes_ops.frappe.utils, "now_datetime", return_value="2026-06-03 10:00:00"), \
              patch.object(mes_ops.frappe, "new_doc") as new_doc, \
              patch.object(mes_ops.frappe.db, "set_value") as set_value:
@@ -274,6 +275,7 @@ class TestCloseSingleWoIdempotency(unittest.TestCase):
         with patch.object(mes_ops.frappe, "get_doc", return_value=_wo(qty=10.0)), \
              patch.object(mes_ops, "_submitted_mtfm_qty", return_value=10.0), \
              patch.object(mes_ops, "_submitted_manufacture_qty", return_value=0.0), \
+             patch.object(mes_ops.frappe, "get_precision", return_value=3), \
              patch.object(mes_ops, "_default_line_target", return_value="FG-A"), \
              patch.object(mes_ops, "_default_line_wip", return_value="WIP-A"), \
              patch.object(mes_ops, "_default_line_staging", return_value="Stage-A"), \
