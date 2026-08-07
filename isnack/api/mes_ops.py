@@ -3753,22 +3753,12 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
 
         _apply_pre_consumed_cost_to_finished_item(se, wo_name, good_qty)
 
-        # When every material was already consumed via LOAD, this Manufacture
-        # entry carries only the finished item and no row with a source
-        # warehouse. ERPNext's validate_raw_materials_exists then throws
-        # "At least one raw material item must be present ..." unless
-        # Manufacturing Settings -> Material Consumption is enabled. That is the
-        # normal shape of a close in this app, so surface the missing setting by
-        # name instead of letting the generic message reach the operator.
-        if not any(row.get("s_warehouse") for row in se.items):
-            if not frappe.db.get_single_value("Manufacturing Settings", "material_consumption"):
-                frappe.throw(
-                    _("All materials for Work Order {0} were already consumed during "
-                      "production, so the Manufacture entry has no raw-material rows. "
-                      "Enable Manufacturing Settings → Material Consumption to allow "
-                      "this.").format(wo_name)
-                )
-
+        # A close where every material was already consumed via LOAD produces a
+        # finished-item-only entry, with no row carrying a source warehouse.
+        # That is the normal shape here and this site's ERPNext accepts it — do
+        # not pre-empt it with an app-level guard. An earlier revision asserted
+        # Manufacturing Settings -> Material Consumption first and blocked closes
+        # that ERPNext would have taken.
         se.flags.ignore_permissions = True
         se.insert()
         se.submit()

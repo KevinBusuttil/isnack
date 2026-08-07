@@ -68,14 +68,11 @@ def _wo(qty=SPLIT_WO_QTY):
     return wo
 
 
-def _single_value(allowance=0, material_consumption=1):
-    """frappe.db.get_single_value stub: overproduction allowance, the
-    material-consumption precondition, and the default warehouse."""
+def _single_value(allowance=0):
+    """frappe.db.get_single_value stub: overproduction allowance + warehouse."""
 
     def _get(doctype, fieldname, *a, **k):
         if doctype == "Manufacturing Settings":
-            if fieldname == "material_consumption":
-                return material_consumption
             return allowance
         return "Semi-finished - ISN"
 

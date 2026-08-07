@@ -65,11 +65,9 @@ def _wo(qty=WO_QTY):
     return wo
 
 
-def _single_value(material_consumption=1):
+def _single_value():
     def _get(doctype, fieldname, *a, **k):
         if doctype == "Manufacturing Settings":
-            if fieldname == "material_consumption":
-                return material_consumption
             return 0
         return "Semi-finished - ISN"
 
@@ -131,7 +129,7 @@ class TestQtyHelpers(unittest.TestCase):
 
 class TestCloseSingleWoResiduals(unittest.TestCase):
     def _close(self, bom_items, consumed, good=WO_QTY, reject=0.0,
-               packaging=None, material_consumption=1, consumed_by_batch=None):
+               packaging=None, consumed_by_batch=None):
         se = FakeStockEntry()
         logged = []
 
@@ -165,7 +163,7 @@ class TestCloseSingleWoResiduals(unittest.TestCase):
             patch.object(mes_ops.frappe.utils, "now_datetime", return_value="2026-08-07 12:00:00"),
             patch.object(mes_ops.frappe.db, "get_value", side_effect=db_get_value),
             patch.object(mes_ops.frappe.db, "get_single_value",
-                         side_effect=_single_value(material_consumption)),
+                         side_effect=_single_value()),
             patch.object(mes_ops.frappe.db, "set_value"),
             patch.object(mes_ops.frappe, "new_doc", return_value=se),
         ]
@@ -282,22 +280,23 @@ class TestCloseSingleWoResiduals(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["qty"], 16.0)
 
-    def test_missing_material_consumption_setting_is_named(self):
-        """An all-consumed close produces a finished-item-only entry, which
-        erpnext's validate_raw_materials_exists rejects unless the setting is
-        on. Surface the setting rather than its generic message."""
-        def fake_throw(*args, **kwargs):
-            raise RuntimeError(args[0] if args else "throw")
+    def test_finished_item_only_entry_is_not_blocked_by_the_app(self):
+        """This site has submitted 11 finished-item-only Manufacture entries.
+        An app-level precondition on Manufacturing Settings -> Material
+        Consumption is therefore wrong here, and blocked closes that ERPNext
+        would have accepted. Whether such an entry is legal is ERPNext's call,
+        not ours."""
+        def fail_on_throw(*args, **kwargs):
+            raise AssertionError(f"must not block the close: {args[0] if args else ''}")
 
-        with patch.object(mes_ops.frappe, "throw", side_effect=fake_throw):
-            with self.assertRaises(RuntimeError) as ctx:
-                self._close(
-                    self._wo59_bom(),
-                    {"RM20022": CORN_CONSUMED, "RM20023": WATER_CONSUMED},
-                    material_consumption=0,
-                )
+        with patch.object(mes_ops.frappe, "throw", side_effect=fail_on_throw):
+            se, _ = self._close(
+                self._wo59_bom(),
+                {"RM20022": CORN_CONSUMED, "RM20023": WATER_CONSUMED},
+            )
 
-        self.assertIn("Material Consumption", str(ctx.exception))
+        self.assertEqual(len(se.items), 1)
+        self.assertTrue(se.items[0]["is_finished_item"])
 
 
 if __name__ == "__main__":
