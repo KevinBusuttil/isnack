@@ -14,6 +14,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _process_batch_spaces,
 )
 from isnack.utils.printing import get_label_printer
+from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
 
 # ============================================================
@@ -576,7 +577,14 @@ def _validate_batch_code_format(batch_no: str) -> bool:
 
 ROLES_OPERATOR = ["Factory Operator", "Operator", "Production Manager"]
 
-# Tolerance for floating point quantity comparisons
+# Tolerance for float-comparison guards only — "are these two numbers the same
+# number?" It is NOT a postability threshold and must never be used to decide
+# whether a quantity can become a Stock Entry row: it is a fixed 1e-4 while the
+# smallest postable quantity is one unit at the site's float precision (5e-4 away
+# from zero at the default precision of 3, and it moves when the site does).
+# Using it as a postability test is what let unpostable rows reach ERPNext and
+# throw "Qty in Stock UOM can not be zero". Use isnack.utils.qty.truncate_qty /
+# postable_qty for that.
 QTY_EPSILON = 0.0001
 
 
@@ -613,15 +621,30 @@ def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> fl
     snapped to the ceiling. Anything larger is a real over-declaration: it is
     refused here with a message naming the quantities and the setting that
     governs them, instead of surfacing ERPNext's bare comparison.
+
+    Both results are quantised to the posting precision, because a Manufacture
+    entry has to satisfy two ERPNext checks that pull in opposite directions:
+
+      validate_finished_goods    -> fg_completed_qty must not exceed the raw
+                                    ceiling (a rounded-UP value fails this)
+      validate_fg_completed_qty  -> fg_completed_qty must equal
+                                    flt(finished-item qty, precision) exactly
+                                    (a raw 106.666666667 fails this, because the
+                                    row totals to 106.667)
+
+    Quantising toward zero is the only operation that satisfies both: 106.666 is
+    below the ceiling and is its own value at precision 3. Returning the raw
+    ceiling merely trades "should not be greater than allowed quantity" for
+    "the finished product quantity and For Quantity cannot be different".
     """
     good = flt(good)
     allowed = _wo_allowed_output_qty(wo_qty)
     if good <= allowed:
-        return good
+        return truncate_qty(good)
 
-    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    precision = qty_precision()
     if (good - allowed) <= 10 ** -precision:
-        return allowed
+        return truncate_qty(allowed)
 
     frappe.throw(
         _(
@@ -2366,47 +2389,50 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             required_qty = bom_item["qty"]
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
-            
+            # Only a shortfall that survives the posting precision is real —
+            # see the equivalent loop in _close_single_wo.
+            postable_remaining = truncate_qty(remaining_qty)
+
             # Handle both under-consumption and over-consumption
-            if abs(remaining_qty) > QTY_EPSILON:  # Use epsilon for floating point tolerance
-                if remaining_qty > 0:
-                    # Under-consumed: add remaining quantity
-                    se.append("items", {
-                        "item_code": item_code,
-                        "qty": remaining_qty,
-                        "uom": bom_item["uom"],
-                        "s_warehouse": wip_wh,
-                        "is_finished_item": 0,
-                    })
+            if postable_remaining > 0:
+                # Under-consumed: add remaining quantity
+                se.append("items", {
+                    "item_code": item_code,
+                    "qty": postable_remaining,
+                    "uom": bom_item["uom"],
+                    "s_warehouse": wip_wh,
+                    "is_finished_item": 0,
+                })
+            elif remaining_qty < -QTY_EPSILON:
+                # Over-consumed: log variance for tracking, from the raw
+                # remainder so the magnitude is never understated.
+                # Calculate variance percentage safely
+                if required_qty > QTY_EPSILON:
+                    variance_pct = (abs(remaining_qty) / required_qty * 100)
                 else:
-                    # Over-consumed: log variance for tracking
-                    # Calculate variance percentage safely
-                    if required_qty > QTY_EPSILON:
-                        variance_pct = (abs(remaining_qty) / required_qty * 100)
-                    else:
-                        # Should not happen - BOM items with zero qty indicate data issue
-                        variance_pct = 0
-                        frappe.log_error(
-                            title="BOM Data Issue",
-                            message=f"BOM item with zero required quantity for WO {work_order}: {item_code}",
-                        )
-                    
+                    # Should not happen - BOM items with zero qty indicate data issue
+                    variance_pct = 0
                     frappe.log_error(
-                        title="Material Over-Consumption",
-                        message=(
-                            f"Over-consumption detected for WO {work_order}\n"
-                            f"Item: {item_code}\n"
-                            f"Required: {required_qty:.4f}\n"
-                            f"Consumed: {already_consumed:.4f}\n"
-                            f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
-                        ),
+                        title="BOM Data Issue",
+                        message=f"BOM item with zero required quantity for WO {work_order}: {item_code}",
                     )
-                    
-                    # Add comment to Work Order for audit trail
-                    wo.add_comment(
-                        "Comment",
-                        f"Over-consumption: {item_code} - Required: {required_qty:.4f}, Consumed: {already_consumed:.4f} ({variance_pct:.1f}% excess)"
-                    )
+
+                frappe.log_error(
+                    title="Material Over-Consumption",
+                    message=(
+                        f"Over-consumption detected for WO {work_order}\n"
+                        f"Item: {item_code}\n"
+                        f"Required: {required_qty:.4f}\n"
+                        f"Consumed: {already_consumed:.4f}\n"
+                        f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                    ),
+                )
+                
+                # Add comment to Work Order for audit trail
+                wo.add_comment(
+                    "Comment",
+                    f"Over-consumption: {item_code} - Required: {required_qty:.4f}, Consumed: {already_consumed:.4f} ({variance_pct:.1f}% excess)"
+                )
 
     # Add scrap/rejects if applicable
     if rejects > 0:
@@ -2754,8 +2780,16 @@ def end_work_order(work_order: str, sfg_usage: str = None,
         # audit comment records the quantity actually booked.
         good = _clamp_good_qty_to_allowance(wo.name, flt(wo.qty), flt(good_qty))
         reject = flt(reject_qty or 0)
+        # Keep the sign test AND add the postability test: a negative quantity is
+        # postable (it would issue finished goods out of stock via a Manufacture
+        # voucher), and a positive sub-tick quantity is not.
         if good <= 0:
             frappe.throw(_("Good quantity is required to end this semi-finished Work Order"))
+        if not postable_qty(good):
+            frappe.throw(
+                _("Good quantity {0} is below the smallest quantity this site can "
+                  "record ({1}). Enter at least {1}.").format(flt(good_qty), qty_tick())
+            )
         if reject < 0:
             frappe.throw(_("Rejects cannot be negative"))
         if reject > 0 and not _default_line_scrap(wo.name):
@@ -3500,7 +3534,11 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         # Idempotency: if a submitted Manufacture entry already covers this Work
         # Order (double-click / retry), do not book a second one. Just ensure the
         # WO is marked Completed and return.
-        if _submitted_manufacture_qty(wo_name) >= flt(wo.qty) - QTY_EPSILON:
+        # Compare against the quantised planned qty: the Manufacture entry books
+        # truncate_qty(wo.qty) (see _clamp_good_qty_to_allowance), so a Work Order
+        # with a repeating quantity can never reach the raw wo.qty and a retried
+        # close would otherwise book a second Manufacture entry.
+        if _submitted_manufacture_qty(wo_name) >= truncate_qty(flt(wo.qty)) - QTY_EPSILON:
             frappe.db.set_value(
                 "Work Order",
                 wo_name,
@@ -3613,34 +3651,44 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 required_qty = bom_item["qty"]
                 already_consumed = consumed_from_load.get(item_code, 0)
                 remaining_qty = required_qty - already_consumed
+                # The shortfall is only real if it can be posted. A BOM ratio
+                # that is not representable at the posting precision (water is
+                # 1/30 per Kg of CORN MIX 1) always leaves a sub-tick remainder
+                # after the operator consumes the rounded quantity — the only
+                # quantity the Stock Ledger can hold. Emitting it produced a row
+                # whose transfer_qty rounded to zero, which ERPNext rejects
+                # outright, blocking the close. Quantise toward zero so a
+                # sub-tick remainder is what it actually is: nothing.
+                postable_remaining = truncate_qty(remaining_qty)
 
-                if abs(remaining_qty) > QTY_EPSILON:
-                    if remaining_qty > 0:
-                        src_wh = wip_wh
-                        if item_code in sfg_codes and sfg_src_wh:
-                            src_wh = sfg_src_wh
-                        se.append("items", {
-                            "item_code": item_code,
-                            "qty": remaining_qty,
-                            "uom": bom_item["uom"],
-                            "s_warehouse": src_wh,
-                            "is_finished_item": 0,
-                        })
+                if postable_remaining > 0:
+                    src_wh = wip_wh
+                    if item_code in sfg_codes and sfg_src_wh:
+                        src_wh = sfg_src_wh
+                    se.append("items", {
+                        "item_code": item_code,
+                        "qty": postable_remaining,
+                        "uom": bom_item["uom"],
+                        "s_warehouse": src_wh,
+                        "is_finished_item": 0,
+                    })
+                elif remaining_qty < -QTY_EPSILON:
+                    # Over-consumed. Reported from the raw remainder so the
+                    # logged magnitude is never understated by quantisation.
+                    if required_qty > QTY_EPSILON:
+                        variance_pct = (abs(remaining_qty) / required_qty * 100)
                     else:
-                        if required_qty > QTY_EPSILON:
-                            variance_pct = (abs(remaining_qty) / required_qty * 100)
-                        else:
-                            variance_pct = 0
-                        frappe.log_error(
-                            title="Material Over-Consumption",
-                            message=(
-                                f"Over-consumption detected for WO {wo_name}\n"
-                                f"Item: {item_code}\n"
-                                f"Required: {required_qty:.4f}\n"
-                                f"Consumed: {already_consumed:.4f}\n"
-                                f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
-                            ),
-                        )
+                        variance_pct = 0
+                    frappe.log_error(
+                        title="Material Over-Consumption",
+                        message=(
+                            f"Over-consumption detected for WO {wo_name}\n"
+                            f"Item: {item_code}\n"
+                            f"Required: {required_qty:.4f}\n"
+                            f"Consumed: {already_consumed:.4f}\n"
+                            f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                        ),
+                    )
 
         # Packaging materials (only the portion not already consumed via LOAD)
         if split["packaging"]:
@@ -3658,12 +3706,15 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 else:
                     already_consumed_pkg_qty = flt(sum(consumed_by_batch.values()))
                 remaining_pkg_qty = qty - already_consumed_pkg_qty
+                # Same quantisation as the BOM loop above: only a remainder that
+                # survives at the posting precision can become a row.
+                postable_pkg_qty = truncate_qty(remaining_pkg_qty)
 
-                if remaining_pkg_qty > QTY_EPSILON:
+                if postable_pkg_qty > 0:
                     item_uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
                     row = {
                         "item_code": item_code,
-                        "qty": remaining_pkg_qty,
+                        "qty": postable_pkg_qty,
                         "uom": item_uom,
                         "s_warehouse": wip_wh,
                         "is_finished_item": 0,
@@ -3701,6 +3752,22 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
             se.append("items", scrap_row)
 
         _apply_pre_consumed_cost_to_finished_item(se, wo_name, good_qty)
+
+        # When every material was already consumed via LOAD, this Manufacture
+        # entry carries only the finished item and no row with a source
+        # warehouse. ERPNext's validate_raw_materials_exists then throws
+        # "At least one raw material item must be present ..." unless
+        # Manufacturing Settings -> Material Consumption is enabled. That is the
+        # normal shape of a close in this app, so surface the missing setting by
+        # name instead of letting the generic message reach the operator.
+        if not any(row.get("s_warehouse") for row in se.items):
+            if not frappe.db.get_single_value("Manufacturing Settings", "material_consumption"):
+                frappe.throw(
+                    _("All materials for Work Order {0} were already consumed during "
+                      "production, so the Manufacture entry has no raw-material rows. "
+                      "Enable Manufacturing Settings → Material Consumption to allow "
+                      "this.").format(wo_name)
+                )
 
         se.flags.ignore_permissions = True
         se.insert()
@@ -3809,9 +3876,17 @@ def close_production(groups: str = None, lines: str = None,
         bno = (g.get("batch_no") or "").strip() or None
         pkg = g.get("packaging_usage") or []
 
+        # Sign test AND postability test — see the equivalent guard in
+        # end_work_order. This is a whitelisted method reading a client payload.
         if good <= 0:
             label = production_item or _("(unspecified item)")
             frappe.throw(_("Good quantity must be greater than zero for {0}").format(label))
+        if not postable_qty(good):
+            label = production_item or _("(unspecified item)")
+            frappe.throw(
+                _("Good quantity {0} for {1} is below the smallest quantity this "
+                  "site can record ({2}).").format(good, label, qty_tick())
+            )
         if reject < 0:
             frappe.throw(_("Rejects cannot be negative"))
 
