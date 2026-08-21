@@ -35,6 +35,7 @@ web_include_css = "/assets/isnack/css/isnack-web.css"
 # include js in doctype views
 doctype_js = {
     "Sales Order" : "public/js/sales_order_proforma.js",
+    "Work Order": "public/js/work_order.js",
     "Quotation": "public/js/quotation.js",
     "Purchase Order": "public/js/purchase_order.js",
     "Customer": "public/js/customer.js",
@@ -146,6 +147,10 @@ override_doctype_class = {
     "Payment Reconciliation": "isnack.overrides.payment_reconciliation.CustomPaymentReconciliation",
     "Landed Cost Voucher": "isnack.overrides.landed_cost_voucher.CustomLandedCostVoucher",
     "Packing Slip": "isnack.overrides.packing_slip.CustomPackingSlip",
+    # Backports ERPNext version-15's "Allow Editing of Items and Quantities in
+    # Work Order" onto v15.87.2. Registering a controller class does not replace
+    # the "Work Order" doc_events below; Frappe runs both.
+    "Work Order": "isnack.overrides.work_order.CustomWorkOrder",
 }
 
 # Document Events

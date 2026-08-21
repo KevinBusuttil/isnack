@@ -13,6 +13,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _stage_status as _storekeeper_stage_status,
     _process_batch_spaces,
 )
+from isnack.utils import work_order_demand
 from isnack.utils.printing import get_label_printer
 from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
@@ -351,6 +352,29 @@ def _get_bom_items_for_quantity(bom_no: str, qty: float, exploded: bool = True) 
         })
     
     return items
+
+
+def _planned_items_for_wo(wo, qty: float) -> list:
+    """Planned material demand for THIS Work Order, scaled to ``qty`` units.
+
+    Same shape and same BOM semantics as ``_get_bom_items_for_quantity`` — the
+    ``use_multi_level_bom`` flag still decides whether sub-assemblies stay whole
+    — but the saved Work Order Required Items win over the BOM figure when
+    Manufacturing Settings has "Allow Editing of Items and Quantities in Work
+    Order" enabled. With the setting off this is exactly
+    ``_get_bom_items_for_quantity`` and issues no extra query.
+
+    ``qty`` is a production quantity (planned qty, good output, good + reject),
+    while Work Order Required Qty is stored for ``Work Order.qty`` units, so the
+    saved requirement is rescaled by ``qty / wo.qty``.
+    """
+    items = _get_bom_items_for_quantity(wo.bom_no, qty, exploded=bool(wo.use_multi_level_bom))
+
+    wo_qty = flt(wo.qty)
+    if not wo_qty:
+        return items
+
+    return work_order_demand.overlay_rows(wo, items, scale=flt(qty) / wo_qty)
 
 
 # ============================================================
@@ -953,7 +977,7 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
                 "AND LOWER(IFNULL(it.item_group, '')) NOT IN %(packaging_groups)s"
             )
 
-    return frappe.db.sql(f"""
+    rows = frappe.db.sql(f"""
         SELECT DISTINCT bi.item_code, bi.item_name
         FROM `tabBOM Item` bi
         JOIN `tabBin` bin ON bin.item_code = bi.item_code
@@ -968,14 +992,76 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         LIMIT %(page_len)s OFFSET %(start)s
     """, params)
 
+    # Rows the planner added to the Work Order that the BOM has never heard of
+    # (only possible while "Allow Editing of Items and Quantities in Work Order"
+    # is on). _validate_item_in_bom accepts them, so the picker has to offer
+    # them or Manual Load would be unable to reach a row the Work Order asks
+    # for. They are appended after the paged BOM query rather than unioned into
+    # it: the set is tiny by nature, and keeping it out of the SQL leaves the
+    # existing query — and its packaging rules — byte-identical.
+    manual_rows = _manual_wo_items_with_stock(work_order, wip_wh, txt, {r[0] for r in rows})
+    return list(rows) + manual_rows
+
+
+def _manual_wo_items_with_stock(work_order: str, wip_wh: str, txt: str, seen: set) -> list:
+    """Hand-added Work Order rows that actually have stock in the WIP warehouse."""
+    demand = work_order_demand.get_demand(work_order)
+    if not demand.enabled or not demand.manual:
+        return []
+
+    needle = (txt or "").strip().lower()
+    out = []
+    for item_code in sorted(demand.manual):
+        if item_code in seen:
+            continue
+        item_name = frappe.db.get_value("Item", item_code, "item_name") or item_code
+        if needle and needle not in item_code.lower() and needle not in (item_name or "").lower():
+            continue
+        qty = frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": wip_wh}, "actual_qty")
+        if not flt(qty) > 0:
+            continue
+        out.append((item_code, item_name))
+    return out
+
 def _validate_item_in_bom(work_order: str, item_code: str) -> Tuple[bool, str]:
+    """Structural check: may this item be loaded against this Work Order?
+
+    Membership stays a DIRECT ``BOM Item`` question. That is deliberate and is
+    what keeps a parent finished-good Work Order from consuming raw materials
+    that belong to a separate semi-finished Work Order — the exploded tree is
+    never consulted here.
+
+    The one addition is a row the planner added to the Work Order by hand while
+    "Allow Editing of Items and Quantities in Work Order" is on. Only items the
+    BOM has never mentioned (directly or exploded) qualify, so an exploded
+    sub-assembly raw material still fails this check exactly as before. Offering
+    an editable Work Order and then refusing to execute its rows would be worse
+    than either behaviour on its own.
+    """
     bom = frappe.db.get_value("Work Order", work_order, "bom_no")
     if not bom:
         return False, _("Work Order has no BOM")
     exists = frappe.db.exists("BOM Item", {"parent": bom, "item_code": item_code})
     if not exists:
+        if work_order_demand.is_manual_item(work_order, item_code):
+            return True, "OK"
         return False, _("Item {0} not in BOM {1}").format(item_code, bom)
     return True, "OK"
+
+def _planned_required_qty(work_order: str, item_code: str):
+    """Baseline the over-consumption threshold is measured against, or None.
+
+    Prefers the saved Work Order Required Qty when the planner is allowed to
+    edit it, so an item cut from 155.365 to 147.910 is policed against 147.910.
+    Returns None when the Work Order has nothing to say — including when the row
+    was deleted — and the caller keeps its existing BOM-derived baseline.
+
+    A deleted row deliberately does not collapse the threshold to zero: this is
+    a safety ceiling on the shop floor, not a plan, and a zero here would hard-
+    block an operator mid-shift over a planning edit.
+    """
+    return work_order_demand.required_qty_for(work_order, item_code)
+
 
 def _scan_cache_key(work_order: str, raw_code: str) -> str:
     h = hashlib.sha1((work_order + "|" + raw_code).encode("utf-8")).hexdigest()
@@ -2083,8 +2169,14 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 LIMIT 1
             """, (bom, item_code), as_dict=True)
             
-            if bom_item_qty and len(bom_item_qty) > 0:
-                bom_required = float(bom_item_qty[0].qty_per_unit) * wo_qty
+            planned_required = _planned_required_qty(work_order, item_code)
+
+            if planned_required is not None or (bom_item_qty and len(bom_item_qty) > 0):
+                bom_required = (
+                    planned_required
+                    if planned_required is not None
+                    else float(bom_item_qty[0].qty_per_unit) * wo_qty
+                )
                 
                 # Get already consumed quantity
                 already_consumed = frappe.db.sql("""
@@ -2108,7 +2200,7 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
                 if total_after_scan > threshold_qty:
                     return {
                         "ok": False, 
-                        "msg": _("Excessive quantity: {0:.2f} total (BOM requires {1:.2f}, threshold {2:.0f}%). Contact supervisor.").format(
+                        "msg": _("Excessive quantity: {0:.2f} total (requires {1:.2f}, threshold {2:.0f}%). Contact supervisor.").format(
                             total_after_scan, bom_required, threshold_pct
                         )
                     }
@@ -2195,7 +2287,7 @@ def get_requestable_items_for_wo(work_order: str):
     if not wo.bom_no:
         return {"items": []}
 
-    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty), exploded=bool(wo.use_multi_level_bom))
+    bom_items = _planned_items_for_wo(wo, flt(wo.qty))
     consumed_map = _get_consumed_materials_from_load(work_order)
     sfg_codes = {
         row["item_code"]
@@ -2381,7 +2473,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
 
     # Get BOM items scaled for production quantity
     if wo.bom_no:
-        bom_items = _get_bom_items_for_quantity(wo.bom_no, good, exploded=bool(wo.use_multi_level_bom))
+        bom_items = _planned_items_for_wo(wo, good)
         
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
@@ -2565,7 +2657,7 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
     if not wo.bom_no:
         return out
 
-    bom_items = _get_bom_items_for_quantity(wo.bom_no, flt(wo.qty), exploded=bool(wo.use_multi_level_bom))
+    bom_items = _planned_items_for_wo(wo, flt(wo.qty))
     consumed_map = _get_consumed_materials_from_load(work_order)
 
     sfg_codes = {row["item_code"] for row in (get_sfg_components_for_wo(work_order).get("items") or [])}
@@ -2672,7 +2764,17 @@ def get_end_wo_summary(work_order: str):
         for row in summary["sfg_items"]:
             row["source_warehouse"] = sfg_src_wh
             row["available_qty"] = _sfg_available_qty(row["item_code"], sfg_src_wh)
-            row["required_qty"] = flt(flt(row.get("qty")) * wo_qty / bom_quantity, 4)
+            # Which components are semi-finished stays a BOM question
+            # (get_sfg_components_for_wo); only the planned quantity follows the
+            # Work Order when editing is enabled. Without this the same dialog
+            # would show two different requirements for one item: the
+            # consumption summary above already reads the edited row.
+            planned_required = _planned_required_qty(work_order, row["item_code"])
+            row["required_qty"] = (
+                flt(planned_required, 4)
+                if planned_required is not None
+                else flt(flt(row.get("qty")) * wo_qty / bom_quantity, 4)
+            )
             row["pending_wos"] = _pending_sfg_work_orders(row["item_code"])
     return summary
 
@@ -3630,7 +3732,7 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
         packaging_groups = _packaging_groups_global()
 
         if wo.bom_no and total_production_qty > 0:
-            bom_items = _get_bom_items_for_quantity(wo.bom_no, total_production_qty, exploded=bool(wo.use_multi_level_bom))
+            bom_items = _planned_items_for_wo(wo, total_production_qty)
 
             # Semi-finished components live in the Semi-finished warehouse, not
             # WIP (their consumption at End WO sources from there, see
@@ -4655,6 +4757,18 @@ def get_materials_snapshot(work_order: str):
             "remain": required,
         })
 
+    # Saved Work Order Required Qty wins over the BOM figure when editing is
+    # enabled, and hand-added rows join the list. Membership otherwise stays a
+    # direct-BOM question, so a sub-assembly is still shown as itself and its
+    # raw materials still belong to their own Work Order.
+    rows = work_order_demand.overlay_rows(wo, rows, qty_key="required")
+    for row in rows:
+        if not row.get("item_name"):
+            row["item_name"] = frappe.db.get_value("Item", row["item_code"], "item_name") or ""
+        row.setdefault("transferred", 0.0)
+        row.setdefault("consumed", 0.0)
+        row.setdefault("remain", row.get("required", 0.0))
+
     # Get transferred quantities (from START button)
     transferred = frappe.db.sql("""
         SELECT sed.item_code, SUM(sed.qty) as qty
@@ -4817,8 +4931,16 @@ def get_manual_load_item_context(work_order: str, item_code: str):
     wo = frappe.get_doc("Work Order", work_order)
     uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
 
+    # The saved Work Order Required Qty is the planning figure when editing is
+    # enabled; the BOM computation below stays the fallback (and the only source
+    # while the setting is off, or for a row the planner deleted — see
+    # _planned_required_qty).
+    planned_required = _planned_required_qty(work_order, item_code)
+
     required_qty = 0.0
-    if wo.get("bom_no"):
+    if planned_required is not None:
+        required_qty = float(planned_required)
+    elif wo.get("bom_no"):
         bom = frappe.get_doc("BOM", wo.bom_no)
         bom_qty = float(bom.get("quantity") or 1) or 1
         wo_qty = float(wo.get("qty") or 0)
@@ -4925,8 +5047,13 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
                 WHERE parent = %s AND item_code = %s
                 LIMIT 1
             """, (bom, item_code), as_dict=True)
-            if bom_item_qty:
-                bom_required = float(bom_item_qty[0].qty_per_unit) * wo_qty
+            planned_required = _planned_required_qty(work_order, item_code)
+            if planned_required is not None or bom_item_qty:
+                bom_required = (
+                    planned_required
+                    if planned_required is not None
+                    else float(bom_item_qty[0].qty_per_unit) * wo_qty
+                )
                 already_consumed = frappe.db.sql("""
                     SELECT COALESCE(SUM(sed.qty), 0) AS total
                     FROM `tabStock Entry` se
@@ -4943,7 +5070,7 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
                 threshold_qty = bom_required * (threshold_pct / 100.0)
                 if total_after > threshold_qty:
                     frappe.throw(
-                        _("Excessive quantity for {0}: {1:.2f} total (BOM requires {2:.2f}, threshold {3:.0f}%)").format(
+                        _("Excessive quantity for {0}: {1:.2f} total (requires {2:.2f}, threshold {3:.0f}%)").format(
                             item_code, total_after, bom_required, threshold_pct
                         )
                     )
