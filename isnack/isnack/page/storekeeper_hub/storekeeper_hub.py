@@ -7,6 +7,7 @@ from frappe.utils import now_datetime, add_to_date, cstr, nowdate, flt, getdate,
 from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 from isnack.utils.printing import get_label_printer
+from isnack.utils import work_order_demand
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -43,7 +44,13 @@ def _wo_line(wo_doc):
     return None
 
 def _required_map_for_wo(wo_name: str) -> dict:
-    """Return required qty per item_code for a WO (BOM Explosion * WO.qty)."""
+    """Return required qty per item_code for a WO (BOM Explosion * WO.qty).
+
+    When "Allow Editing of Items and Quantities in Work Order" is on, the saved
+    Work Order Required Items overlay the BOM figure — see
+    ``isnack.utils.work_order_demand``. BOM membership (which items belong to
+    this map at all) is unchanged either way.
+    """
     wo = frappe.get_doc("Work Order", wo_name)
     rows = frappe.db.sql(
         """
@@ -61,10 +68,18 @@ def _required_map_for_wo(wo_name: str) -> dict:
             "uom": r.stock_uom,
             "qty": float(r.qty_per_unit) * float(wo.qty),
         }
-    return req
+    return work_order_demand.overlay_map(wo, req)
 
 def _required_leaf_map_for_wo(wo_name: str) -> dict:
-    """Return required qty per item_code for leaf (non-sub-assembly) BOM items only."""
+    """Return required qty per item_code for leaf (non-sub-assembly) BOM items only.
+
+    The DIRECT-leaf restriction is load-bearing and survives the overlay: a
+    parent finished-good Work Order must never claim raw materials that belong
+    to a separate semi-finished Work Order. ``overlay_map`` only rewrites the
+    quantity of rows this query already selected, plus rows the planner added by
+    hand that the BOM has never heard of — an exploded sub-assembly raw material
+    is BOM-known and so can never be promoted into this map.
+    """
     wo = frappe.get_doc("Work Order", wo_name)
     rows = frappe.db.sql(
         """
@@ -86,7 +101,7 @@ def _required_leaf_map_for_wo(wo_name: str) -> dict:
             "uom": r.stock_uom,
             "qty": float(r.qty_per_unit) * float(wo.qty),
         }
-    return req
+    return work_order_demand.overlay_map(wo, req)
 
 def _transferred_map_for_wo(wo_name: str, target_wh: str) -> dict:
     """Return already-transferred qty per item_code into the WIP warehouse for this WO.
