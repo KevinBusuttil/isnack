@@ -286,7 +286,9 @@ def _fetch_si_items(filters):
 		conditions.append("sii.item_group = %(item_group)s")
 		values["item_group"] = filters.item_group
 
-	# Batch filter: either directly on sii.batch_no or via bundle
+	# Batch filter: directly on sii.batch_no, via the SI item's bundle, or —
+	# for invoices billed from a Delivery Note that carry no batch data of
+	# their own — via the linked Delivery Note Item's batch_no / bundle.
 	if filters.get("batch_no"):
 		conditions.append("""(
 			sii.batch_no = %(batch_no)s
@@ -295,12 +297,18 @@ def _fetch_si_items(filters):
 				WHERE sbe.parent = sii.serial_and_batch_bundle
 				AND sbe.batch_no = %(batch_no)s
 			)
+			OR dni.batch_no = %(batch_no)s
+			OR EXISTS (
+				SELECT 1 FROM `tabSerial and Batch Entry` dn_sbe
+				WHERE dn_sbe.parent = dni.serial_and_batch_bundle
+				AND dn_sbe.batch_no = %(batch_no)s
+			)
 		)""")
 		values["batch_no"] = filters.batch_no
 
 	where_clause = " AND ".join(conditions)
 
-	return frappe.db.sql(
+	rows = frappe.db.sql(
 		f"""
 		SELECT
 			si.name          AS sales_invoice,
@@ -319,6 +327,8 @@ def _fetch_si_items(filters):
 			sii.item_group,
 			sii.batch_no,
 			sii.serial_and_batch_bundle,
+			dni.batch_no     AS dn_batch_no,
+			dni.serial_and_batch_bundle AS dn_serial_and_batch_bundle,
 			item.weight_per_unit,
 			item.custom_net_weight_per_unit,
 			item.weight_uom,
@@ -326,6 +336,8 @@ def _fetch_si_items(filters):
 			item.custom_volume_uom
 		FROM `tabSales Invoice Item` sii
 		JOIN `tabSales Invoice` si ON si.name = sii.parent
+		LEFT JOIN `tabDelivery Note Item` dni
+			ON dni.name = sii.dn_detail AND dni.docstatus = 1
 		LEFT JOIN `tabItem` item ON item.name = sii.item_code
 		WHERE {where_clause}
 		ORDER BY si.posting_date, si.name, sii.idx
@@ -333,6 +345,19 @@ def _fetch_si_items(filters):
 		values,
 		as_dict=True,
 	)
+
+	# Fallback: an invoice billed from a Delivery Note (update_stock = 0)
+	# usually carries no batch data of its own. When the DN row used the
+	# legacy batch_no field it is copied onto the SI item, but batches picked
+	# via a Serial and Batch Bundle stay on the DN — the bundle is bound to
+	# the DN voucher and cannot be copied to the invoice. Resolve those rows
+	# through the linked Delivery Note Item so traceability still works.
+	for row in rows:
+		if not row.batch_no and not row.serial_and_batch_bundle:
+			row.batch_no = row.dn_batch_no
+			row.serial_and_batch_bundle = row.dn_serial_and_batch_bundle
+
+	return rows
 
 
 # ---------------------------------------------------------------------------
