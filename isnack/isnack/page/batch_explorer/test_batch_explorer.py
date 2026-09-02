@@ -81,7 +81,8 @@ class TestBatchRoles(unittest.TestCase):
 			frappe._dict(parent="SE-M", is_finished_item=1, is_scrap_item=0, s_warehouse=None),
 			frappe._dict(parent="SE-M", is_finished_item=0, is_scrap_item=1, s_warehouse=None),
 			frappe._dict(parent="SE-C", is_finished_item=0, is_scrap_item=0, s_warehouse="WIP"),
-			frappe._dict(parent="SE-T", is_finished_item=0, is_scrap_item=0, s_warehouse=None),
+			# a transfer into WIP has a source warehouse too, but is not consumption
+			frappe._dict(parent="SE-T", is_finished_item=0, is_scrap_item=0, s_warehouse="Staging"),
 		]
 		get_all.return_value = [frappe._dict(name="WO-LEGACY")]
 
@@ -101,6 +102,24 @@ class TestBatchRoles(unittest.TestCase):
 		self.assertEqual(params["b"], "AAO-007")
 		self.assertEqual(get_all.call_args.args[0], "Work Order")
 		self.assertEqual(get_all.call_args.kwargs["filters"]["production_item"], "FG10005")
+
+	@patch("frappe.get_all", return_value=[])
+	@patch("frappe.db.sql")
+	def test_transfer_and_return_never_make_a_consumer(self, sql, _get_all):
+		se_info = {
+			"SE-MTFM": frappe._dict(name="SE-MTFM", work_order="WO-A", purpose="Material Transfer for Manufacture"),
+			"SE-RET": frappe._dict(name="SE-RET", work_order="WO-B", purpose="Material Transfer"),
+			"SE-C": frappe._dict(name="SE-C", work_order="WO-C", purpose="Material Consumption for Manufacture"),
+		}
+		sql.return_value = [
+			frappe._dict(parent="SE-MTFM", is_finished_item=0, is_scrap_item=0, s_warehouse="Staging"),
+			frappe._dict(parent="SE-RET", is_finished_item=0, is_scrap_item=0, s_warehouse="WIP"),
+			frappe._dict(parent="SE-C", is_finished_item=0, is_scrap_item=0, s_warehouse="WIP"),
+		]
+		roles = be._batch_roles("RB1", "RM1", se_info)
+		self.assertEqual(
+			roles, {"WO-A": be.ROLE_HANDLER, "WO-B": be.ROLE_HANDLER, "WO-C": be.ROLE_CONSUMER}
+		)
 
 	@patch("frappe.db.sql")
 	def test_no_linked_entries(self, sql):
@@ -286,6 +305,9 @@ class TestWorkOrderInputs(unittest.TestCase):
 		se_call = next(c for c in self.get_list.call_args_list if c.args[0] == "Stock Entry")
 		self.assertEqual(se_call.kwargs["pluck"], "name")
 		self.assertIn("SE-HIDDEN", se_call.kwargs["filters"]["name"][1])
+		# every candidate is checked, never just the first page
+		for c in self.get_list.call_args_list:
+			self.assertEqual(c.kwargs.get("limit_page_length"), 0, c.args[0])
 
 
 class TestSharedOutput(unittest.TestCase):

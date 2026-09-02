@@ -439,9 +439,16 @@ def _batch_roles(batch_no: str, batch_item: str | None, se_info: dict[str, dict]
 		wo = linked.get(r.parent)
 		if not wo:
 			continue
+		purpose = (se_info.get(r.parent) or {}).get("purpose")
 		if cint(r.is_finished_item):
 			put(wo, ROLE_PRODUCER)
-		elif r.s_warehouse and not cint(r.is_scrap_item):
+		elif (
+			purpose in batch_lineage.CONSUMPTION_PURPOSES
+			and r.s_warehouse
+			and not cint(r.is_scrap_item)
+		):
+			# same rule as batch_lineage.is_consumed_row: a transfer into or
+			# out of WIP also has a source warehouse but is not consumption
 			put(wo, ROLE_CONSUMER)
 		else:
 			put(wo, ROLE_HANDLER)
@@ -466,7 +473,10 @@ def _permitted_names(doctype: str, names) -> tuple[set[str], int]:
 	names = [n for n in dict.fromkeys(names or []) if n]
 	if not names:
 		return set(), 0
-	permitted = set(frappe.get_list(doctype, filters={"name": ["in", names]}, pluck="name"))
+	# limit_page_length=0: every candidate, not the first page only
+	permitted = set(
+		frappe.get_list(doctype, filters={"name": ["in", names]}, pluck="name", limit_page_length=0)
+	)
 	return permitted, len(names) - len(permitted)
 
 
@@ -605,6 +615,7 @@ def _material_nodes(materials: list[dict], batch_no: str, tag: str = "consumed")
 				"Batch",
 				filters={"name": ["in", list(dict.fromkeys(batch_names))]},
 				fields=["name", "expiry_date", "disabled"],
+				limit_page_length=0,
 			)
 		}
 	today = getdate(nowdate())
