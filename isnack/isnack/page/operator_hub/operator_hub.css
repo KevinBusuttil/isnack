@@ -200,6 +200,10 @@
 .op-teal .chip-partial{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
 .op-teal .chip-not-allocated{ background:#f3f4f6; color:#6b7280; border-color:#e5e7eb; }
 .op-teal .chip-ended{ background:#1f2937; color:#f9fafb; border-color:#111827; }
+
+/* Materials snapshot: an outstanding Remain is amber, not Bootstrap's
+   low-contrast yellow — this table is read across a factory floor. */
+.op-teal .op-remain-due{ color:#92400e; font-weight:700; }
 .op-teal .row-current{
   background:var(--teal-soft);
   border-color:var(--teal);
@@ -685,6 +689,45 @@
 }
 .op-dialog .op-table tbody tr:nth-child(even){ background: #fbfdfd; }
 .op-dialog .op-table tbody tr:hover{ background: var(--isn-dialog-primary-soft-hover); }
+
+/* Scan target banner — the Work Order a scan is booked to. The Load dialog
+   stays open across scans and Frappe's static backdrop hides the queue, so
+   this is the operator's only standing cue that the order behind the dialog
+   is still the one they mean. Deliberately the loudest thing on the screen. */
+.op-dialog .op-scan-target{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .35rem .7rem;
+  background: var(--isn-dialog-primary);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: .7rem .9rem;
+  margin-bottom: .6rem;
+}
+.op-dialog .op-scan-target-k{
+  font-size: .78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  opacity: .88;
+}
+.op-dialog .op-scan-target-wo{
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: .3px;
+  line-height: 1.15;
+}
+.op-dialog .op-scan-target-item{
+  font-size: .95rem;
+  font-weight: 600;
+  opacity: .92;
+}
+.op-dialog .op-scan-target-item::before{
+  content: "\00B7";
+  margin-right: .45rem;
+  opacity: .7;
+}
 
 /* Themed alerts inside dialogs (used by End WO consumption summary) */
 .op-dialog .op-alert{

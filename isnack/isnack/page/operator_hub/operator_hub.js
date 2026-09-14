@@ -554,6 +554,11 @@ function init_operator_hub($root) {
     const rows = data.rows || [];
     const frag = document.createDocumentFragment();
     rows.forEach(it => {
+      // Remain (still to load against the recipe) and In WIP (still on the line
+      // for this order) answer different questions; both are clamped at zero
+      // server-side, so a fully loaded row reads 0 and not a red negative.
+      const remain = +it.remain || 0;
+      const inWip  = +it.in_wip || 0;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td class="fw-semibold">${frappe.utils.escape_html(it.item_code || '')}</td>
@@ -562,7 +567,8 @@ function init_operator_hub($root) {
         <td class="text-end">${fmt(it.required)}</td>
         <td class="text-end">${fmt(it.transferred)}</td>
         <td class="text-end"><span class="badge bg-info">${fmt(it.consumed)}</span></td>
-        <td class="text-end ${(+it.remain<0?'text-danger':'text-success')}">${fmt(it.remain)}</td>
+        <td class="text-end ${(inWip > 0.0001 ? 'fw-semibold' : 'text-muted')}">${fmt(inWip)}</td>
+        <td class="text-end ${(remain > 0.0001 ? 'op-remain-due' : 'text-success')}">${fmt(remain)}</td>
       `;
       frag.appendChild(tr);
     });
@@ -690,6 +696,16 @@ function init_operator_hub($root) {
     refreshButtonStates();
     if (state.current_wo) load_materials_snapshot(state.current_wo); else render_mat_empty('Select a Work Order to load materials.');
     flashStatus(`Selected ${wo_name} (${state.current_is_fg ? 'FG' : 'SF'})`, 'neutral');
+  }
+
+  // The product the active Work Order makes, for the scan dialogs. A scan is
+  // booked to whichever Work Order is selected behind the dialog, and the
+  // dialogs are the last place the operator can still notice it is the wrong
+  // one — Frappe's static backdrop means the queue cannot be clicked while
+  // one is open.
+  function current_wo_item_name() {
+    const row = (state.orders || []).find(x => x.name === state.current_wo);
+    return (row && row.item_name) || '';
   }
 
   // ---------- Scanner handling ----------
@@ -837,7 +853,7 @@ function init_operator_hub($root) {
           let settled = false;
 
           const d = opDialog({
-            title: 'Confirm Quantity to Consume',
+            title: `Consume into ${state.current_wo}`,
             fields: [
               { fieldtype: 'Section Break' },
               { label: 'Item Code', fieldname: 'item_code_ro', fieldtype: 'Data', read_only: 1, default: itemCode },
@@ -1007,13 +1023,28 @@ function init_operator_hub($root) {
       </div>
     `;
     
+    // The dialog stays open across scans, so the Work Order it books into has
+    // to stay on screen with it. The status line that used to be the only cue
+    // fades after 2.5 seconds, and the queue behind the static backdrop cannot
+    // be clicked to change order without closing the dialog first.
+    const wo = state.current_wo;
+    const woItem = current_wo_item_name();
+    const targetHTML = `
+      <div class="op-scan-target">
+        <span class="op-scan-target-k">Scanning into</span>
+        <span class="op-scan-target-wo">${frappe.utils.escape_html(wo)}</span>
+        ${woItem ? `<span class="op-scan-target-item">${frappe.utils.escape_html(woItem)}</span>` : ''}
+      </div>
+      <div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>
+    `;
+
     const d = opDialog({ 
-      title: 'Load / Scan Materials',
+      title: `Load Materials — ${wo}`,
       fields: [
         { 
           fieldname:'info', 
           fieldtype:'HTML', 
-          options:'<div class="text-muted">Scan raw, semi-finished, or packaging barcodes now…</div>' 
+          options: targetHTML
         },
         { 
           fieldname:'scan_history', 
@@ -1025,7 +1056,7 @@ function init_operator_hub($root) {
     
     d.show();
     setScanMode(true);
-    flashStatus(`Ready to scan for ${state.current_wo}`); 
+    flashStatus(`Ready to scan for ${wo}`); 
     focus_scan();
   });
 

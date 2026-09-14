@@ -4731,7 +4731,12 @@ def get_materials_snapshot(work_order: str):
     - Required: From BOM
     - Transferred: Via START button (Material Transfer for Manufacture)
     - Consumed: Via LOAD button (Material Consumption for Manufacture)
-    - Remaining: Required - (Transferred + Consumed)
+    - Remaining: Required - Consumed (how much the recipe still wants)
+    - In WIP: Transferred - Consumed (how much is still on the line)
+
+    Remaining and In WIP answer different questions and must not be merged:
+    consumption is drawn out of the transferred stock, so subtracting both
+    from the requirement double counts it.
     """
     _require_roles(["Factory Operator", "Stores User", "Production Manager"])
 
@@ -4755,6 +4760,7 @@ def get_materials_snapshot(work_order: str):
             "transferred": 0.0,
             "consumed": 0.0,
             "remain": required,
+            "in_wip": 0.0,
         })
 
     # Saved Work Order Required Qty wins over the BOM figure when editing is
@@ -4768,6 +4774,7 @@ def get_materials_snapshot(work_order: str):
         row.setdefault("transferred", 0.0)
         row.setdefault("consumed", 0.0)
         row.setdefault("remain", row.get("required", 0.0))
+        row.setdefault("in_wip", 0.0)
 
     # Get transferred quantities (from START button)
     transferred = frappe.db.sql("""
@@ -4801,7 +4808,15 @@ def get_materials_snapshot(work_order: str):
         item = row["item_code"]
         row["transferred"] = transferred_map.get(item, 0.0)
         row["consumed"] = consumed_map.get(item, 0.0)
-        row["remain"] = row["required"] - row["transferred"] - row["consumed"]
+        # Two different questions, two columns. Consumption is drawn OUT of the
+        # transferred stock, so subtracting both from the requirement double
+        # counts it: a row fully transferred and then fully consumed used to
+        # read -required, in red, on every completed line.
+        #
+        #   remain  -> how much more the recipe still wants loaded
+        #   in_wip  -> how much of this item the Work Order still has on the line
+        row["remain"] = max(row["required"] - row["consumed"], 0.0)
+        row["in_wip"] = max(row["transferred"] - row["consumed"], 0.0)
 
     scans = frappe.db.sql("""
         SELECT sed.item_code, sed.batch_no, sed.qty, sed.uom,
@@ -5160,8 +5175,18 @@ def consume_scanned_material(work_order: str, item_code: str, qty,
     # Duplicate guard: reject only a label already consumed for this WO. The
     # cache key is set *after* a successful post (below), so a cancelled or
     # failed confirmation never blocks a re-scan of the same label.
+    #
+    # The message must describe what this guard actually is: a short debounce
+    # against a double scan on ONE Work Order, not a permanent record that the
+    # label has been used up. A Storekeeper pallet label legitimately serves
+    # several Work Orders, and the operator's usual next step after seeing this
+    # is to load the *other* Work Order — so the message says how to do that.
     if _scan_already_consumed(work_order, raw_code):
-        frappe.throw(_("This label was already consumed for this Work Order"))
+        frappe.throw(
+            _("This label was just scanned for {0} (within the last {1} seconds). "
+              "If you are loading a different Work Order, select it in the queue "
+              "and press Start first.").format(work_order, _scan_dup_ttl())
+        )
 
     result = _post_material_consumption_for_wo(
         work_order,
