@@ -241,7 +241,8 @@ function init_operator_hub($root) {
     operator_locked: false,
     current_is_fg: false,
     current_wo_status: null,
-    current_stage_status: null
+    current_stage_status: null,
+    current_wo_started: false
   };
 
   // Status bar
@@ -373,6 +374,11 @@ function init_operator_hub($root) {
     // Once production has been ended, all material-movement / state-change
     // actions on this WO are blocked until Close Production runs.
     const enableLiveActions = enableActions && !isProductionEnded;
+    // Loading consumes out of WIP, and Start is what fills WIP. Before that
+    // a scan would take whatever stock of the item happens to be in the
+    // shared WIP — another order's, or an old surplus sweep — so the buttons
+    // stay out of reach until Start has run. The server refuses it too.
+    const enableLoading = enableLiveActions && !!state.current_wo_started;
     const status = state.current_wo_status;
 
     // Enable Start button only if status is "Not Started" and fully allocated
@@ -388,8 +394,8 @@ function init_operator_hub($root) {
     }
     $pauseBtn.prop('disabled', !enableLiveActions);
 
-    $('#btn-load',        $root).prop('disabled', !enableLiveActions);
-    $('#btn-manual-load', $root).prop('disabled', !enableLiveActions);
+    $('#btn-load',        $root).prop('disabled', !enableLoading);
+    $('#btn-manual-load', $root).prop('disabled', !enableLoading);
     $('#btn-request', $root).prop('disabled', !enableLiveActions);
     // Return is left available after End WO so operators can still return
     // surplus staged material before Close Production sweeps the WO.
@@ -685,6 +691,7 @@ function init_operator_hub($root) {
     state.current_wo_status = row ? row.status : null;
     state.current_stage_status = row ? row.stage_status : null;
     state.current_production_ended = row ? (row.custom_production_ended || false) : false;
+    state.current_wo_started = row ? !!row.started : false;
 
     grid.children('.list-group-item').removeClass('row-current')
       .filter(function () { return $(this).attr('data-wo') === wo_name; })

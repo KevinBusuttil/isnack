@@ -258,7 +258,7 @@ def _get_total_consumed_cost(work_order: str) -> float:
 
 def _apply_pre_consumed_cost_to_finished_item(se, work_order: str, finished_qty: float) -> None:
     """
-    Set basic_rate and set_basic_rate_manually on the finished item row of a Manufacture
+    Set basic_rate and set_basic_rate_manually on the output rows of a Manufacture
     Stock Entry so that ERPNext includes the cost of materials consumed in prior
     "Material Consumption for Manufacture" entries (via the LOAD button).
 
@@ -266,10 +266,16 @@ def _apply_pre_consumed_cost_to_finished_item(se, work_order: str, finished_qty:
     a zero outgoing_items_cost for the current entry and assigns a zero basic_rate to the
     finished good, which causes a "Valuation Rate required" error on submit.
 
+    A scrap row is an output too, and ERPNext demands a rate on it for the same
+    reason, so the cost is spread over good plus reject rather than good alone.
+    Rejected units came off the same line out of the same materials, so they
+    carry the same unit cost, and total value is preserved. With no scrap row
+    this is arithmetically identical to the good-only figure it replaces.
+
     Args:
-        se: Stock Entry document (not yet inserted)
+        se: Stock Entry document (not yet inserted), with any scrap row already appended
         work_order: Work Order name
-        finished_qty: Finished good quantity
+        finished_qty: Good (non-reject) output quantity
     """
     pre_consumed_cost = _get_total_consumed_cost(work_order)
     if not (pre_consumed_cost > 0 and finished_qty > 0):
@@ -303,11 +309,23 @@ def _apply_pre_consumed_cost_to_finished_item(se, work_order: str, finished_qty:
         )
 
     total_cost = pre_consumed_cost + remaining_materials_cost
+
+    # Rejects share the cost with the good output; pricing only the finished
+    # row leaves the scrap row at zero and ERPNext refuses the entry with
+    # "Valuation Rate for the Item ... is required".
+    scrap_qty = sum(
+        flt(row.qty) for row in se.items
+        if row.get("is_scrap_item") and not row.get("is_finished_item")
+    )
+    output_qty = flt(finished_qty) + scrap_qty
+    if output_qty <= 0:
+        return
+
+    unit_rate = total_cost / output_qty
     for row in se.items:
-        if row.get("is_finished_item"):
-            row.basic_rate = total_cost / finished_qty
+        if row.get("is_finished_item") or row.get("is_scrap_item"):
+            row.basic_rate = unit_rate
             row.set_basic_rate_manually = 1
-            break
 
 
 def _get_bom_items_for_quantity(bom_no: str, qty: float, exploded: bool = True) -> list:
@@ -1297,6 +1315,7 @@ def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
             "custom_factory_line",
             "custom_production_ended",
             "planned_start_date",
+            "actual_start_date",
             "creation",
         ],
         order_by="coalesce(planned_start_date, creation) asc",
@@ -1319,6 +1338,10 @@ def get_line_queue(line: Optional[str] = None, lines: Optional[str] = None):
                 "type": "FG" if _is_fg(wo.production_item) else "SF",
                 "custom_production_ended": wo.get("custom_production_ended", 0),
                 "planned_start_date": wo.get("planned_start_date"),
+                # Start is what moves staged material into WIP, so it also
+                # decides whether the hub may offer the Load buttons at all.
+                # actual_start_date survives Pause/Resume where status does not.
+                "started": bool(wo.get("actual_start_date")),
             }
         )
     return out
@@ -2530,14 +2553,23 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     # Add scrap/rejects if applicable
     if rejects > 0:
         scrap_wh = _default_line_scrap(work_order)
-        if scrap_wh:
-            se.append("items", {
-                "item_code": wo.production_item,
-                "qty": rejects,
-                "uom": uom,
-                "is_scrap_item": 1,
-                "t_warehouse": scrap_wh,
-            })
+        if not scrap_wh:
+            # The other two close paths already refuse this. Falling through
+            # without the row would post the entry and drop the reject
+            # quantity without a word, which is worse than not closing.
+            line = _line_for_work_order(work_order) or "?"
+            frappe.throw(_(
+                "Scrap warehouse is not configured for line {0} (Work Order {1}). "
+                "Set scrap_warehouse in Factory Settings → Line Warehouse Map before "
+                "completing production with rejects."
+            ).format(line, work_order))
+        se.append("items", {
+            "item_code": wo.production_item,
+            "qty": rejects,
+            "uom": uom,
+            "is_scrap_item": 1,
+            "t_warehouse": scrap_wh,
+        })
 
     # Set basic_rate on the finished item to account for costs from prior
     # "Material Consumption for Manufacture" entries (consumed via LOAD button).
@@ -2607,6 +2639,29 @@ def _assert_not_ended(work_order: str) -> None:
         frappe.throw(
             _("Work Order {0} has been ended; further material movements are "
               "not allowed until Close Production.").format(work_order)
+        )
+
+
+def _assert_started(work_order: str) -> None:
+    """Material may only be consumed out of WIP, and Start is what fills WIP.
+
+    Loading before Start does not fail on its own: WIP is shared across the
+    Work Orders on a line, so a scan simply consumes whatever stock of that
+    item happens to be there — another order's material, or an old surplus
+    sweep — while the batch the storekeeper actually staged for this order
+    stays in staging. That silently breaks batch traceability rather than
+    raising anything, which is why this has to be a guard and not a warning.
+
+    actual_start_date is set by set_work_order_state("Start") and is never
+    cleared, so it survives a later Pause/Resume, unlike status.
+    """
+    if not work_order:
+        return
+    if not frappe.db.get_value("Work Order", work_order, "actual_start_date"):
+        frappe.throw(
+            _("Work Order {0} has not been started. Press Start first — that is "
+              "what moves its staged material into the line's WIP warehouse.")
+            .format(work_order)
         )
 
 
@@ -5237,6 +5292,9 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
         frappe.throw(_("Missing work_order"))
 
     _assert_not_ended(work_order)
+    # Both entry points come through here: consume_scanned_material and
+    # manual_load_materials.
+    _assert_started(work_order)
 
     if not items:
         frappe.throw(_("No items provided"))
