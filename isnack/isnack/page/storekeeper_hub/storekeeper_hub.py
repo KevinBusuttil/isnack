@@ -2492,10 +2492,20 @@ def fulfil_material_request(material_request: str,
         frappe.throw(_("Qty {0} exceeds remaining {1} {2}").format(
             qty, remaining, mri.uom or ""))
 
-    # Resolve target warehouse: prefer staging, fall back to WIP. Mirrors the
-    # logic used by `create_consolidated_transfers`.
+    # Resolve target warehouse. Before Start, prefer staging and fall back to
+    # WIP, mirroring `create_consolidated_transfers`.
+    #
+    # After Start, the preference reverses. Start is the only thing that moves
+    # staged material into WIP, and it does not run a second time, so anything
+    # delivered to staging afterwards has no way of reaching the line: the
+    # operator cannot consume it and it sits in staging while the material is
+    # used on the floor. A request raised mid-run has to land where the
+    # operator can actually consume it.
     wo_doc = frappe.get_doc("Work Order", mr.work_order)
-    target_wh = _staging_for(wo_doc) or _wip_for(wo_doc)
+    if wo_doc.get("actual_start_date"):
+        target_wh = _wip_for(wo_doc) or _staging_for(wo_doc)
+    else:
+        target_wh = _staging_for(wo_doc) or _wip_for(wo_doc)
     if not target_wh:
         frappe.throw(_("No Staging or WIP warehouse configured for WO {0}").format(wo_doc.name))
 
