@@ -13,6 +13,10 @@ reads. Everything else falls through to ``erpnext.stock.utils.scan_barcode``,
 so plain item barcodes, bare batch numbers and warehouse scans keep behaving
 exactly as stock ERPNext.
 
+A pipe/tilde label for a batch-tracked item must carry a batch: an empty
+batch segment is refused here rather than answered, so the operator is told
+to reprint at the scanner instead of hitting an unrelated error at save.
+
 Feature-flagged by Factory Settings ("Enable Delivery Note Label Scanning");
 while disabled this endpoint is a transparent proxy to the stock lookup.
 """
@@ -158,6 +162,21 @@ def scan_delivery_note_code(search_value: str, ctx=None):
         frappe.throw(
             _(
                 "Item {0} is serialised; scan its serial numbers instead of a label."
+            ).format(frappe.bold(item_code))
+        )
+
+    # Applying a batch-less label would set use_serial_batch_fields on a
+    # batch-tracked row with no batch, which survives the scan and only fails
+    # far later at save/submit, with an error pointing nowhere near the label.
+    # Refuse it here, where the operator still has the carton in hand. Only a
+    # pipe/tilde payload is one of our labels: a GS1 trade-unit barcode
+    # legitimately carries no (10) batch AI and must keep scanning.
+    if has_separator and cint(item.has_batch_no) and not batch_no:
+        frappe.throw(
+            _(
+                "Scanned label for Item {0} carries no batch. The batch is "
+                "assigned at Close Production — close the Work Order if it is "
+                "still open, then reprint the label from the Operator Hub."
             ).format(frappe.bold(item_code))
         )
 

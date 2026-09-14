@@ -14,6 +14,7 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _process_batch_spaces,
 )
 from isnack.utils import work_order_demand
+from isnack.utils.batch_lineage import fg_batch_for_work_order, fg_batch_for_work_orders
 from isnack.utils.printing import get_label_printer
 from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
@@ -1182,7 +1183,7 @@ def get_wo_banner(work_order):
     rejects = wo.get("custom_rejects_qty") or 0
     is_fg = _is_fg(wo.production_item)
     type_chip = "FG" if is_fg else "SF"
-    batch = wo.get("batch_no") or "-"
+    batch = fg_batch_for_work_order(work_order) or "-"
     line = _line_for_work_order(work_order) or "-"
     ended = bool(wo.get("custom_production_ended"))
     ended_badge = (
@@ -4127,6 +4128,11 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
     if not _is_fg(wo.production_item):
         frappe.throw(_("Label printing allowed only for finished goods"))
 
+    # A Work Order holds no batch of its own: the FG batch is booked by its
+    # submitted Manufacture Stock Entry. Resolve it once and use it everywhere
+    # this label is recorded or rendered.
+    fg_batch = fg_batch_for_work_order(work_order)
+
     fs = _fs()
     # Try default_fg_label_print_format first (for FG carton labels), then fall back to default_label_print_format and default_label_template for backward compatibility
     template = template or getattr(fs, "default_fg_label_print_format", None) or getattr(fs, "default_label_print_format", None) or getattr(fs, "default_label_template", None)
@@ -4148,7 +4154,7 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         label_record.quantity = carton_qty
         label_record.item_code = wo.production_item
         label_record.item_name = wo.item_name
-        label_record.batch_no = wo.get("batch_no")
+        label_record.batch_no = fg_batch
         label_record.append("sources", {
             "source_doctype": "Work Order",
             "source_docname": wo.name,
@@ -4171,15 +4177,19 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
         pc = frappe.new_doc("Packed Carton")
         pc.work_order = wo.name
         pc.item_code = wo.production_item
-        pc.batch_no = wo.get("batch_no")
+        pc.batch_no = fg_batch
         pc.qty = carton_qty
         pc.label_template = template
         pc.flags.ignore_permissions = True
         pc.insert()
     
     # Return print URL for client-side printing
-    print_url = frappe.utils.get_url(
-        f"/printview?doctype=Work%20Order&name={frappe.utils.quote(work_order)}&format={frappe.utils.quote(template)}&carton_qty={carton_qty}&trigger_print=1"
+    print_url = _generate_print_url(
+        "Work Order",
+        work_order,
+        template,
+        batch_no=fg_batch or "",
+        carton_qty=carton_qty,
     )
     
     # Get silent printing settings
@@ -4240,6 +4250,11 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
     if not frappe.db.exists("Work Order", first_work_order):
         frappe.throw(_("Work Order {0} not found").format(first_work_order))
 
+    # A pallet can span several Work Orders, so the batch is only printable when
+    # they all booked the same one; otherwise the label stays batch-less rather
+    # than claiming one of them.
+    fg_batch = fg_batch_for_work_orders(wo_list)
+
     fs = _fs()
     # Try default_fg_label_print_format first (for FG pallet labels), then fall back to 
     # default_label_print_format and default_label_template for backward compatibility
@@ -4279,6 +4294,7 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         label_record.quantity = pallet_qty
         label_record.item_code = item_code
         label_record.item_name = item_name
+        label_record.batch_no = fg_batch
         
         # Populate sources child table for multi-WO support
         for wo_name in wo_list:
@@ -4305,38 +4321,31 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
     default_label_printer = get_label_printer(fs)
 
-    base_url = _generate_print_url("Work Order", first_work_order, template)
-    pallet_type_q = frappe.utils.quote(pallet_type)
-
-    def _fmt(n):
-        n = flt(n)
-        return int(n) if n == int(n) else n
-
-    # Split the cartons across pallets so each label shows the cartons on THAT
-    # pallet, not the full Work Order quantity. Full pallets carry
-    # ceil(carton_qty / pallet_qty) cartons; the last pallet carries the
-    # remainder. e.g. 1000 cartons over 15.385 pallets -> 15 labels of 65 + 1
-    # of 25. The FG print format reads carton_qty from the query string.
-    cq = flt(carton_qty)
-    quantities = []
-    if cq > 0 and flt(pallet_qty) > 0:
-        cartons_per_pallet = math.ceil(round(cq / flt(pallet_qty), 6))
-        if cartons_per_pallet > 0:
-            full_pallets = int(cq // cartons_per_pallet)
-            quantities = [cartons_per_pallet] * full_pallets
-            remainder = cq - full_pallets * cartons_per_pallet
-            if remainder > 1e-6:
-                quantities.append(remainder)
+    quantities = _pallet_carton_split(carton_qty, pallet_qty)
 
     if quantities:
         print_urls = [
-            f"{base_url}&carton_qty={_fmt(q)}&pallet_qty={pallet_qty}"
-            f"&pallet_type={pallet_type_q}"
+            _generate_print_url(
+                "Work Order",
+                first_work_order,
+                template,
+                batch_no=fg_batch or "",
+                carton_qty=q,
+                pallet_qty=pallet_qty,
+                pallet_type=pallet_type,
+            )
             for q in quantities
         ]
     else:
         # No carton_qty supplied: keep legacy one-identical-URL-per-pallet.
-        legacy_url = f"{base_url}&pallet_qty={pallet_qty}&pallet_type={pallet_type_q}"
+        legacy_url = _generate_print_url(
+            "Work Order",
+            first_work_order,
+            template,
+            batch_no=fg_batch or "",
+            pallet_qty=pallet_qty,
+            pallet_type=pallet_type,
+        )
         print_urls = [legacy_url] * max(1, math.ceil(flt(pallet_qty)))
 
     print_url = print_urls[0]
@@ -4406,7 +4415,8 @@ def list_label_records(work_order: str):
     return records
 
 
-def _generate_print_url(source_doctype: str, source_docname: str, print_format: str, row_name: str = None) -> str:
+def _generate_print_url(source_doctype: str, source_docname: str, print_format: str, row_name: str = None,
+                        batch_no: str = None, carton_qty=None, pallet_qty=None, pallet_type: str = None) -> str:
     """
     Helper function to generate print URL for a document.
     
@@ -4415,15 +4425,143 @@ def _generate_print_url(source_doctype: str, source_docname: str, print_format: 
         source_docname: Name of the source document
         print_format: Print format name
         row_name: Optional row name for child table items (e.g., Stock Entry Detail)
+        batch_no: Optional batch to render on the label. A Work Order has no batch
+            field of its own, so the query string is the only way the label
+            formats can learn which batch was produced.
+        carton_qty: Optional carton count for the label; without it the format
+            falls back to the source document's full quantity
+        pallet_qty: Optional pallet count for pallet labels
+        pallet_type: Optional pallet UOM for pallet labels
     
     Returns:
         Full print URL
     """
     url = f"/printview?doctype={frappe.utils.quote(source_doctype)}&name={frappe.utils.quote(source_docname)}&format={frappe.utils.quote(print_format)}"
-    if row_name:
-        url += f"&row_name={frappe.utils.quote(row_name)}"
+    # Every caller goes through here so the escaping stays in one place and a new
+    # parameter can never be forgotten on one of the print paths.
+    for key, value in (
+        ("row_name", row_name),
+        ("batch_no", batch_no),
+        ("carton_qty", carton_qty),
+        ("pallet_qty", pallet_qty),
+        ("pallet_type", pallet_type),
+    ):
+        # `is not None` rather than truthiness so a legitimate 0 still reaches the format.
+        if value is not None:
+            url += f"&{key}={frappe.utils.quote(str(value))}"
     url += "&trigger_print=1"
     return frappe.utils.get_url(url)
+
+
+def _pallet_carton_split(carton_qty, pallet_qty) -> list:
+    """
+    Cartons carried by each pallet of a run, one entry per printed label.
+
+    Full pallets carry ceil(carton_qty / pallet_qty) cartons and the last pallet
+    carries the remainder, so each label shows the cartons on THAT pallet rather
+    than the whole run. e.g. 1000 cartons over 15.385 pallets -> 15 labels of 65
+    plus one of 25. The FG print format reads carton_qty off the query string.
+
+    Args:
+        carton_qty: Total cartons across the run
+        pallet_qty: Total pallets the cartons were split across
+
+    Returns:
+        list of carton counts, one per label; empty when either input is zero
+    """
+    cq = flt(carton_qty)
+    pq = flt(pallet_qty)
+    if cq <= 0 or pq <= 0:
+        return []
+
+    cartons_per_pallet = math.ceil(round(cq / pq, 6))
+    if cartons_per_pallet <= 0:
+        return []
+
+    def _fmt(n):
+        # Rounded before display: a proportional share (a split reprint) would
+        # otherwise put 90.99999998 cartons on a label.
+        n = round(flt(n), 6)
+        return int(n) if n == int(n) else n
+
+    full_pallets = int(cq // cartons_per_pallet)
+    out = [_fmt(cartons_per_pallet)] * full_pallets
+    remainder = cq - full_pallets * cartons_per_pallet
+    if remainder > 1e-6:
+        out.append(_fmt(remainder))
+    return out
+
+
+def _label_record_batch(record) -> Optional[str]:
+    """
+    The batch a stored Label Record should print.
+
+    Labels created before the batch was resolved at print time carry no
+    ``batch_no`` of their own, so fall back to resolving it from the Work Orders
+    in the record's ``sources`` — the same read the original print would have
+    done. Returns None when the sources disagree or hold no batch, which keeps a
+    mixed-batch label batch-less instead of claiming one of them.
+
+    Args:
+        record: Label Record document
+
+    Returns:
+        Batch number, or None when there is no single one to print
+    """
+    if record.batch_no:
+        return record.batch_no
+
+    work_orders = [
+        src.source_docname
+        for src in (record.sources or [])
+        if src.source_doctype == "Work Order" and src.source_docname
+    ]
+    return fg_batch_for_work_orders(work_orders) if work_orders else None
+
+
+def _label_print_params(record, qty) -> list:
+    """
+    Quantity query parameters that reproduce a stored Label Record's label(s).
+
+    The print paths put the quantity on the URL, never on the Label Record, so a
+    reprint that omits it re-renders at the source document's full quantity.
+    Carton labels are one label of ``qty``. A pallet label is really a SET of
+    labels — print_pallet_label splits the run's cartons across the pallets and
+    prints one label per pallet — so reproducing it means reproducing the split,
+    not stamping the run's carton total onto a single pallet.
+
+    Args:
+        record: Label Record document
+        qty: Quantity for this copy (the record's quantity, or one split share)
+
+    Returns:
+        list of _generate_print_url keyword-argument dicts, one per label
+    """
+    payload = {}
+    try:
+        parsed = json.loads(record.payload) if record.payload else {}
+        if isinstance(parsed, dict):
+            payload = parsed
+    except (TypeError, ValueError):
+        # print_label stores a plain "Print Format: X" string rather than JSON.
+        pass
+
+    pallet_type = payload.get("pallet_type")
+    if not pallet_type:
+        return [{"carton_qty": qty}]
+
+    # Splitting a pallet record hands us a share of its pallets, so it takes the
+    # matching share of its cartons with it; the shares sum back to the original.
+    total_pallets = flt(record.quantity)
+    share = flt(qty) / total_pallets if total_pallets > 0 else 1.0
+    cartons = _pallet_carton_split(round(flt(payload.get("carton_qty")) * share, 6), qty)
+    if not cartons:
+        return [{"pallet_qty": qty, "pallet_type": pallet_type}]
+
+    return [
+        {"carton_qty": c, "pallet_qty": qty, "pallet_type": pallet_type}
+        for c in cartons
+    ]
 
 
 @frappe.whitelist()
@@ -4462,6 +4600,11 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
     source_doctype = first_source.source_doctype if first_source else None
     source_docname = first_source.source_docname if first_source else None
 
+    # Resolved once: historical records carry no batch of their own. Sent as ""
+    # rather than omitted so the label formats treat it as "no single batch"
+    # instead of falling back to their own per-document lookup.
+    record_batch = _label_record_batch(record) or ""
+
     # Check if the label_template is a Print Format (new method)
     is_print_format = frappe.db.exists("Print Format", record.label_template)
     
@@ -4484,7 +4627,10 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                 if target_printer:
                     jobs.append(_create_label_print_job(record, target_printer, item.qty, reason_code=reason_code))
                 
-                # Generate print URL with row_name parameter
+                # Generate print URL with row_name parameter. Each row carries
+                # its own qty and its own batch, so neither is replayed here —
+                # the record-level batch belongs to one row and stamping it on
+                # all of them would relabel the rest.
                 print_urls.append(_generate_print_url(
                     source_doctype,
                     source_docname,
@@ -4501,7 +4647,8 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                     print_urls.append(_generate_print_url(
                         source_doctype,
                         source_docname,
-                        record.label_template
+                        record.label_template,
+                        batch_no=record_batch
                     ))
     else:
         # Standard handling for split printing or non-Stock Entry documents
@@ -4509,13 +4656,20 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
             if target_printer:
                 jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
             
-            # Generate print URL for client-side printing
+            # Generate print URL for client-side printing. The quantity has to
+            # ride on the URL — without it the format re-renders at the Work
+            # Order's full qty — and each split copy gets its own share.
             if source_doctype and source_docname:
-                print_urls.append(_generate_print_url(
-                    source_doctype,
-                    source_docname,
-                    record.label_template
-                ))
+                # A pallet record reprints as the whole set of pallet labels it
+                # originally produced, so this yields one URL per physical label.
+                for qty_params in _label_print_params(record, qty):
+                    print_urls.append(_generate_print_url(
+                        source_doctype,
+                        source_docname,
+                        record.label_template,
+                        batch_no=record_batch,
+                        **qty_params
+                    ))
 
     # Get silent printing settings
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
@@ -4582,6 +4736,12 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
 
     records = [frappe.get_doc("Label Record", n) for n in names]
 
+    # Labels printed before the batch was stamped on the record carry none, so
+    # each record's batch is resolved from its Work Order sources before they
+    # are compared — otherwise combining a pre-fix label with a post-fix one
+    # would be refused for a difference that is not real.
+    batches = {rec.name: _label_record_batch(rec) for rec in records}
+
     first = records[0]
     for rec in records[1:]:
         if (rec.item_code or "") != (first.item_code or ""):
@@ -4590,9 +4750,9 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
         if (rec.label_template or "") != (first.label_template or ""):
             frappe.throw(_("All selected labels must use the same Label Template (got {0} and {1}).")
                          .format(first.label_template, rec.label_template))
-        if (rec.batch_no or "") != (first.batch_no or ""):
+        if (batches.get(rec.name) or "") != (batches.get(first.name) or ""):
             frappe.throw(_("All selected labels must share the same Batch (got {0} and {1}).")
-                         .format(first.batch_no or "-", rec.batch_no or "-"))
+                         .format(batches.get(first.name) or "-", batches.get(rec.name) or "-"))
 
     total_qty = sum(flt(rec.quantity) for rec in records)
     if total_qty <= 0:
@@ -4611,13 +4771,13 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
     }
     combined.payload = json.dumps(payload_info)
     combined.payload_hash = hashlib.sha256(
-        f"combine_{first.label_template}_{first.item_code}_{first.batch_no or ''}_{total_qty}_{'|'.join(names)}".encode("utf-8")
+        f"combine_{first.label_template}_{first.item_code}_{batches.get(first.name) or ''}_{total_qty}_{'|'.join(names)}".encode("utf-8")
     ).hexdigest()
 
     combined.quantity = total_qty
     combined.item_code = first.item_code
     combined.item_name = first.item_name
-    combined.batch_no = first.batch_no
+    combined.batch_no = batches.get(first.name)
 
     # Union the source documents from every input record, preserving order
     seen_sources = set()
@@ -4683,16 +4843,18 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
         ))
 
     if source_doctype and source_docname:
-        url = _generate_print_url(
+        qty_params = (
+            {"pallet_qty": total_qty, "pallet_type": pallet_type or ""}
+            if is_pallet_label
+            else {"carton_qty": total_qty}
+        )
+        print_urls.append(_generate_print_url(
             source_doctype,
             source_docname,
             combined.label_template,
-        )
-        if is_pallet_label:
-            url = f"{url}&pallet_qty={total_qty}&pallet_type={frappe.utils.quote(pallet_type or '')}"
-        else:
-            url = f"{url}&carton_qty={total_qty}"
-        print_urls.append(url)
+            batch_no=combined.batch_no or "",
+            **qty_params
+        ))
 
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
 

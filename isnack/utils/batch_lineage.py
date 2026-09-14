@@ -40,6 +40,10 @@ Design rules
   explicit ``batch_no``; ``abs(Serial and Batch Entry.qty)`` for rows whose
   batches ERPNext auto-picked into a bundle (ERPNext validates that the bundle
   total equals ``transfer_qty``; entry qty is negative for outward bundles).
+* The label-facing ``fg_batch*`` resolvers never raise. A print format has no
+  way to recover mid-render, so a batch that cannot be read back degrades to
+  an empty list / ``None`` and the label prints without one; every other helper
+  here lets read errors propagate.
 """
 
 from __future__ import annotations
@@ -439,6 +443,120 @@ def compute_share(fg_rows, batch_no) -> dict:
 		"share": share,
 		"shared": share is not None and share < 1 - SHARE_TOLERANCE,
 	}
+
+
+def fg_batches_for_work_order(work_order: str) -> list[str]:
+	"""Distinct batches booked as finished goods by a Work Order's submitted
+	Manufacture Stock Entries, in first-seen order. Bundle-aware.
+
+	The label-facing counterpart of ``finished_goods``: a Work Order carries no
+	batch of its own, so anything that labels its output has to read the batch
+	back off the Manufacture entry. Only entries stamped with the Work Order are
+	read: the surplus lineage ``find_work_order_entries`` walks is Material
+	Transfers throughout and never books finished goods. Scrap rows are left out
+	as well; they carry the same batch as the finished item, but a label must
+	never be printed off the scrap row.
+	"""
+	return _fg_batches_by_work_order([work_order]).get(work_order) or []
+
+
+def fg_batch_for_work_order(work_order: str) -> str | None:
+	"""The Work Order's single finished-goods batch; ``None`` when it has none or several."""
+	batches = fg_batches_for_work_order(work_order)
+	return batches[0] if len(batches) == 1 else None
+
+
+def bundle_batch_no(bundle) -> str | None:
+	"""The single batch held by a Serial and Batch Bundle; ``None`` for none or several.
+
+	Print-format fallback (Jinja method) for a Stock Entry Detail row whose own
+	``batch_no`` is blank because ERPNext stored the batch only in the bundle —
+	what happens whenever Stock Settings ``use_serial_batch_fields`` is off. Like
+	the ``fg_batch*`` resolvers it never raises.
+	"""
+	if not bundle:
+		return None
+	try:
+		batches = fetch_bundle_batches([bundle]).get(bundle) or []
+	except Exception:
+		return None
+	return batches[0][0] if len(batches) == 1 else None
+
+
+def fg_batch_for_work_orders(work_orders) -> str | None:
+	"""The batch shared by every Work Order in the list; ``None`` when they
+	disagree, when any has none, or when the list is empty.
+
+	Used by pallet and combined labels that span several Work Orders: one label
+	carries one batch, so a mixed pallet resolves to no batch rather than to the
+	batch of whichever Work Order happened to be listed first.
+	"""
+	wos = [w for w in dict.fromkeys(work_orders or []) if w]
+	if not wos:
+		return None
+	by_work_order = _fg_batches_by_work_order(wos)
+	shared = None
+	for wo in wos:
+		batches = by_work_order.get(wo) or []
+		if len(batches) != 1 or (shared is not None and batches[0] != shared):
+			return None
+		shared = batches[0]
+	return shared
+
+
+def _fg_batches_by_work_order(work_orders) -> dict[str, list[str]]:
+	"""``{work_order: [batch_no, ...]}`` for a whole list, three reads in total.
+
+	Work Orders with no finished-goods batch are simply absent from the result.
+	"""
+	wos = [w for w in dict.fromkeys(work_orders or []) if w]
+	if not wos:
+		return {}
+
+	# every read the resolver does lives in here; nothing is logged, because the
+	# caller is a label render that has no way to report a failure anyway
+	try:
+		entries = frappe.get_all(
+			"Stock Entry",
+			filters={"work_order": ["in", wos], "purpose": "Manufacture", "docstatus": 1},
+			fields=["name", "work_order"],
+			order_by="posting_date, posting_time, name",
+		)
+		if not entries:
+			return {}
+		rows = frappe.get_all(
+			"Stock Entry Detail",
+			filters={
+				"parenttype": "Stock Entry",
+				"parent": ["in", sorted({e.name for e in entries})],
+				"is_finished_item": 1,
+			},
+			fields=["parent", "batch_no", "serial_and_batch_bundle", "transfer_qty", "qty", "is_scrap_item"],
+			order_by="parent, idx",
+			parent_doctype="Stock Entry",
+		)
+		# dropped here rather than in the filter so a row whose flag was never
+		# written still counts as finished goods
+		rows = [r for r in rows if not cint(r.get("is_scrap_item"))]
+		bundle_map = fetch_bundle_batches([r.serial_and_batch_bundle for r in rows if not r.get("batch_no")])
+	except Exception:
+		return {}
+
+	rows_by_entry: dict[str, list] = {}
+	for r in rows:
+		rows_by_entry.setdefault(r.parent, []).append(r)
+
+	out: dict[str, list[str]] = {}
+	for entry in entries:
+		for row in rows_by_entry.get(entry.name, []):
+			for part in expand_row_batches(row, bundle_map):
+				# a finished item that is not batch tracked expands to no batch
+				if not part["batch_no"]:
+					continue
+				batches = out.setdefault(entry.work_order, [])
+				if part["batch_no"] not in batches:
+					batches.append(part["batch_no"])
+	return out
 
 
 # ---------------------------------------------------------------------------
