@@ -810,6 +810,45 @@ def _submitted_mtfm_item_qty_by_key(work_order: str) -> dict[tuple, float]:
     }
 
 
+def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]:
+    """Per-item quantity this Work Order brought into its own WIP warehouse.
+
+    Everything that arrived under this Work Order's name, by direction rather
+    than by purpose. Start moves the staged material in as a Material Transfer
+    for Manufacture, but it is not the only route: a Material Request fulfilled
+    after Start and surplus swept in at close both arrive as plain Material
+    Transfers. Counting only the first would refuse material the operator was
+    deliberately given.
+    """
+    if not work_order or not wip_warehouse:
+        return {}
+    rows = frappe.db.sql("""
+        select sed.item_code, coalesce(sum(sed.qty), 0) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus = 1
+          and se.work_order = %(wo)s
+          and sed.t_warehouse = %(wip)s
+        group by sed.item_code
+    """, {"wo": work_order, "wip": wip_warehouse}, as_dict=True)
+    return {r.item_code: flt(r.qty) for r in rows}
+
+
+def _consumed_by_item(work_order: str) -> dict[str, float]:
+    """Per-item quantity already consumed for this Work Order via the LOAD button."""
+    rows = frappe.db.sql("""
+        select sed.item_code, coalesce(sum(sed.qty), 0) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus = 1
+          and se.work_order = %s
+          and se.purpose = 'Material Consumption for Manufacture'
+          and sed.is_finished_item = 0
+        group by sed.item_code
+    """, (work_order,), as_dict=True)
+    return {r.item_code: flt(r.qty) for r in rows}
+
+
 def _is_fg(item_code: str) -> bool:
     """Classify a production item as Finished Good (vs Semi-Finished).
 
@@ -3010,7 +3049,10 @@ def get_ended_work_orders(lines: str = None):
     work_orders = frappe.get_all(
         "Work Order",
         filters=filters,
-        fields=["name", "production_item", "qty"],
+        fields=["name", "production_item", "qty",
+                # So the dialog can show which orders were ended on an earlier
+                # day: those are the ones that get swept into a close silently.
+                "actual_end_date", "planned_start_date"],
         order_by="creation asc"
     )
 
@@ -3021,9 +3063,13 @@ def get_ended_work_orders(lines: str = None):
         ]
     
     # Enrich with item names and FG/SFG classification (by Item Group, see _is_fg)
+    today = frappe.utils.getdate()
     for wo in work_orders:
         wo["item_name"] = frappe.db.get_value("Item", wo["production_item"], "item_name") or wo["production_item"]
         wo["is_sfg"] = not _is_fg(wo["production_item"])
+        ended_on = wo.get("actual_end_date")
+        wo["ended_on"] = frappe.utils.getdate(ended_on) if ended_on else None
+        wo["is_stale"] = bool(wo["ended_on"] and wo["ended_on"] < today)
 
     return {"work_orders": work_orders}
 
@@ -3970,9 +4016,18 @@ def close_production(groups: str = None, lines: str = None,
                 "good_qty": float,
                 "reject_qty": float,
                 "batch_no": "AAA-000",
-                "packaging_usage": [{"item_code", "qty", "batch_no"}, ...]
+                "packaging_usage": [{"item_code", "qty", "batch_no"}, ...],
+                "work_orders": ["MFG-WO-..."]   # optional, see below
             }, ...]
         lines: JSON array of line names to scope ended-WO lookup.
+
+        work_orders, when given on a group, names exactly which ended orders
+        this close covers. Each is still checked for being ended, unclosed, of
+        this product and on the selected lines. Omit it and every ended,
+        unclosed order of the product on those lines is taken, which sweeps in
+        an order left ended from an earlier day: one entry of 300 cartons was
+        split 150/150 across a stale order and the current one, under a single
+        batch code, though each had consumed a full charge of its own.
 
         good_qty/reject_qty/batch_no/packaging_usage: legacy single-product
             signature, retained only so old clients keep working. New callers
@@ -4047,6 +4102,21 @@ def close_production(groups: str = None, lines: str = None,
         if line_list:
             filters["custom_factory_line"] = ["in", line_list]
 
+        chosen = g.get("work_orders") or None
+        if chosen:
+            if isinstance(chosen, str):
+                try:
+                    chosen = json.loads(chosen)
+                except Exception:
+                    frappe.throw(_("Invalid work_orders payload"))
+            chosen = [str(w).strip() for w in chosen if str(w or "").strip()]
+        if chosen:
+            # The caller named its orders. Filter rather than trust: the same
+            # ended/unclosed/product/line conditions still have to hold, so a
+            # stale tab cannot close an order that has moved on since it
+            # rendered, and a chosen order cannot smuggle in another product.
+            filters["name"] = ["in", chosen]
+
         ended_wos = frappe.get_all(
             "Work Order",
             filters=filters,
@@ -4059,6 +4129,14 @@ def close_production(groups: str = None, lines: str = None,
                 wo for wo in ended_wos
                 if _line_for_work_order(wo["name"]) in line_list
             ]
+        if chosen:
+            found = {wo["name"] for wo in ended_wos}
+            missing = [w for w in chosen if w not in found]
+            if missing:
+                frappe.throw(_(
+                    "These Work Orders are no longer ended and awaiting close, or are not "
+                    "on the selected lines: {0}. Reload the queue and try again."
+                ).format(", ".join(sorted(missing))))
         if not ended_wos:
             label = production_item or _("the specified lines")
             frappe.throw(_("No ended work orders found for {0}").format(label))
@@ -5306,6 +5384,16 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
 
     packaging_groups = _packaging_groups_global()
 
+    # WIP is shared: CORN MIX, SLURRY 1 and CORN EXTRUSION all draw on the same
+    # warehouse, and nothing in ERPNext reserves a Work Order's material inside
+    # it. These two maps are the ceiling — what this order brought in, and what
+    # it has taken out so far — so it cannot eat an order's material that has
+    # not been loaded yet.
+    wip_inflow = _wip_inflow_by_item(work_order, s_wh)
+    consumed_map = _consumed_by_item(work_order)
+    # One consumption entry may carry several rows of the same item.
+    pending_qty: dict[str, float] = {}
+
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Consumption for Manufacture"
     se.stock_entry_type = "Material Consumption for Manufacture"
@@ -5352,17 +5440,8 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
                     if planned_required is not None
                     else float(bom_item_qty[0].qty_per_unit) * wo_qty
                 )
-                already_consumed = frappe.db.sql("""
-                    SELECT COALESCE(SUM(sed.qty), 0) AS total
-                    FROM `tabStock Entry` se
-                    JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-                    WHERE se.docstatus = 1
-                      AND se.work_order = %s
-                      AND se.purpose = 'Material Consumption for Manufacture'
-                      AND sed.item_code = %s
-                      AND sed.is_finished_item = 0
-                """, (work_order, item_code))[0][0] or 0
-                total_after = float(already_consumed) + qty
+                already_consumed = consumed_map.get(item_code, 0.0)
+                total_after = float(already_consumed) + pending_qty.get(item_code, 0.0) + qty
                 fs = _fs()
                 threshold_pct = float(getattr(fs, "material_overconsumption_threshold", 150))
                 threshold_qty = bom_required * (threshold_pct / 100.0)
@@ -5372,6 +5451,27 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
                             item_code, total_after, bom_required, threshold_pct
                         )
                     )
+
+        # Ceiling: a Work Order may consume what it brought into WIP and no
+        # more. Without this the only limit is the over-consumption threshold,
+        # which is measured against the recipe rather than against the stock
+        # this order actually has, so one order can take another's material out
+        # of the shared warehouse and leave it unable to load its own.
+        #
+        # Guarded on moved_in: an item with no recorded inflow under this Work
+        # Order is not capped here, so anything reaching WIP by a route that
+        # does not name the order still behaves as it did.
+        moved_in = wip_inflow.get(item_code, 0.0)
+        if moved_in:
+            taken = consumed_map.get(item_code, 0.0) + pending_qty.get(item_code, 0.0)
+            if taken + qty > moved_in + QTY_EPSILON:
+                frappe.throw(_(
+                    "{0}: this Work Order brought {1:g} into WIP and has already consumed "
+                    "{2:g}. Consuming {3:g} more would take stock transferred for another "
+                    "Work Order. Request more material if you genuinely need it."
+                ).format(item_code, moved_in, taken, qty))
+
+        pending_qty[item_code] = pending_qty.get(item_code, 0.0) + qty
 
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
         batch_no = (it.get("batch_no") or "").strip() or None
@@ -5722,3 +5822,45 @@ def apply_line_warehouses_to_work_order(doc, method=None):
     if target:
         if is_new or not getattr(doc, "fg_warehouse", None):
             doc.fg_warehouse = target
+
+    _force_single_level_bom(doc)
+
+
+def _bom_has_sub_assemblies(bom_no: str) -> bool:
+    """True when this BOM consumes sub-assemblies rather than only raw materials."""
+    if not bom_no:
+        return False
+    return bool(frappe.db.exists("BOM Item", {"parent": bom_no, "bom_no": ["!=", ""]}))
+
+
+def _force_single_level_bom(doc) -> None:
+    """A hub Work Order consumes its sub-assemblies, never their raw materials.
+
+    ERPNext clears use_multi_level_bom on a finished-good Work Order only when
+    its Production Plan carries sub-assembly rows. With none — the planner
+    skipped "Get Sub Assembly Items" — the order inherits "Include Exploded
+    Items" from the plan line, which is ticked by default, and its required
+    items become the raw materials instead of the semi-finished goods. The
+    hubs then cannot end that order without a Production Manager override,
+    and cannot close it at all.
+
+    Deliberately narrow: only a BOM that actually has sub-assembly rows is
+    touched, so semi-finished Work Orders and single-level finished goods are
+    left exactly as they are. The rebuild only fires on the 1 -> 0 transition,
+    so a planner's later edits to required_items are never clobbered.
+    """
+    if not getattr(doc, "use_multi_level_bom", 0):
+        return
+    if not _bom_has_sub_assemblies(getattr(doc, "bom_no", None)):
+        return
+
+    doc.use_multi_level_bom = 0
+    try:
+        doc.set_required_items()      # rebuild the table at the direct level
+    except Exception:
+        # Never block a save over this; the flag is still cleared, and the
+        # required items can be rebuilt by changing the quantity.
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Could not rebuild required items for {getattr(doc, 'name', '?')}",
+        )

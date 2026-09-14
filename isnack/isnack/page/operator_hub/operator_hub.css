@@ -1171,6 +1171,49 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
   font-weight: 600;
 }
 
+/* Each chip is a tick box: it decides whether that Work Order is part of this
+   close. Ticked is the default, so the dialog behaves as it always did until
+   somebody deliberately leaves an order out. */
+.close-production-dialog .cp-wo-chip{
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+.close-production-dialog .cp-wo-pick{
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+.close-production-dialog .cp-wo-chip:has(.cp-wo-pick:not(:checked)){
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  border-left-color: #94a3b8;
+  color: #64748b;
+  opacity: .75;
+}
+.close-production-dialog .cp-wo-chip:has(.cp-wo-pick:not(:checked)) .cp-wo-chip-qty{
+  background: #e2e8f0;
+  color: #475569;
+}
+
+/* Ended on an earlier day. This is the order that gets swept into today's
+   close without anyone noticing, so it says so on its face. */
+.close-production-dialog .cp-wo-chip-stale{
+  background: #fff7e6;
+  border-color: #fde68a;
+  border-left-color: #d97706;
+  color: #78350f;
+}
+.close-production-dialog .cp-wo-chip-stale-tag{
+  background: #fde68a;
+  color: #78350f;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
 /* Good Qty — green tint (positive output) */
 .close-production-dialog [data-fieldname$="good_qty"] .form-control{
   background: #f0fdf4 !important;

@@ -2791,12 +2791,23 @@ function init_operator_hub($root) {
         ? `${g.item_name} (${g.production_item})`
         : g.item_name;
 
-      // Row 1: full-width WO list as compact chips.
+      // Row 1: full-width WO list, one tickable chip each. Ticked by default,
+      // so leaving the dialog alone closes exactly what it used to; unticking
+      // is how an order ended on an earlier day is kept out of today's close.
       fields.push({ fieldtype: 'Section Break', label: `Ended Work Orders — ${titleSuffix}` });
-      const chips = g.work_orders.map(wo =>
-        `<span class="cp-wo-chip"><strong>${frappe.utils.escape_html(wo.name)}</strong>`
-        + `<span class="cp-wo-chip-qty">Qty ${wo.qty}</span></span>`
-      ).join('');
+      const chips = g.work_orders.map(wo => {
+        const stale = !!wo.is_stale;
+        const when = wo.ended_on
+          ? frappe.datetime.global_date_format(wo.ended_on)
+          : '';
+        return `<label class="cp-wo-chip${stale ? ' cp-wo-chip-stale' : ''}">`
+          + `<input type="checkbox" class="cp-wo-pick" data-group="${gIdx}" `
+          + `data-wo="${frappe.utils.escape_html(wo.name)}" checked>`
+          + `<strong>${frappe.utils.escape_html(wo.name)}</strong>`
+          + `<span class="cp-wo-chip-qty">Qty ${wo.qty}</span>`
+          + (stale ? `<span class="cp-wo-chip-stale-tag">ended ${frappe.utils.escape_html(when)}</span>` : '')
+          + `</label>`;
+      }).join('');
       fields.push({
         fieldtype: 'HTML',
         fieldname: `g${gIdx}_wo_list`,
@@ -2859,6 +2870,15 @@ function init_operator_hub($root) {
       }
     });
 
+    // Which orders are ticked, per product group. Read from the DOM rather
+    // than held in state so the checkboxes are the single source of truth.
+    function pickedWorkOrders(gIdx) {
+      return d.$wrapper
+        .find(`.cp-wo-pick[data-group="${gIdx}"]:checked`)
+        .map(function () { return $(this).attr('data-wo'); })
+        .get();
+    }
+
     const d = opDialog({
       title:'Close Production',
       fields,
@@ -2877,6 +2897,12 @@ function init_operator_hub($root) {
 
         for (let gIdx = 0; gIdx < productGroups.length; gIdx++) {
           const g = productGroups[gIdx];
+          const chosenWOs = pickedWorkOrders(gIdx);
+          if (!chosenWOs.length) {
+            // Every order in this product unticked: the operator is closing the
+            // other products only, so leave this one out rather than refusing.
+            continue;
+          }
           const goodQty = parseFloat(v[`g${gIdx}_good_qty`] || 0);
           const rejectQty = parseFloat(v[`g${gIdx}_reject_qty`] || 0);
           const batchNo = ((v[`g${gIdx}_batch_no`] || '') + '').toUpperCase().trim();
@@ -2932,7 +2958,13 @@ function init_operator_hub($root) {
             reject_qty: rejectQty,
             batch_no: batchNo,
             packaging_usage: packagingUsage,
+            work_orders: chosenWOs,
           });
+        }
+
+        if (!payload.length) {
+          frappe.msgprint('Tick at least one Work Order to close.');
+          return;
         }
 
         // Disable synchronously (before any await) so a double-click cannot
@@ -2945,7 +2977,8 @@ function init_operator_hub($root) {
             lines: JSON.stringify(state.current_lines),
           });
           d.hide();
-          flashStatus(`Production closed for ${endedWOs.length} work order(s)`, 'success');
+          const closedCount = payload.reduce((n, p) => n + p.work_orders.length, 0);
+          flashStatus(`Production closed for ${closedCount} work order(s)`, 'success');
           await load_queue();
         } catch (err) {
           console.error('close_production failed', err);
@@ -2956,6 +2989,27 @@ function init_operator_hub($root) {
 
     d.show();
     d.$wrapper.addClass('close-production-dialog');
+
+    // A semi-finished group defaults its good quantity to the planned total of
+    // its orders. Unticking one has to take that order's quantity back out, or
+    // the operator closes fewer orders against a total that still includes
+    // them. A quantity the operator has typed themselves is never overwritten.
+    productGroups.forEach((g, gIdx) => {
+      if (!g.is_sfg) return;
+      const field = d.fields_dict[`g${gIdx}_good_qty`];
+      if (!field) return;
+      const plannedOf = new Map(g.work_orders.map(w => [w.name, parseFloat(w.qty) || 0]));
+      let lastAuto = g.work_orders.reduce((sum, w) => sum + (parseFloat(w.qty) || 0), 0);
+      d.$wrapper.on('change', `.cp-wo-pick[data-group="${gIdx}"]`, () => {
+        const total = pickedWorkOrders(gIdx)
+          .reduce((sum, name) => sum + (plannedOf.get(name) || 0), 0);
+        const current = parseFloat(field.get_value()) || 0;
+        if (Math.abs(current - lastAuto) < 0.0001) {
+          field.set_value(total);
+        }
+        lastAuto = total;
+      });
+    });
 
     // Auto-insert dash after 3rd letter on each per-group batch input.
     productGroups.forEach((g, gIdx) => {
