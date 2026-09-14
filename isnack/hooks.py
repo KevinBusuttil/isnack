@@ -82,6 +82,8 @@ jinja = {
         "isnack.utils.qr.get_qr_code",
         "isnack.utils.sales_print_format.get_item_discounts",
         "isnack.api.delivery_note_pallets.get_dn_item_bundle_batches",
+        "isnack.utils.batch_lineage.fg_batch_for_work_order",
+        "isnack.utils.batch_lineage.bundle_batch_no",
     ]
 }
 

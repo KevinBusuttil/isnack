@@ -311,6 +311,338 @@ class TestFinishedGoodsAndShare(unittest.TestCase):
 		self.assertEqual(share["total"], 0.0)
 
 
+class TestFgBatchResolvers(unittest.TestCase):
+	"""The label-facing resolvers. A Work Order has no batch of its own, so every
+	label of its output reads the batch back off its submitted Manufacture entry."""
+
+	def _fake_get_all(self, entries=(), rows=(), bundle_entries=()):
+		"""A ``frappe.get_all`` stand-in that honours the filters it is handed.
+
+		Filtering the fixtures here, rather than returning canned rows per
+		doctype, is what lets a draft entry or a scrap row prove that the
+		resolver excluded it. Results are projected to ``fields`` so a resolver
+		can only read what it actually asked the database for.
+		"""
+		tables = {
+			"Stock Entry": entries,
+			"Stock Entry Detail": rows,
+			"Serial and Batch Entry": bundle_entries,
+		}
+
+		def matches(doc, filters):
+			for field, condition in (filters or {}).items():
+				value = doc.get(field)
+				if isinstance(condition, (list, tuple)):
+					operator, operand = condition
+					if operator == "in" and value not in operand:
+						return False
+					if operator == "is" and bool(value) != (operand == "set"):
+						return False
+				elif value != condition:
+					return False
+			return True
+
+		def get_all(doctype, filters=None, fields=None, **kwargs):
+			return [
+				frappe._dict({f: d.get(f) for f in (fields or d)})
+				for d in tables.get(doctype, [])
+				if matches(d, filters)
+			]
+
+		return get_all
+
+	def _fg_row(self, parent, **kw):
+		"""A finished-item Stock Entry Detail row of ``parent``."""
+		return _row("FG10011", parent=parent, parenttype="Stock Entry", t_warehouse="FG", is_finished_item=1, **kw)
+
+	def _bundle_entry(self, bundle, batch_no, qty=-27):
+		"""A Serial and Batch Entry of ``bundle`` (outward qty is negative)."""
+		return frappe._dict(parent=bundle, idx=1, batch_no=batch_no, qty=qty)
+
+	def _two_batch_fixture(self):
+		# one Work Order closed twice: the second entry re-books the first
+		# entry's batch alongside a new one
+		return self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-1"),
+			],
+			rows=[
+				self._fg_row("SE-1", batch_no="B-FIRST"),
+				self._fg_row("SE-2", batch_no="B-FIRST"),
+				self._fg_row("SE-2", batch_no="B-SECOND"),
+			],
+		)
+
+	@patch("frappe.get_all")
+	def test_batch_written_on_the_finished_row_is_used_directly(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111")],
+		)
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+		self.assertEqual(bl.fg_batch_for_work_order("WO-1"), "BBB-111")
+
+	@patch("frappe.get_all")
+	def test_consumed_raw_material_rows_are_not_finished_goods(self, get_all):
+		# the Manufacture entry books the BOM remainder as consumption in the same
+		# document: a raw-material batch must never end up on a finished-goods label
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[
+				self._fg_row("SE-1", batch_no="BBB-111"),
+				_row("RM1", parent="SE-1", parenttype="Stock Entry", batch_no="RB1", s_warehouse="WIP"),
+			],
+		)
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+
+	@patch("frappe.get_all")
+	def test_batch_is_read_from_the_bundle_when_the_row_carries_none(self, get_all):
+		"""The ``use_serial_batch_fields = 0`` case: bundle only, no row batch_no.
+
+		This is the regression the whole change exists to prevent. Stock
+		Settings.use_serial_batch_fields is 1 today, and that is the only reason
+		``Stock Entry Detail.batch_no`` is populated at all; turn it off and
+		ERPNext writes the Serial and Batch Bundle alone. The batch must still
+		reach the label, so every read here is bundle-aware.
+		"""
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no=None, serial_and_batch_bundle="1c22f62f08664557bf2f")],
+			bundle_entries=[self._bundle_entry("1c22f62f08664557bf2f", "BBB-111")],
+		)
+
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+		self.assertEqual(bl.fg_batch_for_work_order("WO-1"), "BBB-111")
+		# the batch came off the bundle, which means the bundle was really read
+		self.assertIn("Serial and Batch Entry", [c.args[0] for c in get_all.call_args_list])
+
+	@patch("frappe.get_all")
+	def test_scrap_rows_are_never_labelled(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[
+				self._fg_row("SE-1", batch_no="BBB-111"),
+				# the shape the MES writes: scrap flag only, no finished flag
+				_row("FG10011", parent="SE-1", parenttype="Stock Entry", batch_no="SCRAP-ONLY", is_scrap_item=1),
+				# and a row flagged both ways, which is_finished_item=1 lets through
+				self._fg_row("SE-1", batch_no="SCRAP-BOTH", is_scrap_item=1),
+			],
+		)
+
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+		self.assertEqual(bl.fg_batch_for_work_order("WO-1"), "BBB-111")
+
+	@patch("frappe.get_all")
+	def test_finished_row_with_an_unwritten_scrap_flag_still_counts(self, get_all):
+		# a legacy row whose is_scrap_item was never written is finished goods,
+		# not scrap: a SQL "is_scrap_item = 0" filter would drop it silently
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111", is_scrap_item=None)],
+		)
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+
+	@patch("frappe.get_all")
+	def test_work_order_with_no_submitted_manufacture_entry_has_no_batch(self, get_all):
+		# production has not been closed yet; the label prints without a batch
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Material Transfer for Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111")],
+		)
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), [])
+		self.assertIsNone(bl.fg_batch_for_work_order("WO-1"))
+
+	@patch("frappe.get_all")
+	def test_draft_and_cancelled_manufacture_entries_are_ignored(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-DRAFT", purpose="Manufacture", docstatus=0, work_order="WO-1"),
+				_entry("SE-CANCELLED", purpose="Manufacture", docstatus=2, work_order="WO-1"),
+				_entry("SE-SUBMITTED", purpose="Manufacture", docstatus=1, work_order="WO-2"),
+			],
+			rows=[
+				self._fg_row("SE-DRAFT", batch_no="DRAFT-1"),
+				self._fg_row("SE-CANCELLED", batch_no="CANCELLED-1"),
+				self._fg_row("SE-SUBMITTED", batch_no="BBB-111"),
+			],
+		)
+
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), [])
+		self.assertIsNone(bl.fg_batch_for_work_order("WO-1"))
+		# the same fixture still resolves the submitted entry of another WO
+		self.assertEqual(bl.fg_batches_for_work_order("WO-2"), ["BBB-111"])
+
+	@patch("frappe.get_all")
+	def test_non_batch_tracked_item_resolves_to_no_batch(self, get_all):
+		# neither a batch_no nor a bundle: the label must print no batch rather
+		# than the string "None"
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1")],
+		)
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), [])
+		self.assertIsNone(bl.fg_batch_for_work_order("WO-1"))
+
+	@patch("frappe.get_all")
+	def test_several_batches_are_listed_once_each_in_first_seen_order(self, get_all):
+		get_all.side_effect = self._two_batch_fixture()
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["B-FIRST", "B-SECOND"])
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_order_is_none_when_the_work_order_booked_several_batches(self, get_all):
+		# one label carries one batch: no batch at all beats an arbitrary one
+		get_all.side_effect = self._two_batch_fixture()
+		self.assertIsNone(bl.fg_batch_for_work_order("WO-1"))
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_orders_returns_the_batch_every_work_order_shares(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-2"),
+			],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111"), self._fg_row("SE-2", batch_no="BBB-111")],
+		)
+
+		self.assertEqual(bl.fg_batch_for_work_orders(["WO-1", "WO-2", "WO-1"]), "BBB-111")
+		# the whole pallet costs one read for the entries and one for their rows,
+		# however many Work Orders it spans, and the list is de-duped first
+		self.assertEqual(get_all.call_count, 2)
+		self.assertEqual(get_all.call_args_list[0].kwargs["filters"]["work_order"], ["in", ["WO-1", "WO-2"]])
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_orders_is_none_when_the_work_orders_disagree(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-2"),
+			],
+			rows=[self._fg_row("SE-1", batch_no="B-ONE"), self._fg_row("SE-2", batch_no="B-TWO")],
+		)
+		self.assertIsNone(bl.fg_batch_for_work_orders(["WO-1", "WO-2"]))
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_orders_is_none_when_one_work_order_has_no_batch(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111")],
+		)
+		self.assertIsNone(bl.fg_batch_for_work_orders(["WO-1", "WO-2"]))
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_orders_is_none_when_a_work_order_booked_several_batches(self, get_all):
+		# WO-2 has no single batch of its own, so the pallet has none to share
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-2"),
+			],
+			rows=[
+				self._fg_row("SE-1", batch_no="B-ONE"),
+				self._fg_row("SE-2", batch_no="B-ONE"),
+				self._fg_row("SE-2", batch_no="B-TWO"),
+			],
+		)
+		self.assertIsNone(bl.fg_batch_for_work_orders(["WO-1", "WO-2"]))
+
+	@patch("frappe.get_all")
+	def test_fg_batch_for_work_orders_reads_nothing_for_an_empty_list(self, get_all):
+		self.assertIsNone(bl.fg_batch_for_work_orders([]))
+		self.assertIsNone(bl.fg_batch_for_work_orders(None))
+		self.assertIsNone(bl.fg_batch_for_work_orders([None, ""]))
+		get_all.assert_not_called()
+
+	@patch("frappe.get_all")
+	def test_falsy_work_order_reads_nothing(self, get_all):
+		self.assertEqual(bl.fg_batches_for_work_order(None), [])
+		self.assertEqual(bl.fg_batches_for_work_order(""), [])
+		self.assertIsNone(bl.fg_batch_for_work_order(None))
+		get_all.assert_not_called()
+
+	@patch("frappe.get_all")
+	def test_a_read_failure_degrades_to_no_batch_instead_of_raising(self, get_all):
+		# a print format cannot recover mid-render, so the label loses its batch
+		# rather than the render failing
+		get_all.side_effect = Exception("Table 'tabStock Entry' doesn't exist")
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), [])
+		self.assertIsNone(bl.fg_batch_for_work_order("WO-1"))
+		self.assertIsNone(bl.fg_batch_for_work_orders(["WO-1", "WO-2"]))
+
+	@patch("frappe.get_meta")
+	@patch("frappe.get_all")
+	def test_only_submitted_manufacture_entries_and_their_finished_rows_are_read(self, get_all, get_meta):
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no=None, serial_and_batch_bundle="B-1")],
+			bundle_entries=[self._bundle_entry("B-1", "BBB-111")],
+		)
+
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["BBB-111"])
+
+		entries, rows, bundles = get_all.call_args_list
+		self.assertEqual(entries.args[0], "Stock Entry")
+		self.assertEqual(
+			entries.kwargs["filters"],
+			{"work_order": ["in", ["WO-1"]], "purpose": "Manufacture", "docstatus": 1},
+		)
+		# get_all defaults to "modified desc", so "first-seen" needs this spelled out
+		self.assertEqual(entries.kwargs["order_by"], "posting_date, posting_time, name")
+		self.assertEqual(rows.args[0], "Stock Entry Detail")
+		self.assertEqual(rows.kwargs["filters"]["parenttype"], "Stock Entry")
+		self.assertEqual(rows.kwargs["filters"]["is_finished_item"], 1)
+		self.assertEqual(rows.kwargs["parent_doctype"], "Stock Entry")
+		self.assertEqual(rows.kwargs["order_by"], "parent, idx")
+		self.assertEqual(bundles.args[0], "Serial and Batch Entry")
+		# the surplus lineage find_work_order_entries walks (and the Stock Entry
+		# meta read it opens with) is far too heavy for a label render
+		get_meta.assert_not_called()
+
+
+class TestBundleBatchNo(unittest.TestCase):
+	"""The Stock Entry label formats' fallback when a row carries no batch of its own."""
+
+	def _entries(self, *pairs):
+		def get_all(doctype, **kwargs):
+			if doctype != "Serial and Batch Entry":
+				return []
+			wanted = (kwargs.get("filters") or {}).get("parent", [None, []])[1]
+			return [
+				frappe._dict(parent=b, batch_no=n, qty=-27)
+				for b, n in pairs
+				if b in wanted
+			]
+		return get_all
+
+	@patch("frappe.get_all")
+	def test_single_batch_bundle_resolves_to_its_batch(self, get_all):
+		get_all.side_effect = self._entries(("B-1", "BBB-111"))
+		self.assertEqual(bl.bundle_batch_no("B-1"), "BBB-111")
+
+	@patch("frappe.get_all")
+	def test_bundle_holding_several_batches_resolves_to_none(self, get_all):
+		"""One label carries one batch, so a mixed bundle prints none rather than the first."""
+		get_all.side_effect = self._entries(("B-1", "BBB-111"), ("B-1", "AAA-999"))
+		self.assertIsNone(bl.bundle_batch_no("B-1"))
+
+	@patch("frappe.get_all")
+	def test_empty_bundle_resolves_to_none(self, get_all):
+		get_all.side_effect = self._entries()
+		self.assertIsNone(bl.bundle_batch_no("B-1"))
+
+	@patch("frappe.get_all")
+	def test_no_bundle_is_not_a_read(self, get_all):
+		"""A row with use_serial_batch_fields on has no bundle to fall back to."""
+		for empty in (None, ""):
+			self.assertIsNone(bl.bundle_batch_no(empty))
+		get_all.assert_not_called()
+
+	@patch("frappe.get_all", side_effect=Exception("db down"))
+	def test_a_read_failure_degrades_to_no_batch_instead_of_raising(self, get_all):
+		"""A print format has no way to recover mid-render, so the label just loses the batch."""
+		self.assertIsNone(bl.bundle_batch_no("B-1"))
+
+
 class TestClassification(unittest.TestCase):
 	def test_tags(self):
 		self.assertEqual(bl.classify_entry(_entry("x", purpose="Manufacture")), bl.TAG_MANUFACTURE)

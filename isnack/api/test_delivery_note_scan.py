@@ -8,6 +8,11 @@ Operator Hub ("ITEM|BATCH|QTY", tilde-separated variants, GS1) and answer in
 the shape ERPNext's BarcodeScanner expects, while delegating everything else
 — bare item barcodes, bare batch numbers, unknown strings — to the stock
 `erpnext.stock.utils.scan_barcode` lookup unchanged.
+
+A pipe/tilde label for a batch-tracked item must carry a batch: the empty
+batch segment printed by the old Work Order labels is refused rather than
+answered, so the operator reprints at the scanner instead of hitting an
+unrelated error at save.
 """
 
 import unittest
@@ -151,10 +156,14 @@ class TestLabelScan(unittest.TestCase):
         out = self._scan("FG10011|CGB-151")
         self.assertEqual(out["isnack_scanned_qty"], 0)
 
-    def test_label_with_empty_batch_skips_batch_validation(self):
-        out = self._scan("FG10011||66", batch_item=None)
-        self.assertNotIn("batch_no", out)
-        self.assertEqual(out["isnack_scanned_qty"], 66.0)
+    def test_label_with_empty_batch_is_refused_before_any_batch_lookup(self):
+        # Was "skips batch validation": an empty segment must never be looked
+        # up as a Batch name — with batch_item=None a lookup would fail with
+        # "Batch  does not exist", pointing nowhere near the real fault. It is
+        # now refused outright because this helper's Item is batch-tracked,
+        # and the message is what proves which of the two guards fired.
+        with self.assertRaisesRegex(frappe.ValidationError, "carries no batch"):
+            self._scan("FG10011||66", batch_item=None)
 
     def test_unknown_item_on_label_is_a_specific_error(self):
         with self.assertRaises(frappe.ValidationError):
@@ -177,6 +186,99 @@ class TestLabelScan(unittest.TestCase):
             "FG10011|CGB-151|66", settings=_settings(qty_mode="Assign Batch Only")
         )
         self.assertEqual(out["isnack_qty_mode"], "Assign Batch Only")
+
+
+class TestBatchlessLabelGuard(unittest.TestCase):
+    """A pipe/tilde label with an empty batch segment is refused for a
+    batch-tracked item, and only for a batch-tracked item."""
+
+    def _scan(self, payload, has_batch_no=1, has_serial_no=0, ctx=None,
+              batch_item="FG10011"):
+        with patch.object(
+            delivery_note_scan, "get_dn_scan_settings", return_value=_settings()
+        ), patch("frappe.db.exists", return_value=True), patch(
+            "frappe.db.get_value", return_value=batch_item
+        ), patch(
+            "frappe.get_cached_value",
+            return_value=frappe._dict(
+                has_batch_no=has_batch_no,
+                has_serial_no=has_serial_no,
+                stock_uom="Carton",
+            ),
+        ):
+            return delivery_note_scan.scan_delivery_note_code(payload, ctx)
+
+    def test_batch_tracked_item_with_empty_batch_segment_is_rejected(self):
+        # The payload every pre-fix Work Order label printed: item, nothing
+        # where the batch belongs, qty. Answering it would put
+        # use_serial_batch_fields on a batch-tracked row with no batch, which
+        # only blows up much later at save.
+        with self.assertRaisesRegex(frappe.ValidationError, "carries no batch"):
+            self._scan("FG10011||66")
+
+    def test_rejection_names_the_item_and_what_to_do_about_it(self):
+        """The message has to name the real cause, not just "reprint".
+
+        A batch-less label has two causes: it predates batch resolution, or the
+        Work Order is still open and has no batch yet. Reprinting only fixes the
+        first, so the message points at Close Production as well.
+        """
+        with self.assertRaises(frappe.ValidationError) as caught:
+            self._scan("FG10011||66")
+        msg = str(caught.exception)
+        self.assertIn("FG10011", msg)
+        self.assertIn("Close Production", msg)
+        self.assertIn("reprint", msg.lower())
+
+    def test_non_batch_tracked_item_with_empty_batch_segment_is_accepted(self):
+        # Non-batch production is a supported path, and its labels legitimately
+        # print an empty batch segment — the guard must not touch them.
+        out = self._scan("FG10011||66", has_batch_no=0)
+        self.assertEqual(out["item_code"], "FG10011")
+        self.assertEqual(out["has_batch_no"], 0)
+        self.assertNotIn("batch_no", out)
+        self.assertEqual(out["isnack_label_scan"], 1)
+        self.assertEqual(out["isnack_scanned_qty"], 66.0)
+
+    def test_label_carrying_a_batch_is_unaffected_by_the_guard(self):
+        out = self._scan("FG10011|CGB-151|66")
+        self.assertEqual(out["batch_no"], "CGB-151")
+        self.assertEqual(out["has_batch_no"], 1)
+        self.assertEqual(out["isnack_scanned_qty"], 66.0)
+
+    def test_payload_truncated_after_the_item_is_rejected(self):
+        # "FG10011|" — batch and qty segments both missing entirely.
+        with self.assertRaisesRegex(frappe.ValidationError, "carries no batch"):
+            self._scan("FG10011|")
+
+    def test_payload_with_empty_batch_and_qty_segments_is_rejected(self):
+        # "FG10011||" — both segments present but empty.
+        with self.assertRaisesRegex(frappe.ValidationError, "carries no batch"):
+            self._scan("FG10011||")
+
+    def test_tilde_separated_batchless_label_is_rejected_too(self):
+        # Scanners on a different keyboard layout emit "~" for "|", so the
+        # guard must not be pipe-specific.
+        with self.assertRaisesRegex(frappe.ValidationError, "carries no batch"):
+            self._scan("FG10011~~66")
+
+    def test_gs1_barcode_without_a_batch_ai_is_still_accepted(self):
+        # Deliberate carve-out: the guard is gated on a pipe/tilde separator.
+        # A GS1 trade-unit barcode with a known GTIN and no (10) batch AI is
+        # not one of our labels, so rejecting it would tell the operator to
+        # reprint a label the Operator Hub never printed.
+        out = self._scan("(01)99912345678905(30)12.5")
+        self.assertEqual(out["item_code"], "FG10011")
+        self.assertEqual(out["has_batch_no"], 1)
+        self.assertNotIn("batch_no", out)
+        self.assertEqual(out["isnack_scanned_qty"], 12.5)
+
+    def test_serialised_item_is_rejected_as_serialised_not_as_batchless(self):
+        # An Item flagged both ways must keep the serial message: the guard
+        # sits below the serial throw precisely so the operator is told to
+        # scan serials rather than to reprint a label that would not help.
+        with self.assertRaisesRegex(frappe.ValidationError, "serialised"):
+            self._scan("FG10011||66", has_serial_no=1)
 
 
 class TestStockWarning(unittest.TestCase):

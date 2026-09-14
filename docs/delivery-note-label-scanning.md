@@ -48,9 +48,13 @@ Scanning* column:
   confirmation before applying it again (the memory lasts while the form is
   open).
 - **Validation at scan time**: a label whose batch does not exist, belongs
-  to a different item, or refers to an unknown item is rejected with a
-  specific error message. A batch with no available stock in the source
-  warehouse is applied but flagged with an orange warning.
+  to a different item, refers to an unknown item, or carries no batch for
+  a batch-tracked item is rejected with a specific error message. A batch
+  with no available stock in the source warehouse is applied but flagged
+  with an orange warning.
+- **Older labels**: labels printed before the batch was resolved at print
+  time carry an empty batch segment (`ITEM_CODE||QTY`) and are refused for
+  batch-tracked items — reprint them from the Operator Hub.
 - **Units**: label quantities are in the item's stock UOM; if a row sells in
   a different UOM the scanned quantity is converted via the row's conversion
   factor.
