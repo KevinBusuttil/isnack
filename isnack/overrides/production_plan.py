@@ -49,10 +49,101 @@ def get_production_plan_defaults():
     }
 
 
+def _bom_has_sub_assemblies(bom_no: str) -> bool:
+    """True when this BOM is built from sub-assemblies rather than raw materials
+    alone. Shares its definition with the Work Order guard in mes_ops, imported
+    late so this override stays free of an import-time dependency on it."""
+    from isnack.api.mes_ops import _bom_has_sub_assemblies as has_subs
+
+    return has_subs(bom_no)
+
+
+def _sub_assembly_items_of(bom_no: str) -> list:
+    """The sub-assembly item codes of a BOM, for naming them in the message."""
+    if not bom_no:
+        return []
+    return frappe.get_all(
+        "BOM Item",
+        filters={"parent": bom_no, "bom_no": ["!=", ""]},
+        pluck="item_code",
+        order_by="idx asc",
+    )
+
+
 class CustomProductionPlan(ProductionPlan):
     def before_save(self):
         #    This method will populate the 'total_estimated_cost' field.
         self.calculate_total_estimated_cost()
+
+    def before_submit(self):
+        self.validate_sub_assembly_items_fetched()
+
+    def validate_sub_assembly_items_fetched(self):
+        """Refuse a plan that needs semi-finished goods but has no rows for them.
+
+        ERPNext decides the Work Order's BOM level from this table:
+
+            if self.sub_assembly_items:
+                item["use_multi_level_bom"] = 0
+
+        With it empty the flag falls through from the plan line's "Include
+        Exploded Items", ticked by default, and — worse — the loop that creates
+        the semi-finished Work Orders iterates that same table, so none are
+        created at all. The planner gets one finished-good Work Order that
+        requires semi-finished goods nothing is scheduled to make: the operator
+        cannot fulfil it and the storekeeper has nothing to stage. It reached
+        the client once already, on MFG-PP-2026-00033, which was abandoned at
+        zero produced.
+
+        The check is on the shape of the BOMs rather than on
+        custom_split_sub_assembly_items: that checkbox only changes how the rows
+        are built when the button runs, so a planner who misses the checkbox as
+        well as the button would otherwise sail through the same failure.
+
+        An empty table is legitimate in two cases and neither is blocked:
+        a plan whose BOMs have no sub-assemblies at all, and a plan whose
+        sub-assemblies are already in stock with "Skip Available Sub Assembly
+        Items" ticked — for which the rows are recomputed to be sure.
+        """
+        if self.sub_assembly_items:
+            return
+
+        needs_sub_assemblies = [
+            row for row in self.po_items
+            if row.bom_no and _bom_has_sub_assemblies(row.bom_no)
+        ]
+        if not needs_sub_assemblies:
+            return
+
+        if self.skip_available_sub_assembly_item:
+            # The button may legitimately have returned nothing because the
+            # semi-finished goods are already made. Ask it again rather than
+            # guess. If it cannot answer, the plan is not waved through.
+            try:
+                if not self.compute_sub_assembly_rows(quiet=True):
+                    return
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"Could not recompute sub-assembly items for {self.name}",
+                )
+
+        missing = []
+        for row in needs_sub_assemblies:
+            for item in _sub_assembly_items_of(row.bom_no):
+                if item not in missing:
+                    missing.append(item)
+
+        frappe.throw(
+            _("Sub Assembly Items is empty, but {0} is made from semi-finished "
+              "goods ({1}). Press <b>Get Sub Assembly Items</b> before submitting.<br><br>"
+              "Without those rows no Work Order is created to make them, and the "
+              "finished-good Work Order cannot be fulfilled.").format(
+                comma_and([row.item_code for row in needs_sub_assemblies]),
+                comma_and(missing),
+            ),
+            title=_("Sub Assembly Items not fetched"),
+        )
 
     def calculate_total_estimated_cost(self):
         """
@@ -112,6 +203,23 @@ class CustomProductionPlan(ProductionPlan):
     def get_sub_assembly_items(self, manufacturing_type=None):
         "Fetch sub assembly items and optionally combine them."
         self.sub_assembly_items = []
+
+        for idx, row in enumerate(self.compute_sub_assembly_rows(manufacturing_type)):
+            row.idx = idx + 1
+            self.append("sub_assembly_items", row)
+
+        self.set_default_supplier_for_subcontracting_order()
+
+    def compute_sub_assembly_rows(self, manufacturing_type=None, quiet=False):
+        """Work out this plan's sub-assembly rows without touching the child table.
+
+        get_sub_assembly_items() stores what this returns. The submit guard calls
+        it a second time to tell an empty table nobody built from one that is
+        correctly empty, so the two can never disagree about what the plan needs.
+
+        quiet suppresses the "sufficient Sub Assembly Items" note, which belongs
+        to the planner pressing the button, not to a check running at submit.
+        """
         sub_assembly_items_store = []  # temporary store to process all subassembly items
         bin_details = frappe._dict()
 
@@ -153,7 +261,7 @@ class CustomProductionPlan(ProductionPlan):
             self.set_sub_assembly_items_based_on_level(row, bom_data, manufacturing_type)
             sub_assembly_items_store.extend(bom_data)
 
-        if not sub_assembly_items_store and self.skip_available_sub_assembly_item:
+        if not sub_assembly_items_store and self.skip_available_sub_assembly_item and not quiet:
             message = (
                 _(
                     "As there are sufficient Sub Assembly Items, Work Order is not required for Warehouse {0}."
@@ -170,11 +278,7 @@ class CustomProductionPlan(ProductionPlan):
             # Combine subassembly items
             sub_assembly_items_store = self.combine_subassembly_items(sub_assembly_items_store)
 
-        for idx, row in enumerate(sub_assembly_items_store):
-            row.idx = idx + 1
-            self.append("sub_assembly_items", row)
-
-        self.set_default_supplier_for_subcontracting_order()
+        return sub_assembly_items_store
 
 
 # def get_sub_assembly_items_split(bom_no, bom_data, to_produce_qty, company, warehouse=None, indent=0):
