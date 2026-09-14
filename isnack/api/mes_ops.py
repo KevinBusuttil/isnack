@@ -4732,7 +4732,7 @@ def get_materials_snapshot(work_order: str):
     - Transferred: Via START button (Material Transfer for Manufacture)
     - Consumed: Via LOAD button (Material Consumption for Manufacture)
     - Remaining: Required - Consumed (how much the recipe still wants)
-    - In WIP: Transferred - Consumed (how much is still on the line)
+    - In WIP: this Work Order's net balance in its WIP warehouse
 
     Remaining and In WIP answer different questions and must not be merged:
     consumption is drawn out of the transferred stock, so subtracting both
@@ -4801,8 +4801,28 @@ def get_materials_snapshot(work_order: str):
         GROUP BY sed.item_code
     """, (work_order,), as_dict=True)
 
+    # What is physically still on the line for this Work Order. Taken by
+    # direction rather than by purpose, because consumption is not the only way
+    # material leaves WIP: Close Production's Manufacture entry draws packaging
+    # straight out of it, and return_materials sends leftovers back to staging
+    # as a plain Material Transfer. Netting only the scanned consumption would
+    # leave a closed or emptied Work Order still reporting a full line.
+    wip_wh = wo.get("wip_warehouse") or _default_line_wip(work_order)
+    wip_flow = frappe.db.sql("""
+        SELECT sed.item_code,
+               SUM(CASE WHEN sed.t_warehouse = %(wip)s THEN sed.qty ELSE 0 END)
+             - SUM(CASE WHEN sed.s_warehouse = %(wip)s THEN sed.qty ELSE 0 END) AS qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+        WHERE se.docstatus = 1
+          AND se.work_order = %(wo)s
+          AND (sed.s_warehouse = %(wip)s OR sed.t_warehouse = %(wip)s)
+        GROUP BY sed.item_code
+    """, {"wo": work_order, "wip": wip_wh}, as_dict=True) if wip_wh else []
+
     transferred_map = {r.item_code: float(r.qty or 0) for r in transferred}
     consumed_map = {r.item_code: float(r.qty or 0) for r in consumed}
+    wip_map = {r.item_code: float(r.qty or 0) for r in wip_flow}
 
     for row in rows:
         item = row["item_code"]
@@ -4816,7 +4836,7 @@ def get_materials_snapshot(work_order: str):
         #   remain  -> how much more the recipe still wants loaded
         #   in_wip  -> how much of this item the Work Order still has on the line
         row["remain"] = max(row["required"] - row["consumed"], 0.0)
-        row["in_wip"] = max(row["transferred"] - row["consumed"], 0.0)
+        row["in_wip"] = max(wip_map.get(item, 0.0), 0.0)
 
     scans = frappe.db.sql("""
         SELECT sed.item_code, sed.batch_no, sed.qty, sed.uom,
