@@ -3,10 +3,12 @@
 
 import json
 import unittest
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch, MagicMock
 
 import frappe
 from isnack.api.mes_ops import (
+    combine_label_records,
     print_label,
     print_label_record,
     print_pallet_label,
@@ -1275,6 +1277,144 @@ class TestPrintLabelRecordReprint(unittest.TestCase):
         self.assertEqual(mock_generate_url.call_args.kwargs["batch_no"], "")
         self.assertIn("batch_no=&", result["print_urls"][0])
         self.assertNotIn("None", result["print_urls"][0])
+
+
+
+class TestCombineLabelRecords(unittest.TestCase):
+    """Combining pallet labels, and reprinting what the combine produced."""
+
+    def _pallet_record(self, name, pallets, cartons, batch_no="BBB-111"):
+        record = MagicMock()
+        record.name = name
+        record.quantity = pallets
+        record.batch_no = batch_no
+        record.item_code = "FG10011"
+        record.item_name = "PUFFS - Super Cheesy 21pkt x 40g"
+        record.label_template = "SATO FG Label Print"
+        record.template_engine = "Jinja"
+        record.payload = json.dumps({
+            "pallet_type": "EUR 2 Pallet x 91",
+            "carton_qty": cartons,
+            "work_orders": ["WO-001"],
+        })
+        source = MagicMock()
+        source.source_doctype, source.source_docname, source.name = "Work Order", "WO-001", "src-1"
+        record.sources = [source]
+        return record
+
+    def _combine(self, records, **patches):
+        """Run combine_label_records over `records`, returning (result, combined doc)."""
+        created = {}
+
+        def new_doc(doctype):
+            doc = MagicMock()
+            doc.name = "LBL-C"
+            doc.sources = []
+            doc.append = lambda field, value: doc.sources.append(MagicMock(**value))
+            created["combined"] = doc
+            return doc
+
+        fs = MagicMock()
+        fs.enable_silent_printing = False
+        fs.default_label_printer = None
+
+        with patch('isnack.api.mes_ops._require_roles'), \
+                patch('isnack.api.mes_ops._fs', return_value=fs), \
+                patch('isnack.api.mes_ops.fg_batch_for_work_orders',
+                      return_value=patches.get("resolved_batch", "BBB-111")), \
+                patch('frappe.db.exists', return_value=True), \
+                patch('frappe.db.set_value'), \
+                patch('frappe.get_doc', side_effect=lambda dt, n=None: records[n]), \
+                patch('frappe.new_doc', side_effect=new_doc):
+            result = combine_label_records(json.dumps(list(records)))
+        return result, created["combined"]
+
+    def _cartons(self, urls):
+        out = []
+        for url in urls:
+            query = parse_qs(urlparse(url).query, keep_blank_values=True)
+            out.append(query.get("carton_qty", [None])[0])
+        return out
+
+    def test_combined_pallet_label_keeps_the_cartons_each_pallet_carries(self):
+        """A 273-carton record and a 27-carton one combine to 91,91,91,27 — not four 75s.
+
+        The combined record's carton TOTAL says nothing about how the cartons sit
+        on the pallets, and the FG format feeds carton_qty straight into the QR,
+        so re-deriving the split from the total would book the wrong quantity on
+        the Delivery Note when the label is scanned.
+        """
+        records = {
+            "LBL-A": self._pallet_record("LBL-A", 3.0, 273.0),
+            "LBL-B": self._pallet_record("LBL-B", 1.0, 27.0),
+        }
+
+        result, combined = self._combine(records)
+
+        self.assertEqual(self._cartons(result["print_urls"]), ["91", "91", "91", "27"])
+        payload = json.loads(combined.payload)
+        self.assertEqual(payload["carton_splits"], [91, 91, 91, 27])
+        self.assertEqual(payload["pallet_type"], "EUR 2 Pallet x 91")
+        self.assertEqual(payload["carton_qty"], 300.0)
+
+    def test_reprinting_a_combined_pallet_label_reproduces_it_exactly(self):
+        """The regression: without pallet_type on the payload a reprint sent the PALLET count as carton_qty."""
+        records = {
+            "LBL-A": self._pallet_record("LBL-A", 3.0, 273.0),
+            "LBL-B": self._pallet_record("LBL-B", 1.0, 27.0),
+        }
+        combine_result, combined = self._combine(records)
+
+        fs = MagicMock()
+        fs.enable_silent_printing = False
+        fs.default_label_printer = None
+        with patch('isnack.api.mes_ops._require_roles'), \
+                patch('isnack.api.mes_ops._fs', return_value=fs), \
+                patch('frappe.db.exists', return_value=True), \
+                patch('frappe.get_doc', return_value=combined):
+            reprint = print_label_record("LBL-C")
+
+        self.assertEqual(self._cartons(reprint["print_urls"]), ["91", "91", "91", "27"])
+        # the combined label and its reprint must be the same physical labels
+        self.assertEqual(self._cartons(reprint["print_urls"]),
+                         self._cartons(combine_result["print_urls"]))
+        # and the pallet count must never be mistaken for a carton count
+        self.assertNotIn("4.0", self._cartons(reprint["print_urls"]))
+
+    def test_combined_label_carries_the_batch_on_every_url(self):
+        records = {
+            "LBL-A": self._pallet_record("LBL-A", 3.0, 273.0),
+            "LBL-B": self._pallet_record("LBL-B", 1.0, 27.0),
+        }
+
+        result, combined = self._combine(records)
+
+        self.assertEqual(combined.batch_no, "BBB-111")
+        for url in result["print_urls"]:
+            self.assertIn("batch_no=BBB-111", url)
+
+    def test_a_pre_fix_label_combines_with_a_post_fix_one_for_the_same_batch(self):
+        """Pre-fix records carry batch_no NULL; resolving before comparing keeps them combinable."""
+        records = {
+            "LBL-A": self._pallet_record("LBL-A", 3.0, 273.0, batch_no=None),
+            "LBL-B": self._pallet_record("LBL-B", 1.0, 27.0, batch_no="BBB-111"),
+        }
+
+        result, combined = self._combine(records)
+
+        self.assertEqual(combined.batch_no, "BBB-111")
+        self.assertEqual(len(result["print_urls"]), 4)
+
+    def test_labels_of_genuinely_different_batches_are_still_refused(self):
+        """Resolving the batch must not weaken the check that stops a mixed-batch merge."""
+        records = {
+            "LBL-A": self._pallet_record("LBL-A", 3.0, 273.0, batch_no="BBB-111"),
+            "LBL-B": self._pallet_record("LBL-B", 1.0, 27.0, batch_no="AAA-999"),
+        }
+
+        with self.assertRaises(frappe.ValidationError) as caught:
+            self._combine(records)
+        self.assertIn("same Batch", str(caught.exception))
 
 
 if __name__ == "__main__":

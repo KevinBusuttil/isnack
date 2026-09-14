@@ -4412,6 +4412,20 @@ def list_label_records(work_order: str):
         LIMIT 20
     """, {"work_order": work_order}, as_dict=True)
 
+    # Labels printed before the batch was stamped on the record carry none, and
+    # the Operator Hub's Combine guard compares what it is shown here. Without
+    # this fallback it refuses to combine a pre-fix label with a post-fix one
+    # for the same batch — a difference that is not real. Every record listed
+    # belongs to this Work Order, so its batch is the fallback for all of them.
+    # The guard stays a pre-flight either way: combine_label_records resolves
+    # and re-validates server-side before it merges anything.
+    if any(not rec.get("batch_no") for rec in records):
+        resolved = fg_batch_for_work_order(work_order)
+        if resolved:
+            for rec in records:
+                if not rec.get("batch_no"):
+                    rec["batch_no"] = resolved
+
     return records
 
 
@@ -4519,23 +4533,26 @@ def _label_record_batch(record) -> Optional[str]:
     return fg_batch_for_work_orders(work_orders) if work_orders else None
 
 
-def _label_print_params(record, qty) -> list:
+def _label_print_params(record, quantities) -> list:
     """
     Quantity query parameters that reproduce a stored Label Record's label(s).
 
     The print paths put the quantity on the URL, never on the Label Record, so a
     reprint that omits it re-renders at the source document's full quantity.
-    Carton labels are one label of ``qty``. A pallet label is really a SET of
-    labels — print_pallet_label splits the run's cartons across the pallets and
-    prints one label per pallet — so reproducing it means reproducing the split,
-    not stamping the run's carton total onto a single pallet.
+    Carton labels are one label of the requested quantity. A pallet record is
+    really a SET of labels — print_pallet_label splits the run's cartons across
+    the pallets and prints one per pallet — so reproducing it means reproducing
+    that split. The labels are dealt out of the original split rather than
+    rescaled, because a carton count is discrete: rescaling by a fractional
+    share would print 90.99999 cartons and encode it in the QR.
 
     Args:
         record: Label Record document
-        qty: Quantity for this copy (the record's quantity, or one split share)
+        quantities: Quantities being printed (the record's own, or split shares)
 
     Returns:
-        list of _generate_print_url keyword-argument dicts, one per label
+        one list of _generate_print_url keyword-argument dicts per requested
+        quantity, each holding one entry per physical label
     """
     payload = {}
     try:
@@ -4548,20 +4565,30 @@ def _label_print_params(record, qty) -> list:
 
     pallet_type = payload.get("pallet_type")
     if not pallet_type:
-        return [{"carton_qty": qty}]
+        return [[{"carton_qty": qty}] for qty in quantities]
 
-    # Splitting a pallet record hands us a share of its pallets, so it takes the
-    # matching share of its cartons with it; the shares sum back to the original.
-    total_pallets = flt(record.quantity)
-    share = flt(qty) / total_pallets if total_pallets > 0 else 1.0
-    cartons = _pallet_carton_split(round(flt(payload.get("carton_qty")) * share, 6), qty)
+    # A combined record stores the splits of the labels it merged, since its own
+    # carton total no longer says how they were distributed across the pallets.
+    cartons = payload.get("carton_splits") or _pallet_carton_split(
+        payload.get("carton_qty"), record.quantity
+    )
     if not cartons:
-        return [{"pallet_qty": qty, "pallet_type": pallet_type}]
+        return [[{"pallet_qty": qty, "pallet_type": pallet_type}] for qty in quantities]
 
-    return [
-        {"carton_qty": c, "pallet_qty": qty, "pallet_type": pallet_type}
-        for c in cartons
-    ]
+    out, taken = [], 0
+    for index, qty in enumerate(quantities):
+        # The last share takes whatever is left, so a fractional pallet count
+        # (3.2967 pallets of 91) still hands back its remainder label.
+        if index == len(quantities) - 1:
+            share = cartons[taken:]
+        else:
+            share = cartons[taken:taken + int(round(flt(qty)))]
+        taken += len(share)
+        out.append(
+            [{"carton_qty": c, "pallet_qty": qty, "pallet_type": pallet_type} for c in share]
+            or [{"pallet_qty": qty, "pallet_type": pallet_type}]
+        )
+    return out
 
 
 @frappe.whitelist()
@@ -4652,7 +4679,10 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
                     ))
     else:
         # Standard handling for split printing or non-Stock Entry documents
-        for qty in cleaned_quantities:
+        # Resolved for the whole run at once: a pallet record's labels are dealt
+        # out of one split, so the shares cannot overlap or lose the remainder.
+        params_per_qty = _label_print_params(record, cleaned_quantities)
+        for qty, label_params in zip(cleaned_quantities, params_per_qty):
             if target_printer:
                 jobs.append(_create_label_print_job(record, target_printer, qty, reason_code=reason_code))
             
@@ -4662,7 +4692,7 @@ def print_label_record(label_record: str, printer: Optional[str] = None, quantit
             if source_doctype and source_docname:
                 # A pallet record reprints as the whole set of pallet labels it
                 # originally produced, so this yields one URL per physical label.
-                for qty_params in _label_print_params(record, qty):
+                for qty_params in label_params:
                     print_urls.append(_generate_print_url(
                         source_doctype,
                         source_docname,
@@ -4758,17 +4788,44 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
     if total_qty <= 0:
         frappe.throw(_("Combined quantity must be greater than zero."))
 
+    # Detect label flavour from the inputs' payloads so the combined record can
+    # be reprinted the way its originals were: the print format only ever sees
+    # the quantity the URL carries (carton_qty vs pallet_qty).
+    is_pallet_label = False
+    pallet_type = None
+    carton_splits = []
+    for rec in records:
+        try:
+            rec_payload = json.loads(rec.payload) if rec.payload else {}
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(rec_payload, dict) or not rec_payload.get("pallet_type"):
+            continue
+        is_pallet_label = True
+        pallet_type = pallet_type or rec_payload.get("pallet_type")
+        # The pallets keep the cartons they physically carry. Re-deriving them
+        # from a combined total would spread the run evenly and relabel a 91 and
+        # a 27 as two 59s — a quantity the QR would then book on the delivery.
+        carton_splits.extend(_pallet_carton_split(rec_payload.get("carton_qty"), rec.quantity))
+
     is_print_format = frappe.db.exists("Print Format", first.label_template)
 
     combined = frappe.new_doc("Label Record")
     combined.label_template = first.label_template
     combined.template_engine = first.template_engine or ("Jinja" if is_print_format else "Template")
 
+    # A pallet label keeps its type and its cartons in the payload; carry both
+    # onto the combined record, or a later reprint cannot tell it from a carton
+    # label and would send the pallet COUNT as the carton quantity.
     payload_info = {
         "combined_from": names,
         "original_quantities": [flt(rec.quantity) for rec in records],
         "reason_code": reason_code or "combine",
     }
+    if is_pallet_label:
+        payload_info["pallet_type"] = pallet_type
+        payload_info["carton_splits"] = carton_splits
+        payload_info["carton_qty"] = sum(flt(c) for c in carton_splits)
     combined.payload = json.dumps(payload_info)
     combined.payload_hash = hashlib.sha256(
         f"combine_{first.label_template}_{first.item_code}_{batches.get(first.name) or ''}_{total_qty}_{'|'.join(names)}".encode("utf-8")
@@ -4818,19 +4875,6 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
     source_doctype = first_source.source_doctype if first_source else None
     source_docname = first_source.source_docname if first_source else None
 
-    # Detect label flavor from the inputs' payload so we pass the same quantity
-    # query parameter the originating print path used (carton_qty vs pallet_qty),
-    # which is the only quantity the print format actually receives.
-    is_pallet_label = False
-    pallet_type = None
-    try:
-        first_payload = json.loads(first.payload) if first.payload else {}
-        if isinstance(first_payload, dict) and first_payload.get("pallet_type"):
-            is_pallet_label = True
-            pallet_type = first_payload.get("pallet_type")
-    except (TypeError, ValueError):
-        pass
-
     jobs = []
     print_urls = []
 
@@ -4843,18 +4887,17 @@ def combine_label_records(label_records, reason_code: Optional[str] = None, prin
         ))
 
     if source_doctype and source_docname:
-        qty_params = (
-            {"pallet_qty": total_qty, "pallet_type": pallet_type or ""}
-            if is_pallet_label
-            else {"carton_qty": total_qty}
-        )
-        print_urls.append(_generate_print_url(
-            source_doctype,
-            source_docname,
-            combined.label_template,
-            batch_no=combined.batch_no or "",
-            **qty_params
-        ))
+        # Same path a reprint of this record takes, so the combined label and its
+        # reprint always come out identical — one label per pallet, each showing
+        # the cartons on that pallet rather than the whole combined run.
+        for qty_params in _label_print_params(combined, [total_qty])[0]:
+            print_urls.append(_generate_print_url(
+                source_doctype,
+                source_docname,
+                combined.label_template,
+                batch_no=combined.batch_no or "",
+                **qty_params
+            ))
 
     enable_silent_printing = getattr(fs, "enable_silent_printing", False)
 
