@@ -41,6 +41,7 @@ WO_NAME = "MFG-WO-2026-00026"
 BOM_NO = "BOM-FG10005-001"
 WO_QTY = 193.0
 RM = "RM20003"
+WIP = "EXT1-WIP - ISN"
 BOM_REQUIRED = 155.365
 MANUAL_REQUIRED = 147.910
 
@@ -51,6 +52,7 @@ class FakeWorkOrder:
         self.bom_no = BOM_NO
         self.qty = qty
         self.company = "Test Co"
+        self.wip_warehouse = WIP
         self.use_multi_level_bom = use_multi_level_bom
         self.required_items = required_items if required_items is not None else []
 
@@ -252,7 +254,11 @@ class TestManualLoadItemContext(DemandHarness):
 class TestMaterialsSnapshot(DemandHarness):
     """The Operator Hub materials table."""
 
-    def invoke(self, wo, enabled=True):
+    def invoke(self, wo, enabled=True, transferred=0.0, consumed=0.0, in_wip=None):
+        """in_wip defaults to transferred - consumed: the ordinary case, where the
+        only thing that took material off the line was the operator scanning it.
+        Pass it explicitly to model material that left WIP some other way — a
+        return to staging, or Close Production drawing packaging out."""
         self.harness(enabled=enabled)
         bom = MagicMock()
         bom.get.return_value = 1000.0
@@ -261,10 +267,22 @@ class TestMaterialsSnapshot(DemandHarness):
         def fake_get_doc(doctype, name=None, *args, **kwargs):
             return wo if doctype == "Work Order" else bom
 
+        if in_wip is None:
+            in_wip = transferred - consumed
+
+        # The four queries the snapshot runs, in order: transferred, consumed,
+        # the WIP balance, recent issues.
+        movements = [
+            [frappe._dict(item_code=RM, qty=transferred)] if transferred else [],
+            [frappe._dict(item_code=RM, qty=consumed)] if consumed else [],
+            [frappe._dict(item_code=RM, qty=in_wip)] if in_wip else [],
+            [],
+        ]
+
         with patch.object(mes_ops, "_require_roles"):
             with patch("frappe.get_doc", side_effect=fake_get_doc):
                 with patch("frappe.db.get_value", return_value="Kg"):
-                    with patch("frappe.db.sql", return_value=[]):
+                    with patch("frappe.db.sql", side_effect=movements):
                         out = mes_ops.get_materials_snapshot(WO_NAME)
         return {r["item_code"]: r for r in out["rows"]}
 
@@ -283,6 +301,80 @@ class TestMaterialsSnapshot(DemandHarness):
         self.assertIn("RM99999", rows)
         self.assertEqual(rows["RM99999"]["transferred"], 0.0)
         self.assertEqual(rows["RM99999"]["consumed"], 0.0)
+        self.assertEqual(rows["RM99999"]["in_wip"], 0.0)
+        self.assertEqual(rows["RM99999"]["remain"], 5.0)
+
+    def test_consumption_is_not_counted_twice_against_the_requirement(self):
+        """A fully transferred, fully consumed row is finished, not -required.
+
+        Consumption is drawn out of the transferred stock. Remain used to read
+        required - transferred - consumed, so the line the operator had just
+        completed showed the largest red negative on the screen.
+        """
+        rows = self.invoke(
+            FakeWorkOrder(wo_rows()),
+            transferred=MANUAL_REQUIRED,
+            consumed=MANUAL_REQUIRED,
+        )
+        self.assertAlmostEqual(rows[RM]["remain"], 0.0, places=6)
+        self.assertAlmostEqual(rows[RM]["in_wip"], 0.0, places=6)
+
+    def test_material_still_on_the_line_shows_in_wip(self):
+        """Transferred but not yet consumed: nothing loaded, all of it in WIP."""
+        rows = self.invoke(FakeWorkOrder(wo_rows()), transferred=MANUAL_REQUIRED)
+        self.assertAlmostEqual(rows[RM]["remain"], MANUAL_REQUIRED, places=6)
+        self.assertAlmostEqual(rows[RM]["in_wip"], MANUAL_REQUIRED, places=6)
+
+    def test_partial_load_splits_between_the_two_columns(self):
+        rows = self.invoke(
+            FakeWorkOrder(wo_rows()),
+            transferred=MANUAL_REQUIRED,
+            consumed=100.0,
+        )
+        self.assertAlmostEqual(rows[RM]["remain"], MANUAL_REQUIRED - 100.0, places=6)
+        self.assertAlmostEqual(rows[RM]["in_wip"], MANUAL_REQUIRED - 100.0, places=6)
+
+    def test_over_consumption_clamps_at_zero_rather_than_going_red(self):
+        rows = self.invoke(
+            FakeWorkOrder(wo_rows()),
+            transferred=MANUAL_REQUIRED,
+            consumed=MANUAL_REQUIRED + 25.0,
+            in_wip=0.0,
+        )
+        self.assertEqual(rows[RM]["remain"], 0.0)
+        self.assertEqual(rows[RM]["in_wip"], 0.0)
+
+    def test_material_returned_to_staging_leaves_in_wip(self):
+        """A return is not a consumption: it empties the line without loading.
+
+        return_materials posts a plain Material Transfer out of WIP, so a
+        transferred-minus-consumed figure would keep reporting the returned
+        stock as if it were still on the line.
+        """
+        rows = self.invoke(
+            FakeWorkOrder(wo_rows()),
+            transferred=MANUAL_REQUIRED,
+            in_wip=MANUAL_REQUIRED - 50.0,
+        )
+        self.assertAlmostEqual(rows[RM]["in_wip"], MANUAL_REQUIRED - 50.0, places=6)
+        self.assertAlmostEqual(rows[RM]["remain"], MANUAL_REQUIRED, places=6)
+        self.assertEqual(rows[RM]["consumed"], 0.0)
+
+    def test_packaging_drawn_at_close_leaves_in_wip(self):
+        """Close Production's Manufacture entry takes packaging straight out of
+        WIP, never through a Material Consumption entry, so Consumed stays at
+        zero while the line really has emptied."""
+        rows = self.invoke(
+            FakeWorkOrder(wo_rows()),
+            transferred=MANUAL_REQUIRED,
+            in_wip=0.0,
+        )
+        self.assertEqual(rows[RM]["in_wip"], 0.0)
+        self.assertEqual(rows[RM]["consumed"], 0.0)
+
+    def test_a_work_order_that_never_touched_wip_shows_nothing_on_the_line(self):
+        rows = self.invoke(FakeWorkOrder(wo_rows()))
+        self.assertEqual(rows[RM]["in_wip"], 0.0)
 
 
 class TestEndWoSfgRequirement(DemandHarness):
