@@ -407,8 +407,8 @@ Click **Submit**. The system:
 
 Pallet labels are printed at the end of the day, after Close Production. Click **Print Label** in the Operator Hub action bar (grouped to the right of **End Shift Return** / **Close Production**):
 
-1. The dialog aggregates every Work Order **Completed today** on the selected line(s), summed per finished-goods item. **Print Label** needs only an Operator and Line set — it no longer requires a live Work Order, so it stays available *after* Close Production, which is when pallet labels are actually printed.
-2. **Carton Qty** defaults to the quantity actually **produced** (not the planned Work Order quantity). Confirm or adjust Carton Qty, Pallet Type, and Pallet Qty.
+1. The dialog lists every Work Order **Completed today** on the selected line(s), as **one row per finished-goods item and batch** — an item produced in two batches today gets a row each, so every label carries exactly one batch. **Print Label** needs only an Operator and Line set — it no longer requires a live Work Order, so it stays available *after* Close Production, which is when pallet labels are actually printed.
+2. **Carton Qty** defaults to the quantity actually **produced** in that batch (not the planned Work Order quantity). Confirm or adjust Carton Qty, Pallet Type, and Pallet Qty. Production that cannot be traced to a batch still gets a row, shown with **—** in the Batch column, and prints without one.
 3. Click **Print Labels**. iSnack distributes the cartons across pallets — full pallets each carry an equal share and the last pallet carries the remainder (e.g., 1000 cartons at 65 per pallet → 15 labels of 65 + 1 of 25). Each pallet gets its own label. Labels open automatically for printing (via QZ Tray if configured, or the browser dialog).
 
 #### Step 10 — (Optional) Adjust labels in Label History

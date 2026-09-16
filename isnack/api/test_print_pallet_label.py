@@ -3,12 +3,14 @@
 
 import json
 import unittest
+from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch, MagicMock
 
 import frappe
 from isnack.api.mes_ops import (
     _is_fg_item_group,
+    _pallet_label_print_summary,
     combine_label_records,
     get_pallet_label_data,
     get_pallet_label_data_for_production_plan,
@@ -1427,6 +1429,8 @@ class TestCombineLabelRecords(unittest.TestCase):
 _ITEMS = {
     "FG10011": {"item_name": "PUFFS - Super Cheesy 21pkt x 40g", "description": "",
                 "stock_uom": "Carton", "item_group": "Finished Goods"},
+    "FG10006": {"item_name": "CRACKERS - Sea Salt 12pkt x 100g", "description": "",
+                "stock_uom": "Carton", "item_group": "Finished Goods"},
     "SFG10001": {"item_name": "CORN MIX 1", "description": "",
                  "stock_uom": "Kg", "item_group": "Semi-Finished Goods"},
     "SFG10002": {"item_name": "PUFFS CHEESY SLURRY", "description": "",
@@ -1440,6 +1444,61 @@ def _item_details(doctype, item_code, fields, as_dict=False):
     if not item:
         return None
     return frappe._dict({f: item.get(f, "") for f in fields})
+
+
+# ---------------------------------------------------------------------------
+# One pallet-label row per (item, batch)
+# ---------------------------------------------------------------------------
+
+_TODAY = frappe.utils.today()
+_YESTERDAY = (datetime.strptime(_TODAY, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _wo_row(name, item_code, produced_qty, **kw):
+    """A Work Order row as the pallet dialogs read it, closed today by default."""
+    row = frappe._dict(
+        name=name,
+        production_item=item_code,
+        produced_qty=produced_qty,
+        status="Completed",
+        actual_end_date=f"{_TODAY} 14:20:00",
+        production_plan=None,
+    )
+    row.update(kw)
+    return row
+
+
+def _matches(row, filters):
+    for field, condition in (filters or {}).items():
+        value = row.get(field)
+        if isinstance(condition, (list, tuple)):
+            operator, operand = condition
+            if operator == "in" and value not in operand:
+                return False
+            if operator == "between" and not (operand[0] <= str(value or "") <= operand[1]):
+                return False
+        elif value != condition:
+            return False
+    return True
+
+
+def _table_reads(tables):
+    """A ``frappe.get_all`` stand-in over in-memory tables that honours filters.
+
+    The dialogs' "closed today", "status Completed" and "this Production Plan"
+    rules are SQL. A canned return value would keep the tests passing if those
+    filters were deleted, so the fixture is filtered here instead: a Work Order
+    missing from a dialog was left out by the filter under test, not by the
+    fake. Rows are projected to ``fields`` so a caller can only read what it
+    actually asked the database for.
+    """
+    def get_all(doctype, filters=None, fields=None, **kwargs):
+        return [
+            frappe._dict({f: row.get(f) for f in (fields or row)})
+            for row in tables.get(doctype, [])
+            if _matches(row, filters)
+        ]
+    return get_all
 
 
 class TestIsFgItemGroup(unittest.TestCase):
@@ -1468,62 +1527,82 @@ class TestPalletLabelDataExcludesSemiFinished(unittest.TestCase):
         return fs
 
     @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
     @patch('frappe.get_cached_doc')
     @patch('frappe.db.get_value', side_effect=_item_details)
     @patch('frappe.get_all')
     def test_closed_semi_finished_work_orders_are_left_out(
-            self, mock_get_all, mock_get_value, mock_cached_doc, mock_require_roles):
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
         """A day that closed one FG and two SFG Work Orders lists only the FG.
 
         Taken from the customer's 2026-09-14: FG10011 alongside CORN MIX 1 and
         PUFFS CHEESY SLURRY, which is what put semi-finished rows in the dialog.
+        The dialog now lists one row per (item, batch), so the finished good
+        arrives as an (item, batch) pair rather than as a bare item.
         """
         mock_cached_doc.return_value = self._factory_settings()
-        mock_get_all.return_value = [
-            frappe._dict(name="MFG-WO-2026-00061", production_item="FG10011", produced_qty=300),
-            frappe._dict(name="MFG-WO-2026-00062", production_item="SFG10001", produced_qty=160),
-            frappe._dict(name="MFG-WO-2026-00063", production_item="SFG10002", produced_qty=120),
-        ]
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+            _wo_row("MFG-WO-2026-00062", "SFG10001", 160),
+            _wo_row("MFG-WO-2026-00063", "SFG10002", 120),
+        ]})
+        mock_quantities.return_value = {"MFG-WO-2026-00061": [("MJB-079", 300.0)]}
 
         out = get_pallet_label_data()
 
-        self.assertEqual([i["item_code"] for i in out["items"]], ["FG10011"])
+        self.assertEqual([(i["item_code"], i["batch_no"]) for i in out["items"]],
+                         [("FG10011", "MJB-079")])
         self.assertEqual(out["items"][0]["carton_qty"], 300)
+        # the batch resolver reads Stock Entries: it must not be asked about the
+        # semi-finished Work Orders the dialog is about to throw away
+        self.assertEqual(mock_quantities.call_args.args[0], ["MFG-WO-2026-00061"])
 
     @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
     @patch('frappe.get_cached_doc')
     @patch('frappe.db.get_value', side_effect=_item_details)
     @patch('frappe.get_all')
     def test_a_day_of_only_semi_finished_work_orders_lists_nothing(
-            self, mock_get_all, mock_get_value, mock_cached_doc, mock_require_roles):
-        """The customer's 2026-08-06 closed semi-finished only; the dialog must come up empty."""
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """The customer's 2026-08-06 closed semi-finished only; the dialog must come up empty.
+
+        Not even a batch-less row: the fallback row exists for finished goods
+        whose batch could not be read, not for output that is never palletised.
+        """
         mock_cached_doc.return_value = self._factory_settings()
-        mock_get_all.return_value = [
-            frappe._dict(name="MFG-WO-2026-00055", production_item="SFG10002", produced_qty=80),
-        ]
+        mock_quantities.return_value = {}
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00055", "SFG10002", 80),
+        ]})
 
         self.assertEqual(get_pallet_label_data()["items"], [])
 
     @patch('isnack.api.mes_ops._require_roles')
     @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
     @patch('frappe.get_cached_doc')
     @patch('frappe.db.get_value', side_effect=_item_details)
     @patch('frappe.get_all')
     def test_production_plan_dialog_excludes_its_semi_finished_stages(
-            self, mock_get_all, mock_get_value, mock_cached_doc, mock_summary,
-            mock_require_roles):
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_summary, mock_require_roles):
         """A Production Plan's Work Orders include the stages that feed the finished ones."""
         mock_cached_doc.return_value = self._factory_settings()
         mock_summary.return_value = {"printed_wo_count": 0, "label_count": 0, "last_printed_on": None}
-        mock_get_all.return_value = [
-            frappe._dict(name="MFG-WO-2026-00061", production_item="FG10011", produced_qty=300),
-            frappe._dict(name="MFG-WO-2026-00062", production_item="SFG10001", produced_qty=160),
-        ]
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300, production_plan="MFG-PP-2026-00036"),
+            _wo_row("MFG-WO-2026-00062", "SFG10001", 160, production_plan="MFG-PP-2026-00036"),
+        ]})
+        mock_quantities.return_value = {"MFG-WO-2026-00061": [("MJB-079", 300.0)]}
 
         out = get_pallet_label_data_for_production_plan("MFG-PP-2026-00036")
 
-        self.assertEqual([i["item_code"] for i in out["items"]], ["FG10011"])
-        # the summary is the expensive read: it must not run for an excluded item
+        self.assertEqual([(i["item_code"], i["batch_no"]) for i in out["items"]],
+                         [("FG10011", "MJB-079")])
+        # the summary is the expensive read: one call per surviving row, and
+        # none at all for an excluded item
         self.assertEqual(mock_summary.call_count, 1)
 
 
@@ -1588,6 +1667,905 @@ class TestPrintPalletLabelRefusesSemiFinished(unittest.TestCase):
                 work_orders='["WO-001"]', template=None,
             )
         self.assertNotIn("semi-finished", str(caught.exception))
+
+
+class _PalletDialogTestCase(unittest.TestCase):
+    """Shared scaffolding for the two pallet-label dialogs."""
+
+    def _factory_settings(self):
+        fs = MagicMock()
+        fs.pallet_uom_options = []
+        return fs
+
+    def _rows(self, items):
+        """(item_code, batch_no, carton_qty, work_orders) for each dialog row."""
+        return [(i["item_code"], i["batch_no"], i["carton_qty"], i["work_orders"]) for i in items]
+
+
+class TestPalletLabelRowsPerBatch(_PalletDialogTestCase):
+    """The Operator Hub dialog lists one row per (item, batch), not per item.
+
+    One row per item aggregated every Work Order closed that day, so when those
+    Work Orders had booked different batches the row spanned two of them.
+    print_pallet_label then resolved to no batch on purpose — one label cannot
+    carry two — and the label printed "Batch -" with a QR of ITEM||QTY. The
+    Delivery Note scanner refuses a batch-less label for a batch-tracked item,
+    which is how label LBL-2026-09-00737 became a dead end. Splitting the rows
+    by batch means every print call spans exactly one batch.
+    """
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_an_item_produced_in_two_batches_today_gets_a_row_for_each_batch(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """The customer's reported case: two Work Orders, one item, two batches.
+
+        Each row carries its own batch, its own carton count and only the Work
+        Orders that produced it — the two 770/600 totals stay apart instead of
+        becoming one unprintable 1370.
+        """
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00071", "FG10011", 600),
+            _wo_row("MFG-WO-2026-00072", "FG10011", 770),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00071": [("MJB-079", 600.0)],
+            "MFG-WO-2026-00072": [("BBJ-504", 770.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 600.0, ["MFG-WO-2026-00071"]),
+            ("FG10011", "BBJ-504", 770.0, ["MFG-WO-2026-00072"]),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_an_item_produced_in_one_batch_still_gets_exactly_one_row(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """The common case: splitting by batch must not split the ordinary day."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+        ]})
+        mock_quantities.return_value = {"MFG-WO-2026-00061": [("MJB-079", 300.0)]}
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"])])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_work_orders_that_booked_the_same_batch_stay_on_one_row(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Splitting is by batch, not by Work Order: a batch filled by two Work
+        Orders is still one pallet run and still one row."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 100),
+            _wo_row("MFG-WO-2026-00062", "FG10011", 120),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 100.0)],
+            "MFG-WO-2026-00062": [("MJB-079", 120.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 220.0, ["MFG-WO-2026-00061", "MFG-WO-2026-00062"]),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_work_order_whose_batch_cannot_be_read_keeps_its_cartons_in_a_batchless_row(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Nothing produced may vanish from the dialog.
+
+        Cartons that were made and are not on the screen would be a worse
+        failure than the blank batch this split exists to prevent, so a Work
+        Order the resolver cannot place keeps its produced_qty in a row of its
+        own with no batch.
+        """
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+            _wo_row("MFG-WO-2026-00062", "FG10011", 50),
+        ]})
+        # the second Work Order is simply absent from the resolver's map
+        mock_quantities.return_value = {"MFG-WO-2026-00061": [("MJB-079", 300.0)]}
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"]),
+            ("FG10011", None, 50.0, ["MFG-WO-2026-00062"]),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_work_order_that_produced_two_batches_appears_in_both_rows(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """One Work Order, one produced_qty, two batches: each row lists the Work
+        Order and carries only that batch's share of its output."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00071", "FG10011", 220),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00071": [("MJB-079", 120.0), ("BBJ-504", 100.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 120.0, ["MFG-WO-2026-00071"]),
+            ("FG10011", "BBJ-504", 100.0, ["MFG-WO-2026-00071"]),
+        ])
+        self.assertEqual(sum(r[2] for r in rows), 220.0)
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_rows_are_ordered_by_item_then_by_batch_in_first_seen_order(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Items alphabetically, and within an item the batches in the order the
+        day ran — including the batch-less row, which is production too."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            # read back creation-ascending, which is the order production ran
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+            _wo_row("MFG-WO-2026-00062", "FG10006", 100),
+            _wo_row("MFG-WO-2026-00063", "FG10011", 50),
+            _wo_row("MFG-WO-2026-00064", "FG10011", 70),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 300.0)],
+            "MFG-WO-2026-00062": [("CRK-012", 100.0)],
+            # 00063 resolves to nothing, so FG10011's middle row has no batch
+            "MFG-WO-2026-00064": [("BBJ-504", 70.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual([(r[0], r[1]) for r in rows], [
+            ("FG10006", "CRK-012"),
+            ("FG10011", "MJB-079"),
+            ("FG10011", None),
+            ("FG10011", "BBJ-504"),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_every_batch_row_still_carries_the_item_fields_the_grid_renders(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Splitting a row must not cost it the columns the dialog draws."""
+        fs = self._factory_settings()
+        fs.pallet_uom_options = [frappe._dict(uom="EURO 1"), frappe._dict(uom="EURO 4")]
+        mock_cached_doc.return_value = fs
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00071", "FG10011", 220),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00071": [("MJB-079", 120.0), ("BBJ-504", 100.0)],
+        }
+
+        out = get_pallet_label_data()
+
+        for row in out["items"]:
+            self.assertEqual(row["item_name"], "PUFFS - Super Cheesy 21pkt x 40g")
+            self.assertEqual(row["default_uom"], "Carton")
+            self.assertIn("description", row)
+        self.assertEqual(out["allowed_pallet_uoms"], ["EURO 1", "EURO 4"])
+
+
+class TestPalletLabelDataStillFiltersTheDay(_PalletDialogTestCase):
+    """The split changed which rows the day makes, not which Work Orders it reads."""
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_work_order_closed_on_an_earlier_day_is_still_left_out(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Yesterday's batch must not reappear as an extra row today."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+            _wo_row("MFG-WO-2026-00055", "FG10011", 180,
+                    actual_end_date=f"{_YESTERDAY} 17:40:00"),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 300.0)],
+            "MFG-WO-2026-00055": [("BBJ-504", 180.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"])])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_work_order_that_is_not_completed_is_still_left_out(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Production still running has no final batch quantity to label."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300),
+            _wo_row("MFG-WO-2026-00064", "FG10011", 40, status="In Process"),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 300.0)],
+            "MFG-WO-2026-00064": [("BBJ-504", 40.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data()["items"])
+
+        self.assertEqual(rows, [("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"])])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_the_day_is_still_read_as_a_full_day_range_on_actual_end_date(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles):
+        """Pinned at the query, because a label closed at 23:50 is still today's."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": []})
+        mock_quantities.return_value = {}
+
+        get_pallet_label_data()
+
+        filters = mock_get_all.call_args.kwargs["filters"]
+        self.assertEqual(filters["status"], "Completed")
+        self.assertEqual(
+            filters["actual_end_date"],
+            ["between", [f"{_TODAY} 00:00:00", f"{_TODAY} 23:59:59"]],
+        )
+
+    @patch('isnack.api.mes_ops._line_for_work_order')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_another_lines_batches_are_still_left_out(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_require_roles, mock_line):
+        """Selecting a line still scopes the dialog, now per batch row."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300, custom_factory_line="Line 1"),
+            _wo_row("MFG-WO-2026-00062", "FG10011", 180, custom_factory_line="Line 2"),
+        ]})
+        mock_line.side_effect = lambda name: {
+            "MFG-WO-2026-00061": "Line 1", "MFG-WO-2026-00062": "Line 2"}[name]
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 300.0)],
+            "MFG-WO-2026-00062": [("BBJ-504", 180.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data(lines=json.dumps(["Line 1"]))["items"])
+
+        self.assertEqual(rows, [("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"])])
+
+
+class TestProductionPlanPalletLabelRowsPerBatch(_PalletDialogTestCase):
+    """The Production Plan reprint dialog gets the same split, plus its own
+    printed-status fields computed for each (item, batch) row."""
+
+    _PLAN = "MFG-PP-2026-00036"
+
+    def _summary(self, printed_wo_count=0, label_count=0, last_printed_on=None):
+        return {"printed_wo_count": printed_wo_count, "label_count": label_count,
+                "last_printed_on": last_printed_on}
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_plans_item_produced_in_two_batches_gets_a_row_for_each_batch(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_summary, mock_require_roles):
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_summary.return_value = self._summary()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00071", "FG10011", 600, production_plan=self._PLAN),
+            _wo_row("MFG-WO-2026-00072", "FG10011", 770, production_plan=self._PLAN),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00071": [("MJB-079", 600.0)],
+            "MFG-WO-2026-00072": [("BBJ-504", 770.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data_for_production_plan(self._PLAN)["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 600.0, ["MFG-WO-2026-00071"]),
+            ("FG10011", "BBJ-504", 770.0, ["MFG-WO-2026-00072"]),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_each_batch_row_reports_the_printed_status_of_its_own_work_orders(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_summary, mock_require_roles):
+        """The summary is computed per row, off that row's Work Orders, so the
+        two batches of one item can read differently."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00071", "FG10011", 600, production_plan=self._PLAN),
+            _wo_row("MFG-WO-2026-00072", "FG10011", 770, production_plan=self._PLAN),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00071": [("MJB-079", 600.0)],
+            "MFG-WO-2026-00072": [("BBJ-504", 770.0)],
+        }
+        mock_summary.side_effect = lambda wos, batch=None: (
+            self._summary(1, 2, "2026-09-15 09:12:00") if wos == ["MFG-WO-2026-00071"]
+            else self._summary()
+        )
+
+        items = get_pallet_label_data_for_production_plan(self._PLAN)["items"]
+
+        # The batch goes with the Work Orders: a Work Order that booked two
+        # batches appears in both rows, so counting by Work Order alone would
+        # make printing one batch mark the other batch's row as printed.
+        self.assertEqual(
+            [(c.args[0], c.args[1]) for c in mock_summary.call_args_list],
+            [(["MFG-WO-2026-00071"], "MJB-079"), (["MFG-WO-2026-00072"], "BBJ-504")],
+        )
+        self.assertEqual([i["printed_wo_count"] for i in items], [1, 0])
+        self.assertEqual([i["label_count"] for i in items], [2, 0])
+        self.assertEqual([i["total_wo_count"] for i in items], [1, 1])
+        self.assertEqual([i["last_printed_on"] for i in items], ["2026-09-15 09:12:00", None])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_plans_work_order_with_no_readable_batch_keeps_its_own_row(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_summary, mock_require_roles):
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_summary.return_value = self._summary()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300, production_plan=self._PLAN),
+            _wo_row("MFG-WO-2026-00062", "FG10011", 50, production_plan=self._PLAN),
+        ]})
+        mock_quantities.return_value = {"MFG-WO-2026-00061": [("MJB-079", 300.0)]}
+
+        rows = self._rows(get_pallet_label_data_for_production_plan(self._PLAN)["items"])
+
+        self.assertEqual(rows, [
+            ("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"]),
+            ("FG10011", None, 50.0, ["MFG-WO-2026-00062"]),
+        ])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_another_plans_work_orders_are_still_left_out(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_quantities,
+            mock_summary, mock_require_roles):
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_summary.return_value = self._summary()
+        mock_get_all.side_effect = _table_reads({"Work Order": [
+            _wo_row("MFG-WO-2026-00061", "FG10011", 300, production_plan=self._PLAN),
+            _wo_row("MFG-WO-2026-00099", "FG10011", 90, production_plan="MFG-PP-2026-00041"),
+            _wo_row("MFG-WO-2026-00098", "FG10011", 90, production_plan=self._PLAN,
+                    status="In Process"),
+        ]})
+        mock_quantities.return_value = {
+            "MFG-WO-2026-00061": [("MJB-079", 300.0)],
+            "MFG-WO-2026-00099": [("BBJ-504", 90.0)],
+            "MFG-WO-2026-00098": [("CRK-012", 90.0)],
+        }
+
+        rows = self._rows(get_pallet_label_data_for_production_plan(self._PLAN)["items"])
+
+        self.assertEqual(rows, [("FG10011", "MJB-079", 300.0, ["MFG-WO-2026-00061"])])
+
+
+class TestPrintPalletLabelSuppliedBatch(unittest.TestCase):
+    """print_pallet_label takes the batch the dialog row already resolved.
+
+    A per-batch row knows its batch, so the print call no longer has to
+    re-derive it from a Work Order that may have booked two. The batch is still
+    checked against what those Work Orders really produced: it ends up on the
+    label's QR code, which is what a Delivery Note scan books stock against, so
+    a client bug must not be able to stamp an arbitrary batch onto stock.
+    """
+
+    # WO-001 closed two batches; WO-002 closed only the second
+    PRODUCED = {
+        "WO-001": [("MJB-079", 120.0), ("BBJ-504", 100.0)],
+        "WO-002": [("BBJ-504", 90.0)],
+    }
+
+    def _produced(self, work_orders):
+        """The resolver's answer, restricted to the Work Orders it was asked about."""
+        return {wo: self.PRODUCED[wo] for wo in work_orders if wo in self.PRODUCED}
+
+    def _factory_settings(self):
+        fs = MagicMock()
+        fs.default_fg_label_print_format = "FG Pallet Label"
+        fs.enable_silent_printing = False
+        fs.default_label_printer = None
+        return fs
+
+    def _work_order_items(self, doctype, **kwargs):
+        """The finished-goods guard's own two reads; everything else is mocked."""
+        if doctype == "Work Order":
+            return [frappe._dict(production_item="FG10011")]
+        if doctype == "Item":
+            return [frappe._dict(name="FG10011", item_group="Finished Goods")]
+        return []
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops.fg_batch_for_work_orders')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    @patch('frappe.new_doc')
+    def test_a_supplied_batch_is_stamped_on_the_label_record_and_on_every_url(
+            self, mock_new_doc, mock_generate_url, mock_fs, mock_get_value, mock_exists,
+            mock_get_all, mock_require_roles, mock_legacy, mock_quantities):
+        """Printing the BBJ-504 row of a Work Order that also made MJB-079."""
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.side_effect = _fake_print_url
+        mock_quantities.side_effect = self._produced
+
+        new_doc, created = _new_doc_recorder({"Label Record": "LBL-001"})
+        mock_new_doc.side_effect = new_doc
+
+        result = print_pallet_label(
+            item_code="FG10011",
+            pallet_qty=2.0,
+            pallet_type="EURO 1",
+            work_orders='["WO-001"]',
+            template="FG Pallet Label",
+            carton_qty=100,
+            batch_no="BBJ-504",
+        )
+
+        self.assertEqual(created["Label Record"].batch_no, "BBJ-504")
+        self.assertEqual(
+            [call.kwargs["batch_no"] for call in mock_generate_url.call_args_list],
+            ["BBJ-504", "BBJ-504"],
+        )
+        for url in result["print_urls"]:
+            self.assertIn("batch_no=BBJ-504", url)
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops.fg_batch_for_work_orders')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    def test_a_supplied_batch_is_used_instead_of_re_resolving_from_the_work_orders(
+            self, mock_generate_url, mock_fs, mock_get_value, mock_exists,
+            mock_get_all, mock_require_roles, mock_legacy, mock_quantities):
+        """The old resolver would answer None here — the Work Order booked two
+        batches — which is exactly the blank label this change removes."""
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub(())
+        mock_get_all.side_effect = self._work_order_items
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.side_effect = _fake_print_url
+        mock_quantities.side_effect = self._produced
+        mock_legacy.return_value = None
+
+        result = print_pallet_label(
+            item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+            work_orders='["WO-001"]', template="FG Pallet Label", carton_qty=120,
+            batch_no="MJB-079",
+        )
+
+        mock_legacy.assert_not_called()
+        self.assertIn("batch_no=MJB-079", result["print_url"])
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    def test_a_batch_the_work_orders_did_not_produce_is_refused(
+            self, mock_exists, mock_get_all, mock_require_roles, mock_quantities):
+        """Refused before anything is written, and the message names both the
+        batch and the Work Orders so the bad call can be traced."""
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_quantities.side_effect = self._produced
+
+        with self.assertRaises(frappe.ValidationError) as caught:
+            print_pallet_label(
+                item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-002"]', template="FG Pallet Label", carton_qty=90,
+                batch_no="MJB-079",
+            )
+
+        message = str(caught.exception)
+        self.assertIn("MJB-079", message)
+        self.assertIn("WO-002", message)
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.new_doc')
+    def test_a_refused_batch_never_reaches_a_label_record(
+            self, mock_new_doc, mock_exists, mock_get_all, mock_require_roles,
+            mock_quantities):
+        """The check runs before the Label Record is created, so a rejected
+        print leaves no audit trail claiming it happened."""
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_quantities.side_effect = self._produced
+
+        with self.assertRaises(frappe.ValidationError):
+            print_pallet_label(
+                item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-001"]', template="FG Pallet Label", carton_qty=100,
+                batch_no="LBL-2026-09-00737",
+            )
+
+        mock_new_doc.assert_not_called()
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    def test_a_batch_that_could_not_be_read_at_all_says_so_instead_of_blaming_the_caller(
+            self, mock_exists, mock_get_all, mock_require_roles, mock_quantities):
+        """The resolver swallows read failures and answers with an empty map. A
+        database that is down must not be reported as a wrong batch."""
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_quantities.return_value = {}
+
+        with self.assertRaises(frappe.ValidationError) as caught:
+            print_pallet_label(
+                item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-001"]', template="FG Pallet Label", carton_qty=100,
+                batch_no="MJB-079",
+            )
+
+        message = str(caught.exception)
+        self.assertIn("could be read", message)
+        self.assertNotIn("was not produced", message)
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops.fg_batch_for_work_orders')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    def test_a_batch_any_of_the_pallets_work_orders_produced_is_accepted(
+            self, mock_generate_url, mock_fs, mock_get_value, mock_exists,
+            mock_get_all, mock_require_roles, mock_legacy, mock_quantities):
+        """A per-batch row may list several Work Orders, and they all put stock
+        into that one batch, so the check is against what the pallet produced
+        between them."""
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub(())
+        mock_get_all.side_effect = self._work_order_items
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.side_effect = _fake_print_url
+        mock_quantities.side_effect = self._produced
+
+        result = print_pallet_label(
+            item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+            work_orders='["WO-001", "WO-002"]', template="FG Pallet Label", carton_qty=190,
+            batch_no="BBJ-504",
+        )
+
+        self.assertIn("batch_no=BBJ-504", result["print_url"])
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops.fg_batch_for_work_orders')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    @patch('frappe.new_doc')
+    def test_no_batch_argument_still_resolves_the_batch_from_the_work_orders(
+            self, mock_new_doc, mock_generate_url, mock_fs, mock_get_value, mock_exists,
+            mock_get_all, mock_require_roles, mock_legacy, mock_quantities):
+        """Every caller that predates the per-batch rows behaves as it did."""
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.side_effect = _fake_print_url
+        mock_legacy.return_value = "BBJ-504"
+
+        new_doc, created = _new_doc_recorder({"Label Record": "LBL-003"})
+        mock_new_doc.side_effect = new_doc
+
+        result = print_pallet_label(
+            item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+            work_orders='["WO-002"]', template="FG Pallet Label", carton_qty=90,
+        )
+
+        mock_legacy.assert_called_once_with(["WO-002"])
+        mock_quantities.assert_not_called()
+        self.assertEqual(created["Label Record"].batch_no, "BBJ-504")
+        self.assertIn("batch_no=BBJ-504", result["print_url"])
+
+    @patch('isnack.api.mes_ops.fg_batch_quantities_by_work_order')
+    @patch('isnack.api.mes_ops.fg_batch_for_work_orders')
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_all')
+    @patch('frappe.db.exists')
+    @patch('frappe.db.get_value')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    @patch('frappe.new_doc')
+    def test_an_empty_batch_argument_is_read_as_no_batch_supplied(
+            self, mock_new_doc, mock_generate_url, mock_fs, mock_get_value, mock_exists,
+            mock_get_all, mock_require_roles, mock_legacy, mock_quantities):
+        """An empty argument means "this row has no batch", not "resolve one".
+
+        It is the one row the split exists to keep on screen, so it stays
+        printable — but printable WITHOUT a batch. Only an omitted argument
+        (the legacy callers) asks the server to resolve one from the Work
+        Orders; treating empty the same way would stamp a batch on the very
+        row the dialog showed as having none.
+        """
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub()
+        mock_get_all.side_effect = self._work_order_items
+        mock_get_value.return_value = {"item_name": "Test Item"}
+        mock_generate_url.side_effect = _fake_print_url
+        mock_legacy.return_value = None
+
+        for supplied in ("", "   ", None):
+            with self.subTest(batch_no=supplied):
+                mock_legacy.reset_mock()
+                new_doc, created = _new_doc_recorder({"Label Record": "LBL-004"})
+                mock_new_doc.side_effect = new_doc
+
+                result = print_pallet_label(
+                    item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                    work_orders='["WO-003"]', template="FG Pallet Label", carton_qty=50,
+                    batch_no=supplied,
+                )
+
+                if supplied is None:
+                    # omitted: the legacy callers still ask the server to resolve
+                    mock_legacy.assert_called_once_with(["WO-003"])
+                else:
+                    # supplied but empty: the row says it has no batch, and the
+                    # server must take its word rather than resolving one
+                    mock_legacy.assert_not_called()
+                self.assertIsNone(created["Label Record"].batch_no)
+                self.assertIn("batch_no=&", result["print_url"])
+
+
+class TestBatchlessRowKeepsItsBatchOff(unittest.TestCase):
+    """A row the dialog drew with no batch must not print one.
+
+    This is the end-to-end shape of the fix, with the real resolver behind it:
+    the row builder and the print call have to agree about which cartons belong
+    to which batch, because the batch on the label is what a Delivery Note scan
+    books stock against.
+    """
+
+    def _factory_settings(self):
+        fs = MagicMock()
+        fs.pallet_uom_options = []
+        fs.default_fg_label_print_format = "FG Pallet Label"
+        fs.enable_silent_printing = False
+        fs.default_label_printer = None
+        return fs
+
+    def _reads(self):
+        """WO-001 produced 220 cartons: 120 into MJB-079 and 100 with no batch.
+
+        The unbatched 100 is a finished row the resolver cannot place — a
+        Manufacture entry posted by hand, or a finished row whose batch was
+        never written. Whatever put it there, those cartons are not in MJB-079.
+        """
+        return _table_reads({
+            "Work Order": [_wo_row("WO-001", "FG10011", 220)],
+            "Item": [frappe._dict(name="FG10011", item_group="Finished Goods")],
+            "Stock Entry": [frappe._dict(
+                name="SE-1", work_order="WO-001", purpose="Manufacture", docstatus=1,
+                posting_date=_TODAY, posting_time="14:20:00")],
+            "Stock Entry Detail": [
+                frappe._dict(parent="SE-1", parenttype="Stock Entry", idx=1,
+                             is_finished_item=1, is_scrap_item=0, batch_no="MJB-079",
+                             serial_and_batch_bundle=None, transfer_qty=120, qty=120),
+                frappe._dict(parent="SE-1", parenttype="Stock Entry", idx=2,
+                             is_finished_item=1, is_scrap_item=0, batch_no=None,
+                             serial_and_batch_bundle=None, transfer_qty=100, qty=100),
+            ],
+        })
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_the_unplaceable_cartons_are_shown_in_a_row_of_their_own(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_require_roles):
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.side_effect = self._reads()
+
+        items = get_pallet_label_data()["items"]
+
+        self.assertEqual(
+            [(i["batch_no"], i["carton_qty"]) for i in items],
+            [("MJB-079", 120.0), (None, 100.0)],
+        )
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.db.exists')
+    @patch('isnack.api.mes_ops._fs')
+    @patch('isnack.api.mes_ops._generate_print_url')
+    @patch('frappe.new_doc')
+    @patch('frappe.get_all')
+    def test_printing_the_batchless_row_does_not_stamp_the_work_orders_other_batch(
+            self, mock_get_all, mock_new_doc, mock_generate_url, mock_fs, mock_exists,
+            mock_get_value, mock_cached_doc, mock_require_roles):
+        """The dialog showed these 100 cartons with no batch; the label must agree.
+
+        The client sends an EMPTY batch for a batch-less row, which is not the
+        same as omitting the argument: omitted asks the server to resolve, and
+        WO-001 has exactly one readable batch, MJB-079. Resolving here would put
+        100 cartons that are not in MJB-079 onto a label whose QR books them
+        into it — worse than the blank batch the split set out to remove.
+        """
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_fs.return_value = self._factory_settings()
+        mock_exists.side_effect = _exists_stub()
+        mock_generate_url.side_effect = _fake_print_url
+        mock_get_all.side_effect = self._reads()
+
+        batchless = [i for i in get_pallet_label_data()["items"] if i["batch_no"] is None][0]
+
+        new_doc, created = _new_doc_recorder({"Label Record": "LBL-005"})
+        mock_new_doc.side_effect = new_doc
+
+        result = print_pallet_label(
+            item_code=batchless["item_code"],
+            pallet_qty=1.0,
+            pallet_type="EURO 1",
+            work_orders=json.dumps(batchless["work_orders"]),
+            template="FG Pallet Label",
+            carton_qty=batchless["carton_qty"],
+            batch_no="",
+        )
+
+        self.assertIsNone(created["Label Record"].batch_no)
+        self.assertIn("batch_no=&", result["print_url"])
+
+
+class TestPalletLabelPrintSummaryPerBatch(unittest.TestCase):
+    """Printed status belongs to a (Work Order, batch) pair, not to a Work Order.
+
+    A Work Order that booked two batches appears in both of its rows. Counted by
+    Work Order alone, printing one batch's labels marks the other batch's row as
+    printed and the operator skips a pallet that was never labelled.
+    """
+
+    def _reads(self, records):
+        def get_all(doctype, **kwargs):
+            if doctype == "Label Record Source":
+                return [frappe._dict(source_docname="WO-001", parent=r["name"]) for r in records]
+            if doctype == "Label Record":
+                return [frappe._dict(**r) for r in records]
+            return []
+        return get_all
+
+    def _record(self, name, batch_no, creation="2026-09-15 09:00:00"):
+        return {"name": name, "batch_no": batch_no, "creation": creation,
+                "payload": json.dumps({"pallet_type": "EURO 1", "carton_qty": 100})}
+
+    @patch('frappe.get_all')
+    def test_a_batch_only_counts_labels_of_that_batch(self, mock_get_all):
+        mock_get_all.side_effect = self._reads([
+            self._record("LBL-A", "MJB-079"),
+            self._record("LBL-B", "BBJ-504"),
+        ])
+
+        self.assertEqual(_pallet_label_print_summary(["WO-001"], "MJB-079")["label_count"], 1)
+        self.assertEqual(_pallet_label_print_summary(["WO-001"], "BBJ-504")["label_count"], 1)
+
+    @patch('frappe.get_all')
+    def test_printing_one_batch_leaves_the_other_batch_unprinted(self, mock_get_all):
+        """The reported failure mode: only MJB-079 was printed."""
+        mock_get_all.side_effect = self._reads([self._record("LBL-A", "MJB-079")])
+
+        printed = _pallet_label_print_summary(["WO-001"], "MJB-079")
+        unprinted = _pallet_label_print_summary(["WO-001"], "BBJ-504")
+
+        self.assertEqual(printed["printed_wo_count"], 1)
+        self.assertEqual(unprinted["printed_wo_count"], 0)
+        self.assertEqual(unprinted["label_count"], 0)
+        self.assertIsNone(unprinted["last_printed_on"])
+
+    @patch('frappe.get_all')
+    def test_records_predating_batch_stamping_count_only_for_the_batchless_row(self, mock_get_all):
+        """They carry no batch, so they cannot be attributed to one.
+
+        Counting them for every batch would over-report and leave a pallet
+        unlabelled; counting them for none costs at worst a duplicate label.
+        """
+        mock_get_all.side_effect = self._reads([self._record("LBL-OLD", None)])
+
+        self.assertEqual(_pallet_label_print_summary(["WO-001"], "MJB-079")["label_count"], 0)
+        self.assertEqual(_pallet_label_print_summary(["WO-001"], None)["label_count"], 1)
+
+    @patch('frappe.get_all')
+    def test_a_carton_label_record_is_still_ignored(self, mock_get_all):
+        """Only pallet prints count — a carton Label Record has no pallet_type."""
+        carton = {"name": "LBL-C", "batch_no": "MJB-079", "creation": "2026-09-15 09:00:00",
+                  "payload": "Print Format: SATO FG Label Print"}
+        mock_get_all.side_effect = self._reads([carton])
+
+        self.assertEqual(_pallet_label_print_summary(["WO-001"], "MJB-079")["label_count"], 0)
 
 
 

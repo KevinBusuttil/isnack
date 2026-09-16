@@ -457,7 +457,8 @@ def fg_batches_for_work_order(work_order: str) -> list[str]:
 	as well; they carry the same batch as the finished item, but a label must
 	never be printed off the scrap row.
 	"""
-	return _fg_batches_by_work_order([work_order]).get(work_order) or []
+	produced = fg_batch_quantities_by_work_order([work_order]).get(work_order) or []
+	return [batch_no for batch_no, _qty in produced]
 
 
 def fg_batch_for_work_order(work_order: str) -> str | None:
@@ -494,20 +495,26 @@ def fg_batch_for_work_orders(work_orders) -> str | None:
 	wos = [w for w in dict.fromkeys(work_orders or []) if w]
 	if not wos:
 		return None
-	by_work_order = _fg_batches_by_work_order(wos)
+	by_work_order = fg_batch_quantities_by_work_order(wos)
 	shared = None
 	for wo in wos:
 		batches = by_work_order.get(wo) or []
-		if len(batches) != 1 or (shared is not None and batches[0] != shared):
+		if len(batches) != 1 or (shared is not None and batches[0][0] != shared):
 			return None
-		shared = batches[0]
+		shared = batches[0][0]
 	return shared
 
 
-def _fg_batches_by_work_order(work_orders) -> dict[str, list[str]]:
-	"""``{work_order: [batch_no, ...]}`` for a whole list, three reads in total.
+def fg_batch_quantities_by_work_order(work_orders) -> dict[str, list[tuple[str, float]]]:
+	"""``{work_order: [(batch_no, qty), ...]}`` in first-seen order, three reads in total.
 
-	Work Orders with no finished-goods batch are simply absent from the result.
+	The common core the other ``fg_batch*`` resolvers read their batch names off,
+	and the only one that keeps the quantity: a Work Order that booked two
+	batches has one ``produced_qty`` covering both, so how much of its output
+	belongs to each batch exists nowhere but the Manufacture entry's finished
+	rows. Quantities are stock UOM, summed per batch across every entry and row
+	of the Work Order. Work Orders with no finished-goods batch are simply
+	absent from the result, and like the other resolvers this never raises.
 	"""
 	wos = [w for w in dict.fromkeys(work_orders or []) if w]
 	if not wos:
@@ -546,17 +553,16 @@ def _fg_batches_by_work_order(work_orders) -> dict[str, list[str]]:
 	for r in rows:
 		rows_by_entry.setdefault(r.parent, []).append(r)
 
-	out: dict[str, list[str]] = {}
+	out: dict[str, OrderedDict] = {}
 	for entry in entries:
 		for row in rows_by_entry.get(entry.name, []):
 			for part in expand_row_batches(row, bundle_map):
 				# a finished item that is not batch tracked expands to no batch
 				if not part["batch_no"]:
 					continue
-				batches = out.setdefault(entry.work_order, [])
-				if part["batch_no"] not in batches:
-					batches.append(part["batch_no"])
-	return out
+				batches = out.setdefault(entry.work_order, OrderedDict())
+				batches[part["batch_no"]] = flt(batches.get(part["batch_no"], 0)) + flt(part["qty"])
+	return {wo: list(batches.items()) for wo, batches in out.items()}
 
 
 # ---------------------------------------------------------------------------

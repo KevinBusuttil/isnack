@@ -281,8 +281,8 @@ Click **End Shift Return** to return all remaining WIP inventory at end of shift
 Click **Print Label** (enabled only for FG Work Orders with an operator and line set):
 
 1. The hub checks that `Factory Settings.default_fg_label_print_format` is configured; an error is shown if not.
-2. The server returns all **ended FG Work Orders** for the current lines, grouped by production item.
-3. A dialog shows a grid with one row per item: item code, description, default UOM, carton qty (editable), pallet type (filtered to allowed pallet UOMs from Factory Settings), and pallet qty (auto-calculated from the Item's UOM conversion factor, or manually overrideable).
+2. The server returns all **ended FG Work Orders** for the current lines, grouped by production item **and batch**.
+3. A dialog shows a grid with one row per item and batch: item code, batch, description, default UOM, carton qty (editable), pallet type (filtered to allowed pallet UOMs from Factory Settings), and pallet qty (auto-calculated from the Item's UOM conversion factor, or manually overrideable). One row is one batch, which is what lets every label carry a batch number; output with no traceable batch shows **—** and prints without one.
 4. Click **Print Labels** — for each row with a pallet type and qty, the server creates a `Label Record` audit document and returns a print URL. Labels are opened sequentially.
 
 #### Label History

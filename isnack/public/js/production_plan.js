@@ -266,6 +266,26 @@ async function isnack_show_pallet_label_dialog(frm) {
     }
   }
 
+  // Rows are one per (item, batch). Production that could not be traced to
+  // a batch still gets a row, shown with this placeholder so the operator
+  // sees the cartons instead of an empty cell.
+  const NO_BATCH_DISPLAY = "—";
+
+  // The placeholder is display text, never a batch name: strip it (and any
+  // blank) back to null before the value reaches the server, which refuses a
+  // batch that the row's Work Orders did not produce.
+  function batchForPrint(batch_no) {
+    const b = (batch_no || "").trim();
+    return b && b !== NO_BATCH_DISPLAY ? b : "";
+  }
+
+  // Two rows can now share an item code, so messages name the batch as well.
+  function rowLabel(row) {
+    if (!row) return "";
+    const b = batchForPrint(row.batch_no);
+    return b ? `${row.item_code} / ${b}` : row.item_code;
+  }
+
   // Compact summary shown in the grid Split column. Per-pallet carton qty
   // is intentionally omitted to avoid truncation — re-tick the row and
   // click Split Selected Row… to view/edit full allocation.
@@ -348,7 +368,11 @@ async function isnack_show_pallet_label_dialog(frm) {
     }
 
     const sd = isnack_op_dialog({
-      title: __("Split {0} — total {1} {2}", [itemCode, totalCarton, fromUom || ""]).trim(),
+      title: __("Split {0} — total {1} {2}", [
+        rowLabel(parentDoc),
+        totalCarton,
+        fromUom || "",
+      ]).trim(),
       size: "large",
       fields: [
         {
@@ -538,12 +562,25 @@ async function isnack_show_pallet_label_dialog(frm) {
             columns: 2,
           },
           {
+            // One row per (item, batch): the batch sits next to the item so
+            // the row reads item, batch, qty from left to right.
+            fieldname: "batch_no",
+            fieldtype: "Data",
+            label: __("Batch"),
+            in_list_view: 1,
+            read_only: 1,
+            columns: 2,
+          },
+          {
+            // Narrowed to make room for Batch — the grid shows a fixed number
+            // of columns' worth of fields and drops whatever overflows. The
+            // item name only supplements item_code, so it loses width first.
             fieldname: "description",
             fieldtype: "Data",
             label: __("Description"),
             in_list_view: 1,
             read_only: 1,
-            columns: 2,
+            columns: 1,
           },
           {
             fieldname: "default_uom",
@@ -576,12 +613,14 @@ async function isnack_show_pallet_label_dialog(frm) {
             },
           },
           {
+            // Also narrowed for Batch; the pallet UOM names it shows are
+            // short, and Split Selected Row… is the roomy way to set several.
             fieldname: "pallet_type",
             fieldtype: "Link",
             label: __("Pallet Type"),
             in_list_view: 1,
             options: "UOM",
-            columns: 2,
+            columns: 1,
             get_query: () => ({ filters: { name: ["in", allowedPalletUoms] } }),
             onchange: function () {
               if (
@@ -677,7 +716,7 @@ async function isnack_show_pallet_label_dialog(frm) {
             frappe.show_alert({
               message: __(
                 "Split for {0} does not match carton qty — re-open Split…",
-                [row.item_code]
+                [rowLabel(row)]
               ),
               indicator: "red",
             });
@@ -686,6 +725,9 @@ async function isnack_show_pallet_label_dialog(frm) {
           for (const s of splits) {
             rowsToPrint.push({
               item_code: row.item_code,
+              // A split divides one batch across pallet types, so the batch
+              // comes from the parent row — splits carry none of their own.
+              batch_no: batchForPrint(row.batch_no),
               work_orders: row.work_orders || [],
               pallet_type: s.pallet_type,
               carton_qty: parseFloat(s.carton_qty) || 0,
@@ -695,6 +737,7 @@ async function isnack_show_pallet_label_dialog(frm) {
         } else if (row.pallet_type && (parseFloat(row.pallet_qty) || 0) > 0) {
           rowsToPrint.push({
             item_code: row.item_code,
+            batch_no: batchForPrint(row.batch_no),
             work_orders: row.work_orders || [],
             pallet_type: row.pallet_type,
             carton_qty: parseFloat(row.carton_qty) || 0,
@@ -723,6 +766,10 @@ async function isnack_show_pallet_label_dialog(frm) {
               pallet_type: row.pallet_type,
               carton_qty: row.carton_qty,
               work_orders: JSON.stringify(row.work_orders || []),
+              // Already normalised to a real batch name or "" — never null,
+              // which the server would read as "resolve one for me" and could
+              // stamp this row's Work Order's other batch onto the label.
+              batch_no: row.batch_no,
               template: default_print_format,
             },
           });
@@ -738,7 +785,7 @@ async function isnack_show_pallet_label_dialog(frm) {
           }
         } catch (err) {
           frappe.show_alert({
-            message: __("Failed to print label for {0}", [row.item_code]),
+            message: __("Failed to print label for {0}", [rowLabel(row)]),
             indicator: "red",
           });
         }
@@ -772,6 +819,7 @@ async function isnack_show_pallet_label_dialog(frm) {
     }
     d.fields_dict.pallet_items.df.data.push({
       item_code: item.item_code,
+      batch_no: item.batch_no || NO_BATCH_DISPLAY,
       description: item.item_name || item.description || "",
       default_uom: item.default_uom,
       carton_qty: item.carton_qty,

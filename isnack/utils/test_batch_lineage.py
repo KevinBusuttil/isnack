@@ -599,6 +599,211 @@ class TestFgBatchResolvers(unittest.TestCase):
 		get_meta.assert_not_called()
 
 
+class TestFgBatchQuantitiesByWorkOrder(unittest.TestCase):
+	"""``fg_batch_quantities_by_work_order``: the same three reads, kept for their
+	quantities as well as their batch names.
+
+	A Work Order carries one ``produced_qty`` however many batches it booked, so
+	how much of its output belongs to each batch exists nowhere but the finished
+	rows of its Manufacture entries. The pallet dialog splits its rows on exactly
+	this map, which makes every number below a carton count an operator reads and
+	a QR code a Delivery Note scan books stock against.
+	"""
+
+	# the fixtures are the resolvers' own: this is the same read path, so the
+	# quantities have to be proved against the same rows the names came off
+	_fake_get_all = TestFgBatchResolvers._fake_get_all
+	_fg_row = TestFgBatchResolvers._fg_row
+	_bundle_entry = TestFgBatchResolvers._bundle_entry
+
+	@patch("frappe.get_all")
+	def test_a_batch_written_on_the_finished_row_carries_that_rows_quantity(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111", qty=300, transfer_qty=300)],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {"WO-1": [("BBB-111", 300.0)]})
+
+	@patch("frappe.get_all")
+	def test_quantities_are_stock_uom_not_the_row_uom(self, get_all):
+		"""``transfer_qty`` wins over ``qty``: a row entered in cases must not
+		report case counts as cartons."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no="BBB-111", qty=25, uom="Case", transfer_qty=300)],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {"WO-1": [("BBB-111", 300.0)]})
+
+	@patch("frappe.get_all")
+	def test_a_work_order_that_booked_two_batches_reports_each_batchs_own_share(self, get_all):
+		"""The customer's case: one Work Order, two batches, and one produced_qty
+		covering both. Splitting the dialog row needs the split spelled out."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[
+				self._fg_row("SE-1", batch_no="MJB-079", qty=120, transfer_qty=120),
+				self._fg_row("SE-1", batch_no="BBJ-504", qty=100, transfer_qty=100),
+			],
+		)
+		self.assertEqual(
+			bl.fg_batch_quantities_by_work_order(["WO-1"]),
+			{"WO-1": [("MJB-079", 120.0), ("BBJ-504", 100.0)]},
+		)
+
+	@patch("frappe.get_all")
+	def test_a_batch_booked_twice_accumulates_instead_of_the_second_booking_being_dropped(self, get_all):
+		"""A Work Order closed twice re-books the first batch. De-duplicating by
+		name was right for a list of names and would lose 75 cartons here."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-1"),
+			],
+			rows=[
+				self._fg_row("SE-1", batch_no="B-FIRST", qty=50, transfer_qty=50),
+				self._fg_row("SE-2", batch_no="B-FIRST", qty=75, transfer_qty=75),
+				self._fg_row("SE-2", batch_no="B-SECOND", qty=60, transfer_qty=60),
+			],
+		)
+		self.assertEqual(
+			bl.fg_batch_quantities_by_work_order(["WO-1"]),
+			{"WO-1": [("B-FIRST", 125.0), ("B-SECOND", 60.0)]},
+		)
+		# the batch names the other resolvers read off this map are unchanged
+		self.assertEqual(bl.fg_batches_for_work_order("WO-1"), ["B-FIRST", "B-SECOND"])
+
+	@patch("frappe.get_all")
+	def test_a_bundle_row_splits_its_quantity_between_the_batches_the_bundle_holds(self, get_all):
+		"""The ``use_serial_batch_fields = 0`` case: the row carries no batch of
+		its own and no per-batch quantity either, so both come off the bundle."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no=None, serial_and_batch_bundle="BN-1",
+					   qty=30, transfer_qty=30)],
+			bundle_entries=[
+				self._bundle_entry("BN-1", "B-A", qty=12),
+				frappe._dict(parent="BN-1", idx=2, batch_no="B-B", qty=18),
+			],
+		)
+		self.assertEqual(
+			bl.fg_batch_quantities_by_work_order(["WO-1"]),
+			{"WO-1": [("B-A", 12.0), ("B-B", 18.0)]},
+		)
+		# the row's own 30 is never added on top of the bundle's 12 + 18
+		self.assertEqual(sum(q for _b, q in bl.fg_batch_quantities_by_work_order(["WO-1"])["WO-1"]), 30.0)
+
+	@patch("frappe.get_all")
+	def test_bundle_quantities_are_reported_positive_however_erpnext_signed_them(self, get_all):
+		# ERPNext writes outward bundle entries negative; a carton count on a
+		# label is never negative
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[self._fg_row("SE-1", batch_no=None, serial_and_batch_bundle="BN-1",
+					   qty=27, transfer_qty=27)],
+			bundle_entries=[self._bundle_entry("BN-1", "BBB-111", qty=-27)],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {"WO-1": [("BBB-111", 27.0)]})
+
+	@patch("frappe.get_all")
+	def test_scrap_is_left_out_of_the_batch_quantity(self, get_all):
+		"""Scrap carries the finished item's own batch. Counting it would put
+		cartons on a pallet label that were never palletised."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[
+				self._fg_row("SE-1", batch_no="BBB-111", qty=300, transfer_qty=300),
+				# the shape the MES writes: scrap flag only, no finished flag
+				_row("FG10011", parent="SE-1", parenttype="Stock Entry", batch_no="BBB-111",
+				     qty=5, transfer_qty=5, is_scrap_item=1),
+				# and the shape is_finished_item = 1 lets past the SQL filter
+				self._fg_row("SE-1", batch_no="BBB-111", qty=7, transfer_qty=7, is_scrap_item=1),
+			],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {"WO-1": [("BBB-111", 300.0)]})
+
+	@patch("frappe.get_all")
+	def test_consumed_raw_material_is_not_counted_as_produced(self, get_all):
+		# the Manufacture entry books the BOM remainder as consumption in the
+		# same document; a raw-material batch is not a pallet of finished goods
+		get_all.side_effect = self._fake_get_all(
+			entries=[_entry("SE-1", purpose="Manufacture", work_order="WO-1")],
+			rows=[
+				self._fg_row("SE-1", batch_no="BBB-111", qty=300, transfer_qty=300),
+				_row("RM1", parent="SE-1", parenttype="Stock Entry", batch_no="RB1",
+				     qty=900, transfer_qty=900, s_warehouse="WIP"),
+			],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {"WO-1": [("BBB-111", 300.0)]})
+
+	@patch("frappe.get_all")
+	def test_each_work_order_is_attributed_only_its_own_production(self, get_all):
+		"""Two Work Orders of the same item share a batch: the map still says how
+		much each of them put into it, which is what the dialog row lists."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-2"),
+			],
+			rows=[
+				self._fg_row("SE-1", batch_no="B-SHARED", qty=100, transfer_qty=100),
+				self._fg_row("SE-2", batch_no="B-SHARED", qty=120, transfer_qty=120),
+				self._fg_row("SE-2", batch_no="B-OWN", qty=75, transfer_qty=75),
+			],
+		)
+		self.assertEqual(
+			bl.fg_batch_quantities_by_work_order(["WO-1", "WO-2"]),
+			{"WO-1": [("B-SHARED", 100.0)], "WO-2": [("B-SHARED", 120.0), ("B-OWN", 75.0)]},
+		)
+		# a whole day of Work Orders still costs the same two reads
+		self.assertEqual(get_all.call_count, 2)
+
+	@patch("frappe.get_all")
+	def test_a_work_order_with_no_finished_goods_batch_is_absent_rather_than_empty(self, get_all):
+		"""A non-batch-tracked finished item resolves to no batch at all. The
+		caller has to be able to tell that from a batch of quantity zero."""
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-1", purpose="Manufacture", work_order="WO-1"),
+				_entry("SE-2", purpose="Manufacture", work_order="WO-2"),
+			],
+			rows=[
+				self._fg_row("SE-1", qty=160, transfer_qty=160),
+				self._fg_row("SE-2", batch_no="BBB-111", qty=300, transfer_qty=300),
+			],
+		)
+		produced = bl.fg_batch_quantities_by_work_order(["WO-1", "WO-2"])
+		self.assertNotIn("WO-1", produced)
+		self.assertEqual(produced["WO-2"], [("BBB-111", 300.0)])
+
+	@patch("frappe.get_all")
+	def test_unsubmitted_production_reports_no_quantity(self, get_all):
+		get_all.side_effect = self._fake_get_all(
+			entries=[
+				_entry("SE-DRAFT", purpose="Manufacture", docstatus=0, work_order="WO-1"),
+				_entry("SE-CANCELLED", purpose="Manufacture", docstatus=2, work_order="WO-1"),
+			],
+			rows=[
+				self._fg_row("SE-DRAFT", batch_no="DRAFT-1", qty=50, transfer_qty=50),
+				self._fg_row("SE-CANCELLED", batch_no="CANCELLED-1", qty=50, transfer_qty=50),
+			],
+		)
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1"]), {})
+
+	@patch("frappe.get_all")
+	def test_an_empty_list_of_work_orders_reads_nothing(self, get_all):
+		self.assertEqual(bl.fg_batch_quantities_by_work_order([]), {})
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(None), {})
+		self.assertEqual(bl.fg_batch_quantities_by_work_order([None, ""]), {})
+		get_all.assert_not_called()
+
+	@patch("frappe.get_all")
+	def test_a_read_failure_degrades_to_an_empty_map_instead_of_raising(self, get_all):
+		# same rule as the other fg_batch* resolvers: the dialog loses the batch
+		# split, it does not lose the dialog
+		get_all.side_effect = Exception("Table 'tabStock Entry' doesn't exist")
+		self.assertEqual(bl.fg_batch_quantities_by_work_order(["WO-1", "WO-2"]), {})
+
+
 class TestBundleBatchNo(unittest.TestCase):
 	"""The Stock Entry label formats' fallback when a row carries no batch of its own."""
 

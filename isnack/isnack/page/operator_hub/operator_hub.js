@@ -1727,6 +1727,29 @@ function init_operator_hub($root) {
       }
     }
 
+    // Rows are one per (item, batch). Production that could not be traced to
+    // a batch still gets a row, shown with this placeholder so the operator
+    // sees the cartons rather than a blank cell.
+    const NO_BATCH_DISPLAY = '—';
+
+    // The placeholder is display text, never a batch name: strip it (and any
+    // blank) back to an EMPTY STRING before the value goes near the server.
+    // Empty and absent mean opposite things there — absent asks the server to
+    // resolve a batch from the Work Orders, empty says this row genuinely has
+    // none. Sending null for a batch-less row would resolve the Work Order's
+    // other batch and stamp it on the pallet the operator was shown as having
+    // no batch, so the row must always carry an explicit value.
+    function batchForPrint(batchNo) {
+      const b = (batchNo || '').trim();
+      return (b && b !== NO_BATCH_DISPLAY) ? b : '';
+    }
+
+    // Two rows can share an item code now, so messages name the batch too.
+    function rowLabel(row) {
+      const b = batchForPrint(row && row.batch_no);
+      return b ? `${row.item_code} / ${b}` : (row ? row.item_code : '');
+    }
+
     // Compact summary shown in the grid Split column. Per-pallet carton
     // qty is intentionally omitted to avoid truncation — re-tick the row
     // and click Split Selected Row… to view/edit full allocation.
@@ -1771,6 +1794,7 @@ function init_operator_hub($root) {
         return;
       }
       const itemCode = parentDoc.item_code;
+      const batchNo = batchForPrint(parentDoc.batch_no);
       const fromUom = parentDoc.default_uom;
 
       // Seed with existing splits, else one row using the current pallet_type/qty (if any)
@@ -1810,7 +1834,7 @@ function init_operator_hub($root) {
       }
 
       const sd = opDialog({
-        title: `Split ${itemCode} — total ${totalCarton} ${fromUom || ''}`.trim(),
+        title: `Split ${itemCode}${batchNo ? ' / ' + batchNo : ''} — total ${totalCarton} ${fromUom || ''}`.trim(),
         size: 'large',
         fields: [
           {
@@ -1970,12 +1994,24 @@ function init_operator_hub($root) {
               columns: 2,
             },
             {
+              // One row per (item, batch): the batch sits next to the item so
+              // the operator reads item, batch, qty left to right.
+              fieldname: 'batch_no',
+              fieldtype: 'Data',
+              label: 'Batch',
+              in_list_view: 1,
+              read_only: 1,
+              columns: 2,
+            },
+            {
+              // Narrowed to 1 to make room for Batch — the grid shows at most
+              // 10 columns' worth of fields and drops whatever overflows.
               fieldname: 'description',
               fieldtype: 'Data',
               label: 'Description',
               in_list_view: 1,
               read_only: 1,
-              columns: 2,
+              columns: 1,
             },
             {
               fieldname: 'default_uom',
@@ -2030,12 +2066,14 @@ function init_operator_hub($root) {
               columns: 1,
             },
             {
+              // Also narrowed for the Batch column; it stays in the list view
+              // because it is the only on-grid sign that a row is split.
               fieldname: 'splits_summary',
               fieldtype: 'Data',
               label: 'Split',
               in_list_view: 1,
               read_only: 1,
-              columns: 2,
+              columns: 1,
             },
             {
               fieldname: 'work_orders',
@@ -2089,7 +2127,7 @@ function init_operator_hub($root) {
             const splitSum = splits.reduce((acc, s) => acc + (parseFloat(s.carton_qty) || 0), 0);
             if (Math.abs(splitSum - (parseFloat(row.carton_qty) || 0)) > 0.0001) {
               frappe.show_alert({
-                message: `Split for ${row.item_code} does not match carton qty — re-open Split…`,
+                message: `Split for ${rowLabel(row)} does not match carton qty — re-open Split…`,
                 indicator: 'red'
               });
               return;
@@ -2097,6 +2135,9 @@ function init_operator_hub($root) {
             for (const s of splits) {
               rowsToPrint.push({
                 item_code: row.item_code,
+                // A split divides one batch across pallet types, so the batch
+                // comes from the parent row — splits carry none of their own.
+                batch_no: batchForPrint(row.batch_no),
                 work_orders: row.work_orders || [],
                 pallet_type: s.pallet_type,
                 carton_qty: parseFloat(s.carton_qty) || 0,
@@ -2106,6 +2147,7 @@ function init_operator_hub($root) {
           } else if (row.pallet_type && (parseFloat(row.pallet_qty) || 0) > 0) {
             rowsToPrint.push({
               item_code: row.item_code,
+              batch_no: batchForPrint(row.batch_no),
               work_orders: row.work_orders || [],
               pallet_type: row.pallet_type,
               carton_qty: parseFloat(row.carton_qty) || 0,
@@ -2136,6 +2178,10 @@ function init_operator_hub($root) {
               pallet_type: row.pallet_type,
               carton_qty: row.carton_qty,
               work_orders: JSON.stringify(row.work_orders || []),
+              // Already normalised to a real batch name or "" (never null, so
+              // the server never re-resolves); the row lists only the Work
+              // Orders that produced it.
+              batch_no: row.batch_no,
               template: defaultPrintFormat
             });
             
@@ -2156,13 +2202,13 @@ function init_operator_hub($root) {
                   await new Promise(resolve => setTimeout(resolve, PRINT_DIALOG_DELAY_MS));
                 }
                 
-                await handleLabelPrint(url, enableSilent, printerName, `pallet label ${row.item_code} (${idx + 1}/${rowsToPrint.length})`);
+                await handleLabelPrint(url, enableSilent, printerName, `pallet label ${rowLabel(row)} (${idx + 1}/${rowsToPrint.length})`);
                 printedCount++;
               }
             }
           } catch (err) {
-            console.error(`Failed to print pallet label for ${row.item_code}:`, err);
-            frappe.show_alert({message: `Failed to print label for ${row.item_code}`, indicator: 'red'});
+            console.error(`Failed to print pallet label for ${rowLabel(row)}:`, err);
+            frappe.show_alert({message: `Failed to print label for ${rowLabel(row)}`, indicator: 'red'});
           }
         }
         
@@ -2186,6 +2232,7 @@ function init_operator_hub($root) {
     items.forEach(item => {
       d.fields_dict.pallet_items.df.data.push({
         item_code: item.item_code,
+        batch_no: item.batch_no || NO_BATCH_DISPLAY,
         description: item.item_name || item.description || '',
         default_uom: item.default_uom,
         carton_qty: item.carton_qty,
