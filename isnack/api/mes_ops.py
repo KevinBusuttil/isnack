@@ -859,10 +859,16 @@ def _is_fg(item_code: str) -> bool:
     descendant whose name contains "semi-finished"); everything else produced on
     a Work Order is a finished good.
     """
-    item_group = frappe.db.get_value("Item", item_code, "item_group") or ""
-    if "semi-finished" in item_group.strip().lower():
-        return False
-    return True
+    return _is_fg_item_group(frappe.db.get_value("Item", item_code, "item_group"))
+
+
+def _is_fg_item_group(item_group: Optional[str]) -> bool:
+    """The same test as :func:`_is_fg`, against an Item Group already in hand.
+
+    Split out so a caller that has just read the group — the label lists, which
+    enrich many items at once — can classify without a second query per item.
+    """
+    return "semi-finished" not in (item_group or "").strip().lower()
 
 def _get_item_group(item_code: str) -> Optional[str]:
     return frappe.db.get_value("Item", item_code, "item_group")
@@ -3151,18 +3157,24 @@ def get_pallet_label_data(lines: str = None):
         item_details = frappe.db.get_value(
             "Item",
             item_code,
-            ["item_name", "description", "stock_uom"],
+            ["item_name", "description", "stock_uom", "item_group"],
             as_dict=True
         )
-        if item_details:
-            items.append({
-                "item_code": item_code,
-                "item_name": item_details.get("item_name", ""),
-                "description": item_details.get("description", ""),
-                "default_uom": item_details.get("stock_uom", ""),
-                "carton_qty": data["qty"],
-                "work_orders": data["work_orders"]
-            })
+        if not item_details:
+            continue
+        # "FG only", as the dialog says: semi-finished output is consumed by the
+        # next Work Order rather than palletised, and is not batch tracked, so a
+        # label for it would carry no batch and should never reach a delivery.
+        if not _is_fg_item_group(item_details.get("item_group")):
+            continue
+        items.append({
+            "item_code": item_code,
+            "item_name": item_details.get("item_name", ""),
+            "description": item_details.get("description", ""),
+            "default_uom": item_details.get("stock_uom", ""),
+            "carton_qty": data["qty"],
+            "work_orders": data["work_orders"]
+        })
     
     # Get allowed pallet UOMs from Factory Settings
     allowed_pallet_uoms = []
@@ -3265,9 +3277,13 @@ def get_pallet_label_data_for_production_plan(production_plan: str):
     items = []
     for item_code, data in grouped.items():
         item_details = frappe.db.get_value(
-            "Item", item_code, ["item_name", "description", "stock_uom"], as_dict=True
+            "Item", item_code, ["item_name", "description", "stock_uom", "item_group"], as_dict=True
         )
         if not item_details:
+            continue
+        # FG only, as in get_pallet_label_data: a Production Plan's Work Orders
+        # include the semi-finished stages that feed the finished ones.
+        if not _is_fg_item_group(item_details.get("item_group")):
             continue
         printed = _pallet_label_print_summary(data["work_orders"])
         items.append({
@@ -4382,6 +4398,28 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
     # Validate that the first work order exists
     if not frappe.db.exists("Work Order", first_work_order):
         frappe.throw(_("Work Order {0} not found").format(first_work_order))
+
+    # Refused here and not only hidden from the dialog: this is a whitelisted
+    # endpoint, and print_label guards its carton labels the same way. A
+    # semi-finished item is not batch tracked, so its label would print without
+    # a batch and still scan onto a Delivery Note, where the guard in
+    # delivery_note_scan only stops batch-tracked items.
+    produced = {
+        row.production_item
+        for row in frappe.get_all(
+            "Work Order", filters={"name": ["in", wo_list]}, fields=["production_item"]
+        )
+        if row.production_item
+    }
+    if produced:
+        for item in frappe.get_all(
+            "Item", filters={"name": ["in", sorted(produced)]}, fields=["name", "item_group"]
+        ):
+            if not _is_fg_item_group(item.item_group):
+                frappe.throw(
+                    _("Pallet label printing allowed only for finished goods; {0} is semi-finished.")
+                    .format(frappe.bold(item.name))
+                )
 
     # A pallet can span several Work Orders, so the batch is only printable when
     # they all booked the same one; otherwise the label stays batch-less rather
