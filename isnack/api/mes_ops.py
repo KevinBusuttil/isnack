@@ -14,7 +14,11 @@ from isnack.isnack.page.storekeeper_hub.storekeeper_hub import (
     _process_batch_spaces,
 )
 from isnack.utils import work_order_demand
-from isnack.utils.batch_lineage import fg_batch_for_work_order, fg_batch_for_work_orders
+from isnack.utils.batch_lineage import (
+    fg_batch_for_work_order,
+    fg_batch_for_work_orders,
+    fg_batch_quantities_by_work_order,
+)
 from isnack.utils.printing import get_label_printer
 from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
@@ -3079,11 +3083,62 @@ def get_ended_work_orders(lines: str = None):
 
     return {"work_orders": work_orders}
 
+def _pallet_label_batch_rows(work_orders: list) -> dict:
+    """Split Work Orders into one pallet-label row per (production item, batch).
+
+    ``work_orders`` are the Work Order rows the dialogs read, each carrying
+    ``name``, ``production_item`` and ``produced_qty``. Returns
+    ``{item_code: [{"batch_no": str|None, "qty": float, "work_orders": [...]}]}``
+    with the batches in first-seen (production) order, so an item's rows read
+    in the order the day ran.
+
+    A label carries one batch, so a row that spanned two of them could only
+    ever print blank. Production whose batch cannot be read keeps a row of its
+    own with ``batch_no`` None instead of dropping out: cartons that were made
+    and are not on the dialog would be a worse failure than the blank batch
+    this split exists to prevent.
+    """
+    qty_map = fg_batch_quantities_by_work_order([wo["name"] for wo in work_orders])
+
+    rows_by_item = {}
+
+    def bucket(item_code, batch_no, qty, work_order):
+        rows, index = rows_by_item.setdefault(item_code, ([], {}))
+        row = index.get(batch_no)
+        if row is None:
+            row = {"batch_no": batch_no, "qty": 0.0, "work_orders": []}
+            index[batch_no] = row
+            rows.append(row)
+        row["qty"] += flt(qty)
+        if work_order not in row["work_orders"]:
+            row["work_orders"].append(work_order)
+
+    for wo in work_orders:
+        item_code = wo["production_item"]
+        # Carton Qty reflects what was actually produced, not the planned Work
+        # Order qty, so pallet labels match what was really palletised.
+        produced = flt(wo.get("produced_qty", 0))
+        booked = qty_map.get(wo["name"]) or []
+        if not booked:
+            bucket(item_code, None, produced, wo["name"])
+            continue
+        for batch_no, qty in booked:
+            bucket(item_code, batch_no, qty, wo["name"])
+        # A Work Order that booked only part of its output to a batch keeps the
+        # remainder visible rather than losing it between the rows.
+        residual = produced - sum(flt(q) for _batch, q in booked)
+        if residual > QTY_EPSILON:
+            bucket(item_code, None, residual, wo["name"])
+
+    return {item_code: rows for item_code, (rows, _index) in rows_by_item.items()}
+
+
 @frappe.whitelist()
 def get_pallet_label_data(lines: str = None):
     """
     Get pallet label data from Work Orders closed today (FG items only).
-    Groups by production_item and returns summed quantities.
+    One row per production item and batch, so every print call spans a single
+    batch and the label can always carry one.
     
     Args:
         lines: JSON array of line names to filter
@@ -3096,6 +3151,7 @@ def get_pallet_label_data(lines: str = None):
                     "item_name": "...",
                     "description": "...",
                     "default_uom": "...",
+                    "batch_no": "..." or None,
                     "carton_qty": ...,
                     "work_orders": ["WO-001", "WO-002"]
                 }
@@ -3139,21 +3195,12 @@ def get_pallet_label_data(lines: str = None):
     # Group by production_item
     grouped = {}
     for wo in work_orders:
-        item_code = wo["production_item"]
-        if item_code not in grouped:
-            grouped[item_code] = {
-                "item_code": item_code,
-                "work_orders": [],
-                "qty": 0
-            }
-        grouped[item_code]["work_orders"].append(wo["name"])
-        # Carton Qty reflects the quantity actually produced, not the planned
-        # Work Order qty, so pallet labels match what was really palletised.
-        grouped[item_code]["qty"] += flt(wo.get("produced_qty", 0))
+        grouped.setdefault(wo["production_item"], []).append(wo)
     
-    # Enrich with item details
-    items = []
-    for item_code, data in grouped.items():
+    # Item details first, so the batch resolver only reads Stock Entries for the
+    # Work Orders that survive the FG filter.
+    details_by_item = {}
+    for item_code in grouped:
         item_details = frappe.db.get_value(
             "Item",
             item_code,
@@ -3167,14 +3214,27 @@ def get_pallet_label_data(lines: str = None):
         # label for it would carry no batch and should never reach a delivery.
         if not _is_fg_item_group(item_details.get("item_group")):
             continue
-        items.append({
-            "item_code": item_code,
-            "item_name": item_details.get("item_name", ""),
-            "description": item_details.get("description", ""),
-            "default_uom": item_details.get("stock_uom", ""),
-            "carton_qty": data["qty"],
-            "work_orders": data["work_orders"]
-        })
+        details_by_item[item_code] = item_details
+    
+    batch_rows = _pallet_label_batch_rows(
+        [wo for item_code in details_by_item for wo in grouped[item_code]]
+    )
+    
+    # One row per batch, items alphabetical and each item's batches in
+    # production order.
+    items = []
+    for item_code in sorted(details_by_item):
+        item_details = details_by_item[item_code]
+        for row in batch_rows.get(item_code, []):
+            items.append({
+                "item_code": item_code,
+                "item_name": item_details.get("item_name", ""),
+                "description": item_details.get("description", ""),
+                "default_uom": item_details.get("stock_uom", ""),
+                "batch_no": row["batch_no"],
+                "carton_qty": row["qty"],
+                "work_orders": row["work_orders"]
+            })
     
     # Get allowed pallet UOMs from Factory Settings
     allowed_pallet_uoms = []
@@ -3191,7 +3251,7 @@ def get_pallet_label_data(lines: str = None):
     }
 
 
-def _pallet_label_print_summary(work_orders: list) -> dict:
+def _pallet_label_print_summary(work_orders: list, batch_no: Optional[str] = None) -> dict:
     """
     Summarise prior *pallet*-label prints for a set of Work Orders so the
     reprint screen can show what was already printed.
@@ -3199,6 +3259,14 @@ def _pallet_label_print_summary(work_orders: list) -> dict:
     Pallet-label prints are identified by their Label Record payload carrying a
     "pallet_type" (set by print_pallet_label); plain carton-label records are
     ignored.
+
+    ``batch_no`` narrows the count to labels of that batch. The reprint screen
+    lists one row per (item, batch), and a Work Order that booked two batches
+    appears in both: counted by Work Order alone, printing one batch's labels
+    would mark the other batch's row as printed and the operator would skip a
+    pallet that was never labelled. Records written before batches were stamped
+    carry none and so count only towards the batch-less row — under-reporting a
+    print costs a duplicate label, over-reporting costs an unlabelled pallet.
 
     Returns {"printed_wo_count": int, "label_count": int, "last_printed_on": datetime|None}.
     """
@@ -3218,17 +3286,21 @@ def _pallet_label_print_summary(work_orders: list) -> dict:
     records = frappe.get_all(
         "Label Record",
         filters={"name": ["in", parent_names]},
-        fields=["name", "payload", "creation"],
+        fields=["name", "payload", "creation", "batch_no"],
     )
 
+    wanted_batch = batch_no or None
     pallet_records = {}
     for rec in records:
         try:
             payload = json.loads(rec.get("payload") or "{}")
         except Exception:
             payload = {}
-        if payload.get("pallet_type"):
-            pallet_records[rec["name"]] = rec["creation"]
+        if not payload.get("pallet_type"):
+            continue
+        if (rec.get("batch_no") or None) != wanted_batch:
+            continue
+        pallet_records[rec["name"]] = rec["creation"]
 
     if not pallet_records:
         return summary
@@ -3244,13 +3316,13 @@ def _pallet_label_print_summary(work_orders: list) -> dict:
 def get_pallet_label_data_for_production_plan(production_plan: str):
     """
     Pallet label data for the closed (status Completed) Work Orders of a
-    Production Plan, grouped per production item. Data source for the
+    Production Plan, one row per production item and batch. Data source for the
     pallet-label reprint dialog on the Production Plan form.
 
     Mirrors get_pallet_label_data but is scoped to a Production Plan instead of
-    a factory line + today, and adds a printed-status summary per item so the
+    a factory line + today, and adds a printed-status summary per row so the
     production manager can see which pallet labels were already printed before
-    reprinting. Carton Qty is the produced quantity, summed across the WOs.
+    reprinting. Carton Qty is the quantity produced into that batch.
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -3267,15 +3339,12 @@ def get_pallet_label_data_for_production_plan(production_plan: str):
     # Group by production_item
     grouped = {}
     for wo in work_orders:
-        item_code = wo["production_item"]
-        if item_code not in grouped:
-            grouped[item_code] = {"item_code": item_code, "work_orders": [], "qty": 0}
-        grouped[item_code]["work_orders"].append(wo["name"])
-        grouped[item_code]["qty"] += flt(wo.get("produced_qty", 0))
+        grouped.setdefault(wo["production_item"], []).append(wo)
 
-    # Enrich with item details and printed status
-    items = []
-    for item_code, data in grouped.items():
+    # Item details first, so the batch resolver only reads Stock Entries for the
+    # Work Orders that survive the FG filter.
+    details_by_item = {}
+    for item_code in grouped:
         item_details = frappe.db.get_value(
             "Item", item_code, ["item_name", "description", "stock_uom", "item_group"], as_dict=True
         )
@@ -3285,19 +3354,31 @@ def get_pallet_label_data_for_production_plan(production_plan: str):
         # include the semi-finished stages that feed the finished ones.
         if not _is_fg_item_group(item_details.get("item_group")):
             continue
-        printed = _pallet_label_print_summary(data["work_orders"])
-        items.append({
-            "item_code": item_code,
-            "item_name": item_details.get("item_name", ""),
-            "description": item_details.get("description", ""),
-            "default_uom": item_details.get("stock_uom", ""),
-            "carton_qty": data["qty"],
-            "work_orders": data["work_orders"],
-            "total_wo_count": len(data["work_orders"]),
-            "printed_wo_count": printed["printed_wo_count"],
-            "label_count": printed["label_count"],
-            "last_printed_on": printed["last_printed_on"],
-        })
+        details_by_item[item_code] = item_details
+
+    batch_rows = _pallet_label_batch_rows(
+        [wo for item_code in details_by_item for wo in grouped[item_code]]
+    )
+
+    # One row per batch, each carrying the printed status of its own Work Orders
+    items = []
+    for item_code in sorted(details_by_item):
+        item_details = details_by_item[item_code]
+        for row in batch_rows.get(item_code, []):
+            printed = _pallet_label_print_summary(row["work_orders"], row["batch_no"])
+            items.append({
+                "item_code": item_code,
+                "item_name": item_details.get("item_name", ""),
+                "description": item_details.get("description", ""),
+                "default_uom": item_details.get("stock_uom", ""),
+                "batch_no": row["batch_no"],
+                "carton_qty": row["qty"],
+                "work_orders": row["work_orders"],
+                "total_wo_count": len(row["work_orders"]),
+                "printed_wo_count": printed["printed_wo_count"],
+                "label_count": printed["label_count"],
+                "last_printed_on": printed["last_printed_on"],
+            })
 
     # Allowed pallet UOMs from Factory Settings
     allowed_pallet_uoms = []
@@ -4360,7 +4441,8 @@ def print_label(carton_qty, template: Optional[str] = None, printer: Optional[st
 @frappe.whitelist()
 def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str, 
                        work_orders: str, template: Optional[str] = None,
-                       carton_qty: Optional[float] = None):
+                       carton_qty: Optional[float] = None,
+                       batch_no: Optional[str] = None):
     """
     Create pallet label record and return print information for client-side printing.
     The label record is kept for audit trail, but printing happens on the client.
@@ -4374,6 +4456,12 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
         carton_qty: Total cartons across the work orders. When provided, the
             cartons are split across pallets so each label shows that pallet's
             carton count instead of the full Work Order quantity.
+        batch_no: Batch to print, when the caller already knows it from a
+            per-batch dialog row. It is validated against the batches the work
+            orders really produced. Left out, the batch is resolved from the
+            work orders as before. Supply it with carton_qty: without one, the
+            label falls back to the Work Order quantity, which spans every
+            batch that Work Order booked.
     
     Returns:
         dict: Contains print_url, print_urls, doctype, docname, print_format, label_record, 
@@ -4420,11 +4508,56 @@ def print_pallet_label(item_code: str, pallet_qty: float, pallet_type: str,
                     _("Pallet label printing allowed only for finished goods; {0} is semi-finished.")
                     .format(frappe.bold(item.name))
                 )
+        # The item is what the label names and the batch check below is scoped
+        # to these Work Orders, so pinning the two together here is what stops a
+        # caller pairing one item's code with another item's Work Orders.
+        if item_code not in produced:
+            frappe.throw(
+                _("Work Order(s) {0} do not produce Item {1}.")
+                .format(", ".join(wo_list), frappe.bold(item_code))
+            )
 
-    # A pallet can span several Work Orders, so the batch is only printable when
-    # they all booked the same one; otherwise the label stays batch-less rather
-    # than claiming one of them.
-    fg_batch = fg_batch_for_work_orders(wo_list)
+    # Omitting batch_no and sending an empty one mean opposite things, and
+    # conflating them mislabels stock. Omitted is the legacy caller asking the
+    # server to resolve. Empty is a dialog row the row builder deliberately
+    # shows as batch-less — a Work Order's unbatched residual — and resolving
+    # that one would stamp the Work Order's OTHER batch on the very pallet the
+    # operator was shown as having none.
+    if batch_no is None:
+        # A pallet can span several Work Orders, so the batch is only printable
+        # when they all booked the same one; otherwise the label stays
+        # batch-less rather than claiming one of them.
+        fg_batch = fg_batch_for_work_orders(wo_list)
+    else:
+        # str() first: a REST caller can send a number or a list, and a bad type
+        # deserves the validation message below rather than an AttributeError.
+        fg_batch = str(batch_no).strip() or None
+
+    if fg_batch is not None and batch_no is not None:
+        # Checked, not trusted: the batch on the label is what the Delivery Note
+        # scanner books stock against, so a client bug must not be able to stamp
+        # a batch onto a pallet that did not come from it.
+        by_work_order = fg_batch_quantities_by_work_order(wo_list)
+        if not by_work_order:
+            # The resolver swallows read failures, so say what actually happened
+            # instead of accusing the caller's batch of being wrong.
+            frappe.throw(
+                _("No finished-goods batch could be read for Work Order(s) {0}")
+                .format(", ".join(wo_list))
+            )
+        # Every Work Order on a label must have produced its batch: the row
+        # builder only groups a Work Order under a batch it actually booked, so
+        # checking the union instead would let a multi-Work-Order call carry a
+        # batch only one of them made.
+        missing = [
+            wo for wo in wo_list
+            if fg_batch not in {batch for batch, _qty in (by_work_order.get(wo) or [])}
+        ]
+        if missing:
+            frappe.throw(
+                _("Batch {0} was not produced by Work Order(s) {1}")
+                .format(frappe.bold(fg_batch), ", ".join(missing))
+            )
 
     fs = _fs()
     # Try default_fg_label_print_format first (for FG pallet labels), then fall back to 
