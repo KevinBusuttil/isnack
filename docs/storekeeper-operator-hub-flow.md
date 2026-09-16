@@ -266,13 +266,30 @@ Click **Return Materials** to send unused materials from WIP back to staging:
 Click **End Shift Return** to return all remaining WIP inventory at end of shift:
 
 1. If multiple lines are selected, a dialog asks which line to return WIP from.
-2. The server queries the WIP warehouse for the chosen line (all items and batches with qty > 0).
+2. The server queries the WIP warehouse for the chosen line, leaving out what is not worth offering (see **What the dialog leaves out** below).
 3. A table shows each item with its available qty, a **Return Qty** input, and a batch badge.
 4. Use the **Select All** checkbox or per-row checkboxes to bulk-clear quantities, or enter individual quantities.
 5. A summary footer shows item count and total quantity.
 6. Click **Post Return** — the server creates a `Material Transfer` SE from WIP Warehouse → Return Warehouse (or Staging Warehouse if no return warehouse configured), tagged with `custom_is_end_shift_return = 1` and `custom_return_received_by_storekeeper = 0`.
 7. A Material Return Note is printed automatically (via QZ Tray or browser dialog).
 8. The Stock Entry appears in **Storekeeper Hub → Pending End Shift Returns** until the storekeeper clicks **Received**, which sets `custom_return_received_by_storekeeper = 1`.
+
+#### What the dialog leaves out
+
+Two Factory Settings under **End Shift Return** decide what an operator is offered. They answer
+different problems and only one of them is a rule:
+
+- **Non-Returnable (Metered) Items** — materials that are never physically carried back, such as
+  piped water. They are still consumed against the BOM, so costing is unaffected; they are simply
+  never offered, and `return_wip_to_staging` refuses one if a stale dialog sends it anyway.
+- **Minimum Return Quantity** (default `0.01`) — hides balances too small to carry back. A BOM
+  ratio that is not exactly representable at the posting precision leaves a sub-tick remainder in
+  WIP on every close — water's line is 1/30 per Kg — so these appear on any item with an awkward
+  ratio, not just one. Set `0` to show every balance.
+
+The minimum is a display rule, not a restriction: a return posted deliberately below it is still
+accepted. Note that hiding a balance does not write it off — the stock stays in WIP, so these
+residues accumulate until a Stock Reconciliation clears them.
 
 ---
 

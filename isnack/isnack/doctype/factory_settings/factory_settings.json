@@ -27,6 +27,9 @@
   "allow_packaging_at_material_loading",
   "backflush_item_groups",
   "allowed_item_groups",
+  "shift_return_section",
+  "non_returnable_items",
+  "min_return_qty",
   "per_line_rules_section",
   "default_semi_finished_warehouse",
   "line_warehouse_map",
@@ -204,6 +207,26 @@
    "fieldtype": "Table MultiSelect",
    "label": "Allowed Item Groups",
    "options": "Line Allowed Item Groups"
+  },
+  {
+   "fieldname": "shift_return_section",
+   "fieldtype": "Section Break",
+   "label": "End Shift Return"
+  },
+  {
+   "description": "Materials that are never physically carried back to stores — piped or metered inputs such as water. They are still consumed against the BOM; they are only kept out of the End Shift Return dialog, which refuses them if one is sent anyway.",
+   "fieldname": "non_returnable_items",
+   "fieldtype": "Table MultiSelect",
+   "label": "Non-Returnable (Metered) Items",
+   "options": "Non Returnable Item"
+  },
+  {
+   "default": "0.01",
+   "description": "Hide WIP balances below this quantity from the End Shift Return dialog. A BOM ratio that is not exactly representable at the posting precision leaves a sub-tick remainder in WIP on every close (water is 1/30 per Kg), and nobody carries back 0.001 of anything. The stock is not written off, only left out of the dialog; set 0 to show every balance.",
+   "fieldname": "min_return_qty",
+   "fieldtype": "Float",
+   "label": "Minimum Return Quantity",
+   "precision": "6"
   },
   {
    "fieldname": "production_plan_section",
