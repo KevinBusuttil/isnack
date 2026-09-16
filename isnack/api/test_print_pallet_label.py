@@ -8,7 +8,10 @@ from unittest.mock import patch, MagicMock
 
 import frappe
 from isnack.api.mes_ops import (
+    _is_fg_item_group,
     combine_label_records,
+    get_pallet_label_data,
+    get_pallet_label_data_for_production_plan,
     print_label,
     print_label_record,
     print_pallet_label,
@@ -1415,6 +1418,177 @@ class TestCombineLabelRecords(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError) as caught:
             self._combine(records)
         self.assertIn("same Batch", str(caught.exception))
+
+
+
+# The client's real catalogue: every Finished Goods item is batch tracked, every
+# Semi-Finished Goods item is not. Semi-finished output feeds the next Work
+# Order and is never palletised or delivered, so it must not reach a label.
+_ITEMS = {
+    "FG10011": {"item_name": "PUFFS - Super Cheesy 21pkt x 40g", "description": "",
+                "stock_uom": "Carton", "item_group": "Finished Goods"},
+    "SFG10001": {"item_name": "CORN MIX 1", "description": "",
+                 "stock_uom": "Kg", "item_group": "Semi-Finished Goods"},
+    "SFG10002": {"item_name": "PUFFS CHEESY SLURRY", "description": "",
+                 "stock_uom": "Kg", "item_group": "Semi-Finished Goods"},
+}
+
+
+def _item_details(doctype, item_code, fields, as_dict=False):
+    """frappe.db.get_value stand-in projecting _ITEMS to the fields asked for."""
+    item = _ITEMS.get(item_code)
+    if not item:
+        return None
+    return frappe._dict({f: item.get(f, "") for f in fields})
+
+
+class TestIsFgItemGroup(unittest.TestCase):
+    """The Finished Good test, applied to a group already in hand."""
+
+    def test_semi_finished_groups_are_not_finished_goods(self):
+        for group in ("Semi-Finished Goods", "semi-finished goods", "  Semi-Finished  ",
+                      "Line 2 Semi-Finished"):
+            self.assertFalse(_is_fg_item_group(group), group)
+
+    def test_everything_else_produced_is_a_finished_good(self):
+        for group in ("Finished Goods", "Products", ""):
+            self.assertTrue(_is_fg_item_group(group), group)
+
+    def test_missing_group_is_not_treated_as_semi_finished(self):
+        # Matches _is_fg: only an explicit "semi-finished" demotes an item.
+        self.assertTrue(_is_fg_item_group(None))
+
+
+class TestPalletLabelDataExcludesSemiFinished(unittest.TestCase):
+    """The pallet dialogs say "FG only" — the data behind them has to mean it."""
+
+    def _factory_settings(self):
+        fs = MagicMock()
+        fs.pallet_uom_options = []
+        return fs
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_closed_semi_finished_work_orders_are_left_out(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_require_roles):
+        """A day that closed one FG and two SFG Work Orders lists only the FG.
+
+        Taken from the customer's 2026-09-14: FG10011 alongside CORN MIX 1 and
+        PUFFS CHEESY SLURRY, which is what put semi-finished rows in the dialog.
+        """
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.return_value = [
+            frappe._dict(name="MFG-WO-2026-00061", production_item="FG10011", produced_qty=300),
+            frappe._dict(name="MFG-WO-2026-00062", production_item="SFG10001", produced_qty=160),
+            frappe._dict(name="MFG-WO-2026-00063", production_item="SFG10002", produced_qty=120),
+        ]
+
+        out = get_pallet_label_data()
+
+        self.assertEqual([i["item_code"] for i in out["items"]], ["FG10011"])
+        self.assertEqual(out["items"][0]["carton_qty"], 300)
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_a_day_of_only_semi_finished_work_orders_lists_nothing(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_require_roles):
+        """The customer's 2026-08-06 closed semi-finished only; the dialog must come up empty."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_get_all.return_value = [
+            frappe._dict(name="MFG-WO-2026-00055", production_item="SFG10002", produced_qty=80),
+        ]
+
+        self.assertEqual(get_pallet_label_data()["items"], [])
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('isnack.api.mes_ops._pallet_label_print_summary')
+    @patch('frappe.get_cached_doc')
+    @patch('frappe.db.get_value', side_effect=_item_details)
+    @patch('frappe.get_all')
+    def test_production_plan_dialog_excludes_its_semi_finished_stages(
+            self, mock_get_all, mock_get_value, mock_cached_doc, mock_summary,
+            mock_require_roles):
+        """A Production Plan's Work Orders include the stages that feed the finished ones."""
+        mock_cached_doc.return_value = self._factory_settings()
+        mock_summary.return_value = {"printed_wo_count": 0, "label_count": 0, "last_printed_on": None}
+        mock_get_all.return_value = [
+            frappe._dict(name="MFG-WO-2026-00061", production_item="FG10011", produced_qty=300),
+            frappe._dict(name="MFG-WO-2026-00062", production_item="SFG10001", produced_qty=160),
+        ]
+
+        out = get_pallet_label_data_for_production_plan("MFG-PP-2026-00036")
+
+        self.assertEqual([i["item_code"] for i in out["items"]], ["FG10011"])
+        # the summary is the expensive read: it must not run for an excluded item
+        self.assertEqual(mock_summary.call_count, 1)
+
+
+class TestPrintPalletLabelRefusesSemiFinished(unittest.TestCase):
+    """Hiding the row is not enough: print_pallet_label is whitelisted."""
+
+    def _work_order_rows(self, *pairs):
+        def get_all(doctype, **kwargs):
+            if doctype == "Work Order":
+                return [frappe._dict(production_item=item) for _, item in pairs]
+            if doctype == "Item":
+                return [frappe._dict(name=i, item_group=_ITEMS[i]["item_group"])
+                        for i in sorted({item for _, item in pairs})]
+            return []
+        return get_all
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists', return_value=True)
+    @patch('frappe.get_all')
+    def test_a_semi_finished_work_order_is_refused(
+            self, mock_get_all, mock_exists, mock_require_roles):
+        mock_get_all.side_effect = self._work_order_rows(("WO-002", "SFG10002"))
+
+        with self.assertRaises(frappe.ValidationError) as caught:
+            print_pallet_label(
+                item_code="SFG10002", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-002"]', template="SATO FG Label Print",
+            )
+        message = str(caught.exception)
+        self.assertIn("SFG10002", message)
+        self.assertIn("finished goods", message)
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists', return_value=True)
+    @patch('frappe.get_all')
+    def test_one_semi_finished_work_order_refuses_the_whole_pallet(
+            self, mock_get_all, mock_exists, mock_require_roles):
+        """A pallet spanning Work Orders is refused if any of them is semi-finished."""
+        mock_get_all.side_effect = self._work_order_rows(
+            ("WO-001", "FG10011"), ("WO-002", "SFG10001"))
+
+        with self.assertRaises(frappe.ValidationError) as caught:
+            print_pallet_label(
+                item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-001", "WO-002"]', template="SATO FG Label Print",
+            )
+        self.assertIn("SFG10001", str(caught.exception))
+
+    @patch('isnack.api.mes_ops._require_roles')
+    @patch('frappe.db.exists', return_value=True)
+    @patch('frappe.get_all')
+    def test_a_finished_good_is_not_refused(
+            self, mock_get_all, mock_exists, mock_require_roles):
+        """The guard must not fire for the labels the dialog exists to print."""
+        mock_get_all.side_effect = self._work_order_rows(("WO-001", "FG10011"))
+
+        # Past the guard the call needs the rest of its collaborators; getting a
+        # different failure than the guard's is what proves the guard let it by.
+        with self.assertRaises(Exception) as caught:
+            print_pallet_label(
+                item_code="FG10011", pallet_qty=1.0, pallet_type="EURO 1",
+                work_orders='["WO-001"]', template=None,
+            )
+        self.assertNotIn("semi-finished", str(caught.exception))
+
 
 
 if __name__ == "__main__":
