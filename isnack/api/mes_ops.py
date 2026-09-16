@@ -5806,6 +5806,32 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
     return {"ok": True, "stock_entry": se.name}
 
 
+def _shift_return_policy() -> tuple:
+    """
+    ``(non_returnable_items, min_return_qty)`` from Factory Settings.
+
+    The two answer different complaints. A metered input such as water is never
+    carried back at all, whatever the quantity. A minimum quantity covers the
+    residue that any BOM ratio not representable at the posting precision leaves
+    in WIP on every close — water's line is 1/30 per Kg — which is not specific
+    to any one item and would otherwise keep reappearing.
+    """
+    try:
+        fs = frappe.get_cached_doc("Factory Settings")
+    except Exception:
+        return set(), 0.0
+
+    excluded = {
+        row.item
+        for row in (fs.get("non_returnable_items") or [])
+        if getattr(row, "item", None)
+    }
+    # Unset is not zero: a Single returns None for a field never saved, and the
+    # dialog is meant to hide residues out of the box.
+    minimum = fs.get("min_return_qty")
+    return excluded, flt(minimum) if minimum is not None else 0.01
+
+
 @frappe.whitelist()
 def get_wip_inventory(line: Optional[str] = None):
     """
@@ -5823,15 +5849,20 @@ def get_wip_inventory(line: Optional[str] = None):
     if not wip_wh:
         frappe.throw(_("WIP warehouse not configured for line {0}").format(line))
     
+    excluded_items, min_qty = _shift_return_policy()
+
     # Query current stock in WIP warehouse
     bins = frappe.get_all(
         "Bin",
         filters={"warehouse": wip_wh, "actual_qty": [">", 0]},
         fields=["item_code", "actual_qty"]
     )
-    
+
     result = []
     for b in bins:
+        # Never physically returned, so never offered — see _shift_return_policy.
+        if b.item_code in excluded_items:
+            continue
         item_name = frappe.db.get_value("Item", b.item_code, "item_name")
         uom = frappe.db.get_value("Item", b.item_code, "stock_uom") or "Nos"
         
@@ -5844,7 +5875,7 @@ def get_wip_inventory(line: Optional[str] = None):
             batches = erpnext_get_batch_qty(item_code=b.item_code, warehouse=wip_wh)
             for batch in (batches or []):
                 batch_qty = flt(batch.get("qty"))
-                if batch_qty <= 0:
+                if batch_qty <= 0 or batch_qty < min_qty:
                     continue
                 result.append({
                     "item_code": b.item_code,
@@ -5855,6 +5886,8 @@ def get_wip_inventory(line: Optional[str] = None):
                 })
         else:
             # For non-batch items, just add the total quantity
+            if flt(b.actual_qty) < min_qty:
+                continue
             result.append({
                 "item_code": b.item_code,
                 "item_name": item_name,
@@ -5891,6 +5924,22 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     target_wh = return_wh or staging_wh
     if not wip_wh or not target_wh:
         frappe.throw(_("WIP or Return/Staging warehouse not configured for line {0}").format(line))
+
+    # Refused, not just hidden: this is a whitelisted endpoint, and a metered
+    # input does not become returnable because a stale dialog offered it. The
+    # minimum quantity is deliberately NOT enforced here — it decides what the
+    # dialog is worth showing, and a deliberate small return is still valid.
+    excluded_items, _min_qty = _shift_return_policy()
+    offered = [
+        (it.get("item_code") or "").strip()
+        for it in items_list
+        if (it.get("item_code") or "").strip() in excluded_items
+    ]
+    if offered:
+        frappe.throw(
+            _("{0} cannot be returned: it is configured as a non-returnable (metered) item.")
+            .format(frappe.bold(", ".join(sorted(set(offered)))))
+        )
     
     # Create Stock Entry for Material Transfer
     se = frappe.new_doc("Stock Entry")
