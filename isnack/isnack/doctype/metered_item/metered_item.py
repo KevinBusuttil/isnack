@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class NonReturnableItem(Document):
+class MeteredItem(Document):
 	pass

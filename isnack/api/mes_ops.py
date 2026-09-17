@@ -5806,30 +5806,52 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
     return {"ok": True, "stock_entry": se.name}
 
 
-def _shift_return_policy() -> tuple:
+def _metered_items() -> set:
     """
-    ``(non_returnable_items, min_return_qty)`` from Factory Settings.
+    Items that arrive metered rather than handled, from Factory Settings.
 
-    The two answer different complaints. A metered input such as water is never
-    carried back at all, whatever the quantity. A minimum quantity covers the
-    residue that any BOM ratio not representable at the posting precision leaves
-    in WIP on every close — water's line is 1/30 per Kg — which is not specific
-    to any one item and would otherwise keep reappearing.
+    Water is piped: nobody carries it back to stores and nobody weighs it out at
+    the line, so it is consumed strictly per the BOM at Close Production. The one
+    list drives both halves of that — what the End Shift Return dialog offers and
+    what an operator is asked to count — because an item is metered for the same
+    reason in each. Costing is untouched either way: the recipe quantity is still
+    consumed.
+
+    Empty when the settings cannot be read: losing them must not take a screen
+    away from the operator.
     """
     try:
         fs = frappe.get_cached_doc("Factory Settings")
     except Exception:
-        return set(), 0.0
+        return set()
 
-    excluded = {
+    return {
         row.item
-        for row in (fs.get("non_returnable_items") or [])
+        for row in (fs.get("metered_items") or [])
         if getattr(row, "item", None)
     }
-    # Unset is not zero: a Single returns None for a field never saved, and the
-    # dialog is meant to hide residues out of the box.
+
+
+def _min_return_qty() -> float:
+    """
+    The quantity below which End Shift Return stops offering a WIP balance.
+
+    Unlike the metered list this is a display rule and applies to every item: any
+    BOM ratio not representable at the posting precision leaves a sub-tick
+    remainder in WIP on every close — water's line is 1/30 per Kg, and a
+    packaging film sits at 0.001 Kg for the same reason — and nobody carries back
+    0.001 of anything.
+
+    An unset Single field reads as None, which is not zero: the dialog is meant to
+    hide residues out of the box, so the default stands until somebody sets it.
+    """
+    try:
+        fs = frappe.get_cached_doc("Factory Settings")
+    except Exception:
+        return 0.0
+
     minimum = fs.get("min_return_qty")
-    return excluded, flt(minimum) if minimum is not None else 0.01
+    return flt(minimum) if minimum is not None else 0.01
 
 
 @frappe.whitelist()
@@ -5849,7 +5871,7 @@ def get_wip_inventory(line: Optional[str] = None):
     if not wip_wh:
         frappe.throw(_("WIP warehouse not configured for line {0}").format(line))
     
-    excluded_items, min_qty = _shift_return_policy()
+    excluded_items, min_qty = _metered_items(), _min_return_qty()
 
     # Query current stock in WIP warehouse
     bins = frappe.get_all(
@@ -5860,7 +5882,7 @@ def get_wip_inventory(line: Optional[str] = None):
 
     result = []
     for b in bins:
-        # Never physically returned, so never offered — see _shift_return_policy.
+        # Metered, so never handled and never offered — see _metered_items.
         if b.item_code in excluded_items:
             continue
         item_name = frappe.db.get_value("Item", b.item_code, "item_name")
@@ -5929,7 +5951,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     # input does not become returnable because a stale dialog offered it. The
     # minimum quantity is deliberately NOT enforced here — it decides what the
     # dialog is worth showing, and a deliberate small return is still valid.
-    excluded_items, _min_qty = _shift_return_policy()
+    excluded_items = _metered_items()
     offered = [
         (it.get("item_code") or "").strip()
         for it in items_list
@@ -5937,7 +5959,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     ]
     if offered:
         frappe.throw(
-            _("{0} cannot be returned: it is configured as a non-returnable (metered) item.")
+            _("{0} cannot be returned: it is configured as a metered item, consumed per recipe.")
             .format(frappe.bold(", ".join(sorted(set(offered)))))
         )
     

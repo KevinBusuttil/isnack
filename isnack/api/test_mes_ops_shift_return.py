@@ -4,8 +4,9 @@
 """What the End Shift Return dialog is worth offering an operator.
 
 Two complaints, two settings. Water is piped and metered: it is never carried
-back to stores whatever the quantity, so it is named in Factory Settings and
-refused outright. Separately, any BOM ratio that is not exactly representable
+back to stores whatever the quantity, so it is named in Factory Settings —
+the same list that keeps it out of what an operator is asked to consume — and
+refused outright here. Separately, any BOM ratio that is not exactly representable
 at the posting precision leaves a sub-tick remainder in WIP on every close —
 water's line is 1/30 per Kg, and a packaging film sits at 0.001 Kg for the same
 reason — so a minimum quantity keeps those residues off the screen without
@@ -36,16 +37,16 @@ FILM = "PM40002"           # 0.001 Kg — the same residue reaching the dialog
 SEASONING = "RM20011"      # 184.8 Kg, genuinely worth carrying back
 
 
-def _factory_settings(non_returnable=(), min_return_qty=0.01):
+def _factory_settings(metered=(), min_return_qty=0.01):
     fs = MagicMock()
     rows = []
-    for item in non_returnable:
+    for item in metered:
         row = MagicMock()
         row.item = item
         rows.append(row)
 
     def get(field, *a, **kw):
-        if field == "non_returnable_items":
+        if field == "metered_items":
             return rows
         if field == "min_return_qty":
             return min_return_qty
@@ -94,10 +95,10 @@ class TestWipInventoryPolicy(unittest.TestCase):
                 patch("frappe.get_all", side_effect=_bins(*bins)):
             return get_wip_inventory(LINE)["items"]
 
-    def test_a_non_returnable_item_is_never_offered(self):
+    def test_a_metered_item_is_never_offered(self):
         """Water at any quantity, not just the residue."""
         items = self._run([(WATER, 500.0), (SEASONING, 184.8)],
-                          _factory_settings(non_returnable=[WATER], min_return_qty=0))
+                          _factory_settings(metered=[WATER], min_return_qty=0))
 
         self.assertEqual([i["item_code"] for i in items], [SEASONING])
 
@@ -153,7 +154,7 @@ class TestWipInventoryPolicy(unittest.TestCase):
         self.assertEqual([i["item_code"] for i in items], [WATER])
 
 
-class TestReturnWipRefusesNonReturnable(unittest.TestCase):
+class TestReturnWipRefusesMeteredItems(unittest.TestCase):
     """Hiding the row is not enough — the endpoint is whitelisted."""
 
     def _post(self, items, settings):
@@ -165,20 +166,20 @@ class TestReturnWipRefusesNonReturnable(unittest.TestCase):
                 patch("frappe.new_doc", return_value=MagicMock()):
             return return_wip_to_staging(LINE, json.dumps(items))
 
-    def test_a_non_returnable_item_is_refused(self):
+    def test_a_metered_item_is_refused(self):
         with self.assertRaises(frappe.ValidationError) as caught:
             self._post([{"item_code": WATER, "qty": 0.001}],
-                       _factory_settings(non_returnable=[WATER]))
+                       _factory_settings(metered=[WATER]))
 
         self.assertIn(WATER, str(caught.exception))
-        self.assertIn("non-returnable", str(caught.exception))
+        self.assertIn("metered", str(caught.exception))
 
-    def test_one_non_returnable_item_refuses_the_whole_return(self):
+    def test_one_metered_item_refuses_the_whole_return(self):
         """Posting the rest silently would leave the operator guessing."""
         with self.assertRaises(frappe.ValidationError) as caught:
             self._post(
                 [{"item_code": SEASONING, "qty": 10}, {"item_code": WATER, "qty": 0.001}],
-                _factory_settings(non_returnable=[WATER]),
+                _factory_settings(metered=[WATER]),
             )
 
         self.assertIn(WATER, str(caught.exception))
@@ -190,7 +191,7 @@ class TestReturnWipRefusesNonReturnable(unittest.TestCase):
         A storekeeper deliberately returning 0.001 is doing something valid;
         only the dialog decided it was not worth offering unprompted.
         """
-        settings = _factory_settings(non_returnable=[WATER], min_return_qty=0.01)
+        settings = _factory_settings(metered=[WATER], min_return_qty=0.01)
         with patch.object(mes_ops, "_require_roles"), \
                 patch.object(mes_ops, "_warehouses_for_line",
                              return_value=(STAGING, WIP, None, None)), \

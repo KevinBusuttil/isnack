@@ -28,7 +28,7 @@
   "backflush_item_groups",
   "allowed_item_groups",
   "shift_return_section",
-  "non_returnable_items",
+  "metered_items",
   "min_return_qty",
   "per_line_rules_section",
   "default_semi_finished_warehouse",
@@ -214,11 +214,11 @@
    "label": "End Shift Return"
   },
   {
-   "description": "Materials that are never physically carried back to stores — piped or metered inputs such as water. They are still consumed against the BOM; they are only kept out of the End Shift Return dialog, which refuses them if one is sent anyway.",
-   "fieldname": "non_returnable_items",
+   "description": "Materials that arrive metered rather than handled — piped inputs such as water. They are consumed strictly per the BOM at Close Production, so an operator is never asked to count them at End WO, and they are never offered for End Shift Return. Costing is unaffected: the recipe quantity is still consumed.",
+   "fieldname": "metered_items",
    "fieldtype": "Table MultiSelect",
-   "label": "Non-Returnable (Metered) Items",
-   "options": "Non Returnable Item"
+   "label": "Metered Items",
+   "options": "Metered Item"
   },
   {
    "default": "0.01",
