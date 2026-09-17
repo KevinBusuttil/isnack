@@ -14,9 +14,13 @@ naming each item.
 
 The minimum is a display rule and the exclusion is a semantic one, which is why
 only the exclusion is enforced when the return is posted.
+
+The same endpoint also fills the Stock Entry the Material Return Note prints
+from, so the last class here covers the note's header rather than the dialog.
 """
 
 import json
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -206,6 +210,100 @@ class TestReturnWipRefusesMeteredItems(unittest.TestCase):
             return_wip_to_staging(LINE, json.dumps([{"item_code": FILM, "qty": 0.001}]))
 
             se.submit.assert_called_once()
+
+
+class TestReturnNoteHeader(unittest.TestCase):
+    """What the Material Return Note prints above its item table.
+
+    The note's item table reads the Stock Entry's rows, but its header reads the
+    entry's own fields — factory section, from warehouse, to warehouse. Filling
+    only the rows left all three blank on every end-shift return ever posted
+    (MAT-STE-2026-00419 was the one the client sent back), while the table below
+    them printed the warehouses correctly, which is why it went unnoticed.
+
+    Header and rows are set from the same pair of warehouses, so the two halves
+    of the note cannot disagree.
+    """
+
+    def _post(self, items):
+        with patch.object(mes_ops, "_require_roles"), \
+                patch.object(mes_ops, "_warehouses_for_line",
+                             return_value=(STAGING, WIP, None, None)), \
+                patch("frappe.get_cached_doc", return_value=_factory_settings(metered=[WATER])), \
+                patch("frappe.db.get_value", side_effect=_item_field), \
+                patch("frappe.new_doc") as mock_new_doc, \
+                patch("frappe.publish_realtime"):
+            se = MagicMock()
+            se.items = [MagicMock()]
+            mock_new_doc.return_value = se
+
+            return_wip_to_staging(LINE, json.dumps(items))
+
+        return se
+
+    def test_the_header_names_both_warehouses(self):
+        """WIP out, staging back — the same pair the rows carry."""
+        se = self._post([{"item_code": SEASONING, "qty": 10}])
+
+        self.assertEqual(se.from_warehouse, WIP)
+        self.assertEqual(se.to_warehouse, STAGING)
+
+    def test_the_header_names_the_factory_section(self):
+        se = self._post([{"item_code": SEASONING, "qty": 10}])
+
+        self.assertEqual(se.custom_factory_line, LINE)
+
+    def test_the_header_agrees_with_every_row(self):
+        """A header contradicting the table would be worse than a blank one."""
+        se = self._post([{"item_code": SEASONING, "qty": 10},
+                         {"item_code": FILM, "qty": 2}])
+
+        rows = [call.args[1] for call in se.append.call_args_list
+                if call.args[0] == "items"]
+
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["s_warehouse"], se.from_warehouse)
+            self.assertEqual(row["t_warehouse"], se.to_warehouse)
+
+
+class TestFactorySectionIsAFieldOnStockEntry(unittest.TestCase):
+    """The section only survives the save if Stock Entry declares the field.
+
+    Assigning an undeclared fieldname is not an error in Frappe — the value is
+    dropped on the way to the table and nothing is raised. The endpoint had been
+    setting custom_factory_line all along; the field simply did not exist on
+    Stock Entry, only on Work Order. A mock accepts any attribute, so no test
+    exercising the endpoint can catch that: the fixture is what has to be checked.
+    """
+
+    FIXTURE = os.path.join(os.path.dirname(__file__),
+                           "..", "isnack", "custom", "stock_entry.json")
+
+    def setUp(self):
+        with open(self.FIXTURE) as f:
+            self.fields = {f_["fieldname"]: f_
+                           for f_ in json.load(f)["custom_fields"]}
+
+    def _factory_section(self):
+        self.assertIn("custom_factory_line", sorted(self.fields),
+                      "Stock Entry has no custom_factory_line field — the "
+                      "endpoint's assignment will be dropped silently and the "
+                      "note's Factory Section will print blank")
+        return self.fields["custom_factory_line"]
+
+    def test_stock_entry_declares_the_factory_section(self):
+        self._factory_section()
+
+    def test_it_links_to_the_factory_line_the_endpoint_passes(self):
+        """A Link, so the printed section is a real line and not free text."""
+        field = self._factory_section()
+
+        self.assertEqual(field["fieldtype"], "Link")
+        self.assertEqual(field["options"], "Factory Line")
+
+    def test_it_is_not_hidden_from_print(self):
+        self.assertFalse(self._factory_section()["print_hide"])
 
 
 if __name__ == "__main__":

@@ -6470,6 +6470,11 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Transfer"
     se.set_stock_entry_type()
+    # Header-level defaults mirror the per-row warehouses below. ERPNext leaves
+    # these blank when only the rows are filled, and the Material Return Note
+    # header reads them, so set both.
+    se.from_warehouse = wip_wh
+    se.to_warehouse = target_wh
     se.custom_factory_line = line
     se.custom_is_end_shift_return = 1
     se.custom_return_received_by_storekeeper = 0
