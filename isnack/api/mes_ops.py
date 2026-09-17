@@ -20,7 +20,7 @@ from isnack.utils.batch_lineage import (
     fg_batch_quantities_by_work_order,
 )
 from isnack.utils.printing import get_label_printer
-from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
+from isnack.utils.qty import ceil_qty, postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
 
 # ============================================================
@@ -814,6 +814,36 @@ def _submitted_mtfm_item_qty_by_key(work_order: str) -> dict[tuple, float]:
     }
 
 
+def _metered_close_qty(remaining_qty, headroom) -> float:
+    """
+    What a metered item's remainder should consume when the Work Order closes.
+
+    Ordinary items truncate: a sub-tick remainder is not postable and is left in
+    WIP for the operator to clear. A metered item has no operator — nobody can
+    scan or return piped water — so the tick would stay in WIP forever, and the
+    transfer at Start rounded the same requirement UP, so it is genuinely there.
+    Taking it consumes exactly what was brought in and leaves the line clean.
+
+    Raises only, never lowers, and only when the headroom covers it: anything
+    uncertain falls back to the truncation every other item gets, so the worst
+    case is one tick of a material the order demonstrably received and that the
+    ledger demonstrably still holds.
+
+    Args:
+        remaining_qty: raw BOM requirement still unconsumed
+        headroom: the lower of what this Work Order brought into WIP less what
+            it has consumed, and what the warehouse actually holds now
+
+    Returns:
+        the quantity to post, quantised to the posting precision
+    """
+    postable = truncate_qty(remaining_qty)
+    ceiled = ceil_qty(remaining_qty)
+    if ceiled > postable and flt(headroom) >= ceiled:
+        return ceiled
+    return postable
+
+
 def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]:
     """Per-item quantity this Work Order brought into its own WIP warehouse.
 
@@ -836,6 +866,48 @@ def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]
         group by sed.item_code
     """, {"wo": work_order, "wip": wip_warehouse}, as_dict=True)
     return {r.item_code: flt(r.qty) for r in rows}
+
+
+def _wip_actual_qty(item_code: str, warehouse: str) -> float:
+    """What the ledger currently holds for an item in a warehouse.
+
+    A Work Order's own inflow is not proof that the stock is still there: WIP is
+    a pool shared by every order on the line, and an order that over-consumed
+    has already eaten into it. Since the hub never backdates an entry, the Bin
+    is exactly the balance ERPNext validates the new row against, and a row
+    beyond it is refused outright unless the site allows negative stock — which
+    would block the close, the one outcome this whole area exists to avoid.
+
+    0.0 when the Bin does not exist or cannot be read — the safe answer, because
+    it withholds the metered raise and leaves the remainder to truncate like
+    every other item's.
+    """
+    if not item_code or not warehouse:
+        return 0.0
+    try:
+        return flt(frappe.db.get_value(
+            "Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"
+        ))
+    except Exception:
+        return 0.0
+
+
+def _metered_headroom(item_code, wip_warehouse, inflow_by_item, already_consumed) -> float:
+    """How much of a metered item a close may round its remainder up into.
+
+    The lower of two ceilings, because either one alone is wrong: what this Work
+    Order brought into WIP and has not yet consumed keeps it from rounding up
+    into another order's material, and what the warehouse actually holds keeps
+    the row inside the balance ERPNext validates it against.
+
+    Lives next to the Bin read rather than at the call sites because Close
+    Production and End WO each run their own copy of the remainder loop, and the
+    two must not drift.
+    """
+    return min(
+        flt(inflow_by_item.get(item_code, 0.0)) - flt(already_consumed),
+        _wip_actual_qty(item_code, wip_warehouse),
+    )
 
 
 def _consumed_by_item(work_order: str) -> dict[str, float]:
@@ -2571,7 +2643,11 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     # Get BOM items scaled for production quantity
     if wo.bom_no:
         bom_items = _planned_items_for_wo(wo, good)
-        
+        metered_items = _metered_items()
+        metered_inflow = (
+            _wip_inflow_by_item(work_order, wip_wh) if metered_items and wip_wh else {}
+        )
+
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
             item_code = bom_item["item_code"]
@@ -2579,8 +2655,15 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
             # Only a shortfall that survives the posting precision is real —
-            # see the equivalent loop in _close_single_wo.
-            postable_remaining = truncate_qty(remaining_qty)
+            # see the equivalent loop in _close_single_wo, including why a
+            # metered item takes the tick truncation would leave behind.
+            if item_code in metered_items:
+                postable_remaining = _metered_close_qty(
+                    remaining_qty,
+                    _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
+                )
+            else:
+                postable_remaining = truncate_qty(remaining_qty)
 
             # Handle both under-consumption and over-consumption
             if postable_remaining > 0:
@@ -3976,6 +4059,10 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 for row in (get_sfg_components_for_wo(wo_name).get("items") or [])
             }
             sfg_src_wh = _default_sfg_source(wo_name)
+            metered_items = _metered_items()
+            metered_inflow = (
+                _wip_inflow_by_item(wo_name, wip_wh) if metered_items and wip_wh else {}
+            )
 
             for bom_item in bom_items:
                 item_code = bom_item["item_code"]
@@ -3993,7 +4080,18 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 # whose transfer_qty rounded to zero, which ERPNext rejects
                 # outright, blocking the close. Quantise toward zero so a
                 # sub-tick remainder is what it actually is: nothing.
-                postable_remaining = truncate_qty(remaining_qty)
+                # A metered item is the exception: nobody can clear its leftover
+                # tick by hand, so it takes the tick its own inflow covers.
+                # (sfg_codes is excluded because such a row is sourced from
+                # the Semi-finished warehouse, not the WIP the headroom is
+                # measured in.)
+                if item_code in metered_items and item_code not in sfg_codes:
+                    postable_remaining = _metered_close_qty(
+                        remaining_qty,
+                        _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
+                    )
+                else:
+                    postable_remaining = truncate_qty(remaining_qty)
 
                 if postable_remaining > 0:
                     src_wh = wip_wh
