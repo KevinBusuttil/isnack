@@ -158,6 +158,10 @@ class TestCloseSingleWoResiduals(unittest.TestCase):
             patch.object(mes_ops, "_consumed_qty_by_batch",
                          return_value=consumed_by_batch or {}),
             patch.object(mes_ops, "_apply_pre_consumed_cost_to_finished_item"),
+            # These tests are about quantisation, not availability: the
+            # warehouse always holds the material, so the draw ceiling
+            # (_drawable_qty) never decides anything here.
+            patch.object(mes_ops, "_warehouse_qty", return_value=1e6),
             patch.object(mes_ops.frappe, "get_precision", return_value=3),
             patch.object(mes_ops.frappe, "log_error", side_effect=lambda **kw: logged.append(kw)),
             patch.object(mes_ops.frappe.utils, "now_datetime", return_value="2026-08-07 12:00:00"),

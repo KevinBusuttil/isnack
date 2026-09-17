@@ -35,7 +35,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 
 import isnack.api.mes_ops as mes_ops
-from isnack.api.mes_ops import _metered_close_qty, _metered_headroom, _wip_actual_qty
+from isnack.api.mes_ops import _metered_close_qty, _metered_headroom, _warehouse_qty
 
 WATER = "RM20023"          # metered: piped, never handled
 CORN = "RM20022"           # handled like anything else
@@ -114,7 +114,7 @@ class MeteredCloseHarness(unittest.TestCase):
             patch.object(mes_ops, "_apply_pre_consumed_cost_to_finished_item"),
             patch.object(mes_ops, "_metered_items", return_value=set(metered)),
             patch.object(mes_ops, "_wip_inflow_by_item", return_value=dict(inflow)),
-            patch.object(mes_ops, "_wip_actual_qty",
+            patch.object(mes_ops, "_warehouse_qty",
                          side_effect=lambda item, _wh: float(on_hand.get(item, 0.0))),
             patch.object(mes_ops.frappe, "get_precision", return_value=3),
             patch.object(mes_ops.frappe, "log_error", side_effect=lambda **kw: logged.append(kw)),
@@ -222,29 +222,37 @@ class TestMeteredCloseQty(unittest.TestCase):
                     self.assertGreaterEqual(headroom, got, msg=msg)
 
 
-class TestWipActualQty(unittest.TestCase):
+class TestWarehouseQty(unittest.TestCase):
     def test_a_missing_bin_reads_as_nothing_on_hand(self):
         with patch.object(mes_ops.frappe.db, "get_value", return_value=None):
-            self.assertEqual(_wip_actual_qty(WATER, WIP), 0.0)
+            self.assertEqual(_warehouse_qty(WATER, WIP), 0.0)
 
-    def test_a_broken_lookup_reads_as_nothing_on_hand(self):
+    def test_a_broken_lookup_is_unknown_not_zero(self):
+        """The two callers want opposite things from an unknown balance, so it
+        must be distinguishable from a balance that really is zero."""
         with patch.object(mes_ops.frappe.db, "get_value", side_effect=Exception("boom")):
-            self.assertEqual(_wip_actual_qty(WATER, WIP), 0.0)
+            self.assertIsNone(_warehouse_qty(WATER, WIP))
+
+    def test_an_unknown_balance_still_withholds_the_metered_raise(self):
+        with patch.object(mes_ops, "_warehouse_qty", return_value=None):
+            self.assertLessEqual(
+                _metered_headroom(WATER, WIP, {WATER: 0.334}, 0.333), 0.0
+            )
 
     def test_missing_arguments_read_as_nothing_on_hand(self):
-        self.assertEqual(_wip_actual_qty("", WIP), 0.0)
-        self.assertEqual(_wip_actual_qty(WATER, ""), 0.0)
+        self.assertEqual(_warehouse_qty("", WIP), 0.0)
+        self.assertEqual(_warehouse_qty(WATER, ""), 0.0)
 
     def test_the_bin_balance_is_returned(self):
         with patch.object(mes_ops.frappe.db, "get_value", return_value="0.001000000"):
-            self.assertEqual(_wip_actual_qty(WATER, WIP), 0.001)
+            self.assertEqual(_warehouse_qty(WATER, WIP), 0.001)
 
 
 class TestMeteredHeadroom(unittest.TestCase):
     """Neither ceiling is sufficient alone, so the lower one wins."""
 
     def _headroom(self, inflow, consumed, on_hand):
-        with patch.object(mes_ops, "_wip_actual_qty", return_value=on_hand):
+        with patch.object(mes_ops, "_warehouse_qty", return_value=on_hand):
             return _metered_headroom(WATER, WIP, {WATER: inflow} if inflow else {}, consumed)
 
     def test_the_warehouse_balance_can_be_the_binding_one(self):
