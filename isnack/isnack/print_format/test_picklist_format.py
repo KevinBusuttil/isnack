@@ -12,6 +12,10 @@ in the semi-finished runs that feed it: PKL-260917-0741, the one the client sent
 back, resolves to three produced items and only FG10011 is a finished good. The
 header has to pick that one out, and say nothing when the choice is not clear.
 
+Not every transfer names its work order directly, either -- a surplus entry
+records the order it was left over from on a child table instead, and a picklist
+can be made of nothing but those.
+
 The template is Jinja stored inside the Print Format JSON, so the only way to
 test what it prints is to render it -- here through a jinja2 environment
 configured like frappe's (``SandboxedEnvironment``, ``DebugUndefined``,
@@ -230,6 +234,66 @@ class TestProducedItemInTheHeader(unittest.TestCase):
 
         self.assertEqual(_header(html, "Produced Item:"), "")
         self.assertEqual(frappe.queries, [])
+
+
+class TestSurplusEntriesStillNameTheirWorkOrder(unittest.TestCase):
+    """A surplus entry has no work_order of its own.
+
+    It is the remainder of picking for one -- opening a 50 kg reel for a 37 kg
+    order -- so ``se.work_order`` is unset and the origin is recorded on the
+    ``custom_originating_work_orders`` child table, with the older single
+    ``custom_originating_work_order`` for rows predating it. The storekeeper
+    hub offers these entries for picking alongside the work-order-linked ones
+    and lets each be chosen on its own, so a picklist can hold nothing else.
+
+    Following only ``se.work_order`` left those picklists with an empty header.
+    What the query returns is stubbed here; that it returns the right rows was
+    checked by running this template's own SQL against the 2026-09-17 backup.
+    """
+
+    def test_a_surplus_only_picklist_names_the_originating_item(self):
+        html, _ = _render(_picklist(transfers=("MAT-STE-2026-00264",)), [_wo(PUFFS)])
+
+        self.assertEqual(
+            _header(html, "Produced Item:"),
+            "FG10011 &mdash; PUFFS - Super Cheesy 21pkt x 40g",
+        )
+
+    def test_the_query_follows_all_three_routes_to_a_work_order(self):
+        """The direct link, the child table, and the legacy single link."""
+        _, frappe = _render(_picklist(), [_wo(PUFFS)])
+        query, _params = frappe.queries[0]
+
+        self.assertIn("se.work_order", query)
+        self.assertIn("custom_originating_work_orders", query)
+        self.assertIn("se.custom_originating_work_order", query)
+
+    def test_the_child_table_rows_are_read_as_stock_entry_children(self):
+        """Its parentfield is shared with other doctypes' tables."""
+        _, frappe = _render(_picklist(), [_wo(PUFFS)])
+        query, _params = frappe.queries[0]
+
+        self.assertIn("Surplus Originating Work Order", query)
+        self.assertIn("sow.parenttype = 'Stock Entry'", query)
+
+    def test_a_surplus_entry_beside_a_semi_finished_run_names_the_finished_good(self):
+        """Seven picklists in the backup are this shape.
+
+        The surplus carries FG10011's own carton and film, so the picklist is
+        serving that order as much as the corn mix beside it.
+        """
+        html, _ = _render(
+            _picklist(transfers=("MAT-STE-2026-00264", "MAT-STE-2026-00261")),
+            [
+                _wo(PUFFS, FINISHED, "MFG-WO-2026-00047"),
+                _wo(MIX, SEMI, "MFG-WO-2026-00049"),
+            ],
+        )
+
+        self.assertEqual(
+            _header(html, "Produced Item:"),
+            "FG10011 &mdash; PUFFS - Super Cheesy 21pkt x 40g",
+        )
 
 
 class TestTheHeaderCostsOneQuery(unittest.TestCase):
