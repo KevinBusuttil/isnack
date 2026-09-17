@@ -884,6 +884,36 @@ def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]
     return {r.item_code: flt(r.qty) for r in rows}
 
 
+def _wip_transfers_out_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]:
+    """Per-item quantity this Work Order moved back out of its own WIP.
+
+    A return to staging posts a Material Transfer out of WIP under the order's
+    name (see :func:`return_materials`), and it is neither an inflow nor a
+    consumption, so an order's entitlement measured as "what I brought in, less
+    what I consumed" would still count material it has given back. In a shared
+    WIP that is not an accounting nicety: the difference is somebody else's
+    stock, and the close would take it.
+
+    Consumption is excluded here because callers account for it separately, from
+    Material Consumption for Manufacture; the Manufacture entry is excluded for
+    the same reason, and in any case a close is planned before its own is
+    posted.
+    """
+    if not work_order or not wip_warehouse:
+        return {}
+    rows = frappe.db.sql("""
+        select sed.item_code, coalesce(sum(sed.qty), 0) as qty
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        where se.docstatus = 1
+          and se.work_order = %(wo)s
+          and sed.s_warehouse = %(wip)s
+          and se.purpose not in ('Material Consumption for Manufacture', 'Manufacture')
+        group by sed.item_code
+    """, {"wo": work_order, "wip": wip_warehouse}, as_dict=True)
+    return {r.item_code: flt(r.qty) for r in rows}
+
+
 def _warehouse_qty(item_code: str, warehouse: str) -> Optional[float]:
     """What the ledger currently holds for an item in a warehouse.
 
@@ -933,7 +963,7 @@ def _metered_headroom(item_code, wip_warehouse, inflow_by_item, already_consumed
 
 
 def _drawable_qty(item_code, source_warehouse, wip_warehouse,
-                  inflow_by_item, already_consumed) -> Optional[float]:
+                  inflow_by_item, already_taken, committed=0.0) -> Optional[float]:
     """How much of an item a Work Order can actually take from a warehouse.
 
     Two ceilings, because the two warehouses mean different things. The line's
@@ -949,6 +979,13 @@ def _drawable_qty(item_code, source_warehouse, wip_warehouse,
     Never above the balance either way. The recipe is a plan, not a promise
     about what is on the shelf.
 
+    ``already_taken`` is everything the order has drawn out of WIP — what it
+    consumed and what it handed back — because a return leaves it entitled to
+    less, and in a shared warehouse the difference belongs to another order.
+    ``committed`` is what a caller planning several orders against one balance
+    has already promised out of this warehouse; Close Production leaves it at
+    zero because each order posts before the next is planned.
+
     Returns None when neither ceiling is knowable — an unreadable balance on a
     warehouse this order has no recorded inflow into. Refusing to consume on
     that basis would strand material far more often than it would save any, so
@@ -958,14 +995,14 @@ def _drawable_qty(item_code, source_warehouse, wip_warehouse,
     ceilings = []
     moved_in = flt(inflow_by_item.get(item_code, 0.0))
     if source_warehouse and source_warehouse == wip_warehouse and moved_in:
-        ceilings.append(moved_in - flt(already_consumed))
+        ceilings.append(moved_in - flt(already_taken))
     on_hand = _warehouse_qty(item_code, source_warehouse)
     if on_hand is not None:
-        ceilings.append(on_hand)
+        ceilings.append(on_hand - flt(committed))
     return min(ceilings) if ceilings else None
 
 
-def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
+def _bom_consumption_plan(wo, output_qty: float, committed: dict = None) -> list[dict]:
     """What a close will consume off the BOM for one Work Order, row by row.
 
     One entry per non-packaging BOM item: the requirement scaled to ``output_qty``,
@@ -987,6 +1024,13 @@ def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
 
     Packaging is absent by design: it is consumed from the quantities the
     operator enters at Close Production, not from the BOM.
+
+    ``committed`` maps ``(item_code, warehouse)`` to what earlier orders in the
+    same batch have already been planned to take, so several orders can be
+    planned against one snapshot of the ledger. Close Production passes nothing:
+    it closes the orders one after another and each posts before the next is
+    planned, so the balance decrements itself. The dialog previews them all at
+    once and would otherwise promise the same kilo twice.
     """
     wo_name = wo.name
     if not wo.bom_no or flt(output_qty) <= 0:
@@ -1006,6 +1050,8 @@ def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
     consumed_from_load = _get_consumed_materials_from_load(wo_name)
     metered_items = _metered_items()
     wip_inflow = _wip_inflow_by_item(wo_name, wip_wh) if wip_wh else {}
+    wip_returned = _wip_transfers_out_by_item(wo_name, wip_wh) if wip_wh else {}
+    committed = committed or {}
 
     plan: list[dict] = []
     for bom_item in _planned_items_for_wo(wo, output_qty):
@@ -1016,6 +1062,9 @@ def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
         required_qty = flt(bom_item["qty"])
         already_consumed = flt(consumed_from_load.get(item_code, 0))
         remaining_qty = required_qty - already_consumed
+        # What the order has taken out of WIP, by any route: a return leaves it
+        # entitled to less than it brought in.
+        already_taken = already_consumed + flt(wip_returned.get(item_code, 0))
 
         src_wh = wip_wh
         if item_code in sfg_codes and sfg_src_wh:
@@ -1035,13 +1084,14 @@ def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
         if item_code in metered_items and item_code not in sfg_codes:
             wanted_qty = _metered_close_qty(
                 remaining_qty,
-                _metered_headroom(item_code, wip_wh, wip_inflow, already_consumed),
+                _metered_headroom(item_code, wip_wh, wip_inflow, already_taken),
             )
         else:
             wanted_qty = truncate_qty(remaining_qty)
 
         drawable_qty = _drawable_qty(
-            item_code, src_wh, wip_wh, wip_inflow, already_consumed
+            item_code, src_wh, wip_wh, wip_inflow, already_taken,
+            committed.get((item_code, src_wh), 0.0),
         )
         post_qty, short_qty = wanted_qty, 0.0
         if drawable_qty is not None:
@@ -2856,6 +2906,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         bom_items = _planned_items_for_wo(wo, good)
         metered_items = _metered_items()
         wip_inflow = _wip_inflow_by_item(work_order, wip_wh) if wip_wh else {}
+        wip_returned = _wip_transfers_out_by_item(work_order, wip_wh) if wip_wh else {}
 
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
@@ -2863,13 +2914,15 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             required_qty = bom_item["qty"]
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
+            # Everything drawn out of WIP, returns included — see _drawable_qty.
+            already_taken = already_consumed + flt(wip_returned.get(item_code, 0))
             # Only a shortfall that survives the posting precision is real —
             # see the equivalent loop in _close_single_wo, including why a
             # metered item takes the tick truncation would leave behind.
             if item_code in metered_items:
                 postable_remaining = _metered_close_qty(
                     remaining_qty,
-                    _metered_headroom(item_code, wip_wh, wip_inflow, already_consumed),
+                    _metered_headroom(item_code, wip_wh, wip_inflow, already_taken),
                 )
             else:
                 postable_remaining = truncate_qty(remaining_qty)
@@ -2881,7 +2934,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             # it. Everything here is sourced from WIP; there is no
             # semi-finished branch on this path.
             drawable = _drawable_qty(
-                item_code, wip_wh, wip_wh, wip_inflow, already_consumed
+                item_code, wip_wh, wip_wh, wip_inflow, already_taken
             )
             drawable = truncate_qty(drawable) if drawable is not None else None
             if postable_remaining > 0 and drawable is not None and postable_remaining > drawable:
@@ -4701,6 +4754,12 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
 
     totals: dict[str, dict] = {}
     refused: list[str] = []
+    # Close Production works through the orders one at a time and each posts
+    # before the next is planned, so the ledger rations shared stock for it. A
+    # preview sees one snapshot, so it has to keep that running total itself —
+    # otherwise two orders drawing on the same charge are both reported covered
+    # and the second one records a shortfall the operator was never warned of.
+    committed: dict[tuple, float] = {}
     for w in wos:
         split = splits[w["name"]]
         clamped = _clamped_good_qty(flt(w["qty"]), split["good"])
@@ -4715,7 +4774,9 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
             wo = frappe.get_doc("Work Order", w["name"])
         except Exception:
             continue
-        for row in _bom_consumption_plan(wo, output):
+        for row in _bom_consumption_plan(wo, output, committed):
+            key = (row["item_code"], row["source_warehouse"])
+            committed[key] = committed.get(key, 0.0) + row["post_qty"]
             agg = totals.setdefault(row["item_code"], {
                 "item_code": row["item_code"],
                 "item_name": frappe.db.get_value("Item", row["item_code"], "item_name")

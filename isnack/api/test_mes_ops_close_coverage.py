@@ -156,6 +156,20 @@ class Ledger:
                 out[row["item_code"]] = out.get(row["item_code"], 0.0) + float(row["qty"])
         return out
 
+    def transfers_out(self, work_order, warehouse):
+        """What this order moved back out of `warehouse` other than by
+        consuming it — a return to staging, in practice."""
+        out = {}
+        for entry in self.entries:
+            if entry["work_order"] != work_order:
+                continue
+            if entry["purpose"] in ("Material Consumption for Manufacture", "Manufacture"):
+                continue
+            for row in entry["rows"]:
+                if row.get("s_warehouse") == warehouse:
+                    out[row["item_code"]] = out.get(row["item_code"], 0.0) + float(row["qty"])
+        return out
+
     def consumed_by_batch(self, work_order, item_code):
         out = {}
         for entry in self.entries:
@@ -403,6 +417,8 @@ class Factory:
                          side_effect=led.consumed),
             patch.object(mes_ops, "_wip_inflow_by_item",
                          side_effect=lambda wo, wh: led.inflow(wo, wh)),
+            patch.object(mes_ops, "_wip_transfers_out_by_item",
+                         side_effect=lambda wo, wh: led.transfers_out(wo, wh)),
             patch.object(mes_ops, "_warehouse_qty",
                          side_effect=lambda item, wh: led.balance(item, wh)),
             patch.object(mes_ops, "_consumed_qty_by_batch",
@@ -458,6 +474,16 @@ def close_at(factory, good, reject=0.0, packaging=None, wo_name=FG_WO, batch="BB
             {"good": good, "reject": reject, "packaging": packaging},
             batch,
         )
+    return factory.posted
+
+
+def complete_at(factory, good, reject=0.0, wo_name=CORN_WO):
+    """Run End WO's own close — ``complete_work_order``, the second copy of the
+    remainder loop — for one order at the declared output."""
+    with ExitStack() as stack:
+        for p in factory.patches():
+            stack.enter_context(p)
+        mes_ops.complete_work_order(wo_name, good, reject)
     return factory.posted
 
 
@@ -735,6 +761,127 @@ class TestTheSemiFinishedOrdersToo(unittest.TestCase):
         corn = next(c for c in factory.work_orders[CORN_WO].comments
                     if c.startswith("RM20022"))
         self.assertIn("short 50", corn)
+
+
+class TestMaterialTheOrderGaveBack(unittest.TestCase):
+    """A return leaves the order with less than it brought in, and the ceiling
+    has to know that — otherwise it licenses the close to take the difference
+    out of whatever else is sitting in the shared WIP."""
+
+    def _returned_thirty(self):
+        led = Ledger()
+        led.seed(STORES, RM20022=500.0, RM20023=900.0)
+        led.post("Material Transfer for Manufacture", CORN_WO, [
+            {"item_code": "RM20022", "qty": 80.0, "s_warehouse": STORES, "t_warehouse": WIP},
+            {"item_code": "RM20023", "qty": 2.667, "s_warehouse": STORES, "t_warehouse": WIP},
+        ], fg_qty=80.0)
+        # The operator sent 30 Kg back to staging (return_materials posts a
+        # Material Transfer out of WIP under this Work Order's name).
+        led.post("Material Transfer", CORN_WO, [
+            {"item_code": "RM20022", "qty": 30.0, "s_warehouse": WIP, "t_warehouse": STAGING},
+        ])
+        # Another order then staged its own 30 Kg into the same WIP.
+        led.post("Material Transfer for Manufacture", SLURRY_WO, [
+            {"item_code": "RM20022", "qty": 30.0, "s_warehouse": STORES, "t_warehouse": WIP},
+        ], fg_qty=60.0)
+        return led
+
+    def test_a_return_comes_off_the_ceiling(self):
+        """80 in, 30 back, nothing consumed: this order is entitled to 50, not
+        to the 80 the warehouse happens to hold."""
+        led = self._returned_thirty()
+        self.assertEqual(led.balance("RM20022", WIP), 80.0)
+
+        factory = Factory(ledger=led)
+        entry = close_at(factory, 80.0, packaging=[], wo_name=CORN_WO, batch=None)
+
+        self.assertEqual(materials(entry)["RM20022"], 50.0)
+        # The other order's 30 Kg is still there.
+        self.assertEqual(factory.ledger.balance("RM20022", WIP), 30.0)
+
+    def test_a_consumption_is_not_counted_twice_alongside_a_return(self):
+        """Consumption reaches the ceiling through Material Consumption for
+        Manufacture and the return through the transfer out; counting the
+        consumption in both would leave the order entitled to less than it
+        has."""
+        led = Ledger()
+        led.seed(STORES, RM20022=500.0, RM20023=900.0)
+        led.post("Material Transfer for Manufacture", CORN_WO, [
+            {"item_code": "RM20022", "qty": 80.0, "s_warehouse": STORES, "t_warehouse": WIP},
+            {"item_code": "RM20023", "qty": 2.667, "s_warehouse": STORES, "t_warehouse": WIP},
+        ], fg_qty=80.0)
+        led.post("Material Consumption for Manufacture", CORN_WO, [
+            {"item_code": "RM20022", "qty": 20.0, "s_warehouse": WIP, "t_warehouse": None},
+        ], fg_qty=80.0)
+        led.post("Material Transfer", CORN_WO, [
+            {"item_code": "RM20022", "qty": 30.0, "s_warehouse": WIP, "t_warehouse": STAGING},
+        ])
+
+        factory = Factory(ledger=led)
+        entry = close_at(factory, 80.0, packaging=[], wo_name=CORN_WO, batch=None)
+
+        # 80 in, 20 consumed, 30 returned: 30 left, and the recipe still wants
+        # the 60 that was never consumed.
+        self.assertEqual(materials(entry)["RM20022"], 30.0)
+        corn = next(c for c in factory.work_orders[CORN_WO].comments
+                    if c.startswith("RM20022"))
+        self.assertIn("short 30", corn)
+
+    def test_end_wo_applies_the_same_ceiling(self):
+        """complete_work_order runs its own copy of the remainder loop. The two
+        must not drift, least of all on which material an order may claim."""
+        factory = Factory(ledger=self._returned_thirty())
+        entry = complete_at(factory, 80.0)
+
+        self.assertEqual(materials(entry)["RM20022"], 50.0)
+        self.assertEqual(factory.ledger.balance("RM20022", WIP), 30.0)
+        corn = next(c for c in factory.work_orders[CORN_WO].comments
+                    if c.startswith("RM20022"))
+        self.assertIn("short 30", corn)
+
+    def test_the_returned_quantity_is_reported_as_short(self):
+        factory = Factory(ledger=self._returned_thirty())
+        close_at(factory, 80.0, packaging=[], wo_name=CORN_WO, batch=None)
+
+        corn = next(c for c in factory.work_orders[CORN_WO].comments
+                    if c.startswith("RM20022"))
+        self.assertIn("short 30", corn)
+
+
+class TestPreviewingSeveralOrdersAtOnce(unittest.TestCase):
+    """Close Production closes the orders one after another, each posting
+    before the next is planned. The dialog previews them all against a single
+    snapshot, so it has to do that decrementing itself or it promises the same
+    kilo twice."""
+
+    def _two_orders_one_charge(self):
+        """Two 150-carton orders of the same product, with only one order's
+        worth of semi-finished in the warehouse."""
+        led = Ledger()
+        led.seed(STORES, CR30003=2000.0, PM40011=200.0)
+        led.seed(SEMI, SFG10001=80.0, SFG10002=60.0)
+        work_orders = _fresh_work_orders()
+        work_orders["MFG-WO-2026-00074"] = WorkOrder(
+            "MFG-WO-2026-00074", "FG10011", "BOM-FG10011-002", 150.0, FG_WH,
+            {"SFG10001": 80.0, "SFG10002": 60.0, "PM40011": 10.5, "CR30003": 150.0},
+        )
+        return Factory(ledger=led, work_orders=work_orders)
+
+    def test_the_second_order_is_not_promised_the_first_orders_material(self):
+        factory = self._two_orders_one_charge()
+        data = coverage(factory, [FG_WO, "MFG-WO-2026-00074"], 300.0)
+
+        short = {row["item_code"]: row["short_qty"] for row in data["short"]}
+        # 160 Kg of corn mix is wanted across the two orders and 80 is there.
+        self.assertEqual(short.get("SFG10001"), 80.0)
+        self.assertEqual(short.get("SFG10002"), 60.0)
+
+    def test_one_order_on_its_own_is_still_fully_covered(self):
+        """The running deduction must not invent a shortage that is not there."""
+        factory = self._two_orders_one_charge()
+        data = coverage(factory, [FG_WO], 150.0)
+
+        self.assertEqual(data["short"], [])
 
 
 class TestWhenTheOutputDidNotExceedThePlan(unittest.TestCase):

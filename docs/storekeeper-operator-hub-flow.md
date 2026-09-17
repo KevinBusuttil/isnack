@@ -389,8 +389,9 @@ way past it was to type the planned figure instead, leaving the extra cartons of
 
 A close now consumes what the Work Order can genuinely draw:
 
-- from its **WIP**, no more than it brought in and has not already consumed — so one order cannot
-  close onto another's material in the shared warehouse;
+- from its **WIP**, no more than it brought in less everything it has taken back out — what it
+  consumed *and* what it returned to staging — so one order cannot close onto another's material in
+  the shared warehouse;
 - from a **Semi-finished** warehouse, no more than the balance;
 - never more than the ledger holds, either way.
 
@@ -398,7 +399,9 @@ Anything the recipe asks for beyond that is recorded on the Work Order rather th
 close: as a **yield gain** when output exceeded the plan (the extra came out of the same input, so
 the unit cost falls, which is correct), or as a gap worth checking against the stock records when it
 did not. The dialog shows the same figures before the button is pressed, so the operator sees the
-explanation rather than a negative-stock error afterwards.
+explanation rather than a negative-stock error afterwards; where several orders of one product are
+being closed together it apportions the stock between them exactly as the close will, rather than
+promising the same charge to both.
 
 > **Batch code format**: iSnack uses a 7-character code (`YYM-DDS`). `YY` = year encoded as two letters (A=0…J=9, so 2026 → CG), `M` = month as letter (A=Jan…L=Dec), `DD` = two-digit day, `S` = sequence digit. Example: `CGB-151` = 26 Feb 15, batch 1.
 
