@@ -1247,3 +1247,46 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
     animation: none !important;
   }
 }
+
+/* Material coverage — what the entered output will draw off the BOM, and what
+   is not there to draw. Advisory: it explains the close rather than blocking
+   it, so it reads as a note and never as a form error. */
+.close-production-dialog .cp-coverage{
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  border-left-width: 4px;
+}
+.close-production-dialog .cp-coverage-head{
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.close-production-dialog .cp-coverage-list{
+  margin: 6px 0 4px;
+  padding-left: 18px;
+}
+.close-production-dialog .cp-coverage-foot{
+  margin-top: 4px;
+  font-style: italic;
+  opacity: .85;
+}
+.close-production-dialog .cp-coverage-ok{
+  background: #f0fdf9;
+  border-color: #99f6e4;
+  border-left-color: #15b79e;
+  color: #134e4a;
+}
+.close-production-dialog .cp-coverage-warn{
+  background: #fff7e6;
+  border-color: #fde68a;
+  border-left-color: #d97706;
+  color: #78350f;
+}
+.close-production-dialog .cp-coverage-bad{
+  background: #fef2f2;
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  color: #7f1d1d;
+}

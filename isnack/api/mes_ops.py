@@ -651,6 +651,24 @@ def _wo_allowed_output_qty(wo_qty: float) -> float:
     return flt(wo_qty) + ((allowance_percentage / 100) * flt(wo_qty))
 
 
+def _clamped_good_qty(wo_qty: float, good: float) -> Optional[float]:
+    """The quantity a Manufacture entry would book for ``good``, or None when
+    the Work Order's output ceiling refuses it outright.
+
+    Split out of :func:`_clamp_good_qty_to_allowance` so the Close Production
+    dialog can ask the same question without being thrown at on every keystroke.
+    The two must give the same answer, which is why there is only one of them.
+    """
+    good = flt(good)
+    allowed = _wo_allowed_output_qty(wo_qty)
+    if good <= allowed:
+        return truncate_qty(good)
+    if (good - allowed) <= 10 ** -qty_precision():
+        # A rounding artefact, not an over-declaration — see the caller.
+        return truncate_qty(allowed)
+    return None
+
+
 def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> float:
     """Snap a declared good quantity down to the Work Order's output ceiling
     when it only exceeds it by a rounding artefact.
@@ -685,14 +703,12 @@ def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> fl
     "the finished product quantity and For Quantity cannot be different".
     """
     good = flt(good)
+    clamped = _clamped_good_qty(wo_qty, good)
+    if clamped is not None:
+        return clamped
+
     allowed = _wo_allowed_output_qty(wo_qty)
-    if good <= allowed:
-        return truncate_qty(good)
-
     precision = qty_precision()
-    if (good - allowed) <= 10 ** -precision:
-        return truncate_qty(allowed)
-
     frappe.throw(
         _(
             "Good quantity {0} exceeds what Work Order {1} allows ({2}). The "
@@ -868,7 +884,7 @@ def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]
     return {r.item_code: flt(r.qty) for r in rows}
 
 
-def _wip_actual_qty(item_code: str, warehouse: str) -> float:
+def _warehouse_qty(item_code: str, warehouse: str) -> Optional[float]:
     """What the ledger currently holds for an item in a warehouse.
 
     A Work Order's own inflow is not proof that the stock is still there: WIP is
@@ -878,9 +894,13 @@ def _wip_actual_qty(item_code: str, warehouse: str) -> float:
     beyond it is refused outright unless the site allows negative stock — which
     would block the close, the one outcome this whole area exists to avoid.
 
-    0.0 when the Bin does not exist or cannot be read — the safe answer, because
-    it withholds the metered raise and leaves the remainder to truncate like
-    every other item's.
+    A Bin that does not exist reads as 0.0, which is the truth: ERPNext creates
+    one on an item's first movement into a warehouse, so no Bin means no stock.
+
+    A read that *fails* returns None instead, because the two callers want
+    opposite things from an unknown balance and neither should get a silent
+    zero: a metered round-up must be withheld on doubt, while a consumption
+    ceiling must not bite on doubt and quietly swallow material.
     """
     if not item_code or not warehouse:
         return 0.0
@@ -889,7 +909,7 @@ def _wip_actual_qty(item_code: str, warehouse: str) -> float:
             "Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"
         ))
     except Exception:
-        return 0.0
+        return None
 
 
 def _metered_headroom(item_code, wip_warehouse, inflow_by_item, already_consumed) -> float:
@@ -904,10 +924,201 @@ def _metered_headroom(item_code, wip_warehouse, inflow_by_item, already_consumed
     Production and End WO each run their own copy of the remainder loop, and the
     two must not drift.
     """
+    on_hand = _warehouse_qty(item_code, wip_warehouse)
     return min(
         flt(inflow_by_item.get(item_code, 0.0)) - flt(already_consumed),
-        _wip_actual_qty(item_code, wip_warehouse),
+        # An unreadable balance is not a licence to round up.
+        0.0 if on_hand is None else on_hand,
     )
+
+
+def _drawable_qty(item_code, source_warehouse, wip_warehouse,
+                  inflow_by_item, already_consumed) -> Optional[float]:
+    """How much of an item a Work Order can actually take from a warehouse.
+
+    Two ceilings, because the two warehouses mean different things. The line's
+    WIP holds what this order was given mixed in with every other order's, so
+    there the ceiling is what this order brought in less what it has taken —
+    the same rule the scan path enforces, including its guard: an item with no
+    recorded inflow under this order is not capped that way, so material that
+    reached WIP by a route which does not name the order behaves as it did.
+    Anywhere else — the Semi-finished warehouse a sub-assembly is drawn from —
+    there is no per-order inflow to speak of and the balance is the only
+    ceiling.
+
+    Never above the balance either way. The recipe is a plan, not a promise
+    about what is on the shelf.
+
+    Returns None when neither ceiling is knowable — an unreadable balance on a
+    warehouse this order has no recorded inflow into. Refusing to consume on
+    that basis would strand material far more often than it would save any, so
+    the caller imposes no ceiling and ERPNext's own check has the final word,
+    exactly as it did before this ceiling existed.
+    """
+    ceilings = []
+    moved_in = flt(inflow_by_item.get(item_code, 0.0))
+    if source_warehouse and source_warehouse == wip_warehouse and moved_in:
+        ceilings.append(moved_in - flt(already_consumed))
+    on_hand = _warehouse_qty(item_code, source_warehouse)
+    if on_hand is not None:
+        ceilings.append(on_hand)
+    return min(ceilings) if ceilings else None
+
+
+def _bom_consumption_plan(wo, output_qty: float) -> list[dict]:
+    """What a close will consume off the BOM for one Work Order, row by row.
+
+    One entry per non-packaging BOM item: the requirement scaled to ``output_qty``,
+    what this order has already consumed, the warehouse the row is sourced from,
+    how much of it the order can actually draw from there, and therefore what
+    gets posted and what is left short.
+
+    The short quantity is the point. Scaling the whole recipe by actual output
+    assumes the BOM ratio is a law, and in a food process it is a nominal yield:
+    153 cartons off a charge planned for 150 came out of the same corn mix, so
+    the extra 2% of mix the arithmetic asks for was never made and never staged.
+    Demanding it hit ERPNext's negative-stock check and blocked the close, which
+    left the operator no way forward except to under-declare what they made. The
+    plan stops at what is really there and reports the rest.
+
+    Close Production posts from this and the Close Production dialog previews
+    from it, so the warning shown before the button is pressed cannot disagree
+    with what the button then does.
+
+    Packaging is absent by design: it is consumed from the quantities the
+    operator enters at Close Production, not from the BOM.
+    """
+    wo_name = wo.name
+    if not wo.bom_no or flt(output_qty) <= 0:
+        return []
+
+    wip_wh = wo.wip_warehouse or _default_line_wip(wo_name)
+    # Semi-finished components live in the Semi-finished warehouse, not WIP
+    # (their consumption at End WO sources from there, see
+    # _post_sfg_consumption). A remainder consumed here must come from the same
+    # place, otherwise the row hits WIP where SFG stock never resides.
+    sfg_codes = {
+        row["item_code"]
+        for row in (get_sfg_components_for_wo(wo_name).get("items") or [])
+    }
+    sfg_src_wh = _default_sfg_source(wo_name)
+    packaging_groups = _packaging_groups_global()
+    consumed_from_load = _get_consumed_materials_from_load(wo_name)
+    metered_items = _metered_items()
+    wip_inflow = _wip_inflow_by_item(wo_name, wip_wh) if wip_wh else {}
+
+    plan: list[dict] = []
+    for bom_item in _planned_items_for_wo(wo, output_qty):
+        item_code = bom_item["item_code"]
+        if (_get_item_group(item_code) or "").strip().lower() in packaging_groups:
+            continue
+
+        required_qty = flt(bom_item["qty"])
+        already_consumed = flt(consumed_from_load.get(item_code, 0))
+        remaining_qty = required_qty - already_consumed
+
+        src_wh = wip_wh
+        if item_code in sfg_codes and sfg_src_wh:
+            src_wh = sfg_src_wh
+
+        # The shortfall is only real if it can be posted. A BOM ratio that is
+        # not representable at the posting precision (water is 1/30 per Kg of
+        # CORN MIX 1) always leaves a sub-tick remainder after the operator
+        # consumes the rounded quantity — the only quantity the Stock Ledger can
+        # hold. Emitting it produced a row whose transfer_qty rounded to zero,
+        # which ERPNext rejects outright. Quantise toward zero so a sub-tick
+        # remainder is what it actually is: nothing. A metered item is the
+        # exception: nobody can clear its leftover tick by hand, so it takes the
+        # tick its own inflow covers. (sfg_codes is excluded there because such
+        # a row is sourced from the Semi-finished warehouse, not the WIP the
+        # headroom is measured in.)
+        if item_code in metered_items and item_code not in sfg_codes:
+            wanted_qty = _metered_close_qty(
+                remaining_qty,
+                _metered_headroom(item_code, wip_wh, wip_inflow, already_consumed),
+            )
+        else:
+            wanted_qty = truncate_qty(remaining_qty)
+
+        drawable_qty = _drawable_qty(
+            item_code, src_wh, wip_wh, wip_inflow, already_consumed
+        )
+        post_qty, short_qty = wanted_qty, 0.0
+        if drawable_qty is not None:
+            drawable_qty = truncate_qty(drawable_qty)
+            if wanted_qty > 0 and wanted_qty > drawable_qty:
+                post_qty = max(drawable_qty, 0.0)
+                short_qty = truncate_qty(wanted_qty - post_qty)
+
+        plan.append({
+            "item_code": item_code,
+            "uom": bom_item["uom"],
+            "required_qty": required_qty,
+            "already_consumed": already_consumed,
+            "remaining_qty": remaining_qty,
+            "source_warehouse": src_wh,
+            "drawable_qty": drawable_qty,
+            "post_qty": post_qty,
+            "short_qty": short_qty,
+        })
+
+    return plan
+
+
+def _record_material_shortfall(wo, row: dict, output_qty: float) -> None:
+    """Record a BOM requirement the Work Order could not draw, and say why.
+
+    Over-production is the ordinary cause and is not a fault: the same input
+    yielded more output than the recipe predicts, which is a yield gain and
+    shows up correctly as a lower unit cost. How far that can go is already
+    bounded by Manufacturing Settings -> over-production allowance, which the
+    declared output is clamped against before any of this runs.
+
+    ``output_qty`` is everything the run produced, rejects included, because
+    that is what the recipe was scaled by and what the material had to cover.
+
+    Anything else is a genuine gap between the recipe and the ledger. It is
+    worth a look, but not worth stranding a finished batch on the line for, so
+    it is reported rather than thrown. Both go to the Work Order's own comments
+    as well as the Error Log, because the Error Log is not where a production
+    manager looks.
+    """
+    planned_qty = flt(wo.qty)
+    over = flt(output_qty) - planned_qty
+    if over > QTY_EPSILON and planned_qty > QTY_EPSILON:
+        reason = _(
+            "Output of {0:g} exceeded the planned {1:g} by {2:g} ({3:.1f}%), so "
+            "the recipe asks for more {4} than was ever made or staged. The "
+            "extra came out of the same input — recorded as a yield gain."
+        ).format(flt(output_qty), planned_qty, over,
+                 over / planned_qty * 100, row["item_code"])
+    else:
+        reason = _(
+            "The recipe asks for more {0} than {1} holds. Output did not exceed "
+            "the plan, so this is a gap between the recipe and the ledger worth "
+            "checking."
+        ).format(row["item_code"], row["source_warehouse"])
+
+    detail = _(
+        "{0}: recipe {1:g} {2}, already consumed {3:g}, drawn {4:g}, short {5:g} "
+        "from {6}."
+    ).format(
+        row["item_code"], row["required_qty"], row["uom"], row["already_consumed"],
+        row["post_qty"], row["short_qty"], row["source_warehouse"],
+    )
+
+    try:
+        frappe.log_error(
+            title="Material Yield Variance",
+            message=f"Work Order {wo.name}\n{detail}\n{reason}",
+        )
+    except Exception:
+        pass
+    try:
+        wo.add_comment("Comment", f"{detail} {reason}")
+    except Exception:
+        # A missing audit comment must never be what stops a close.
+        pass
 
 
 def _consumed_by_item(work_order: str) -> dict[str, float]:
@@ -2644,9 +2855,7 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     if wo.bom_no:
         bom_items = _planned_items_for_wo(wo, good)
         metered_items = _metered_items()
-        metered_inflow = (
-            _wip_inflow_by_item(work_order, wip_wh) if metered_items and wip_wh else {}
-        )
+        wip_inflow = _wip_inflow_by_item(work_order, wip_wh) if wip_wh else {}
 
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
@@ -2660,10 +2869,33 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             if item_code in metered_items:
                 postable_remaining = _metered_close_qty(
                     remaining_qty,
-                    _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
+                    _metered_headroom(item_code, wip_wh, wip_inflow, already_consumed),
                 )
             else:
                 postable_remaining = truncate_qty(remaining_qty)
+
+            # Never ask for material this order cannot actually draw. Scaling
+            # the recipe by actual output turns a yield gain into a demand for
+            # input that was never made — see _bom_consumption_plan, which is
+            # where Close Production does the same thing with a preview behind
+            # it. Everything here is sourced from WIP; there is no
+            # semi-finished branch on this path.
+            drawable = _drawable_qty(
+                item_code, wip_wh, wip_wh, wip_inflow, already_consumed
+            )
+            drawable = truncate_qty(drawable) if drawable is not None else None
+            if postable_remaining > 0 and drawable is not None and postable_remaining > drawable:
+                short_qty = truncate_qty(postable_remaining - max(drawable, 0.0))
+                postable_remaining = max(drawable, 0.0)
+                _record_material_shortfall(wo, {
+                    "item_code": item_code,
+                    "uom": bom_item["uom"],
+                    "required_qty": required_qty,
+                    "already_consumed": already_consumed,
+                    "source_warehouse": wip_wh,
+                    "post_qty": postable_remaining,
+                    "short_qty": short_qty,
+                }, good)
 
             # Handle both under-consumption and over-consumption
             if postable_remaining > 0:
@@ -4031,96 +4263,46 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
             finished_item["use_serial_batch_fields"] = 1
         se.append("items", finished_item)
 
-        # Materials already consumed via LOAD button
-        consumed_from_load = _get_consumed_materials_from_load(wo_name)
-
         # Scale BOM to total throughput (good + reject) so the inputs that went
         # into rejected units are also consumed; otherwise they remain in WIP.
         total_production_qty = good_qty + split["reject"]
 
-        # Packaging items are handled exclusively by the dedicated packaging
-        # loop below (which uses the qty entered at Close Production and the
-        # selected batch). They must be skipped here, otherwise the BOM-scaling
-        # loop would consume them once on a BOM-quantity basis without a batch
-        # and the packaging loop would consume them again on a usage basis —
-        # leading to double consumption / negative-stock errors.
-        packaging_groups = _packaging_groups_global()
-
-        if wo.bom_no and total_production_qty > 0:
-            bom_items = _planned_items_for_wo(wo, total_production_qty)
-
-            # Semi-finished components live in the Semi-finished warehouse, not
-            # WIP (their consumption at End WO sources from there, see
-            # _post_sfg_consumption). Any remainder consumed here must come
-            # from the same place, otherwise the row hits WIP where SFG stock
-            # never resides and fails ERPNext's negative-stock validation.
-            sfg_codes = {
-                row["item_code"]
-                for row in (get_sfg_components_for_wo(wo_name).get("items") or [])
-            }
-            sfg_src_wh = _default_sfg_source(wo_name)
-            metered_items = _metered_items()
-            metered_inflow = (
-                _wip_inflow_by_item(wo_name, wip_wh) if metered_items and wip_wh else {}
-            )
-
-            for bom_item in bom_items:
-                item_code = bom_item["item_code"]
-                group = (_get_item_group(item_code) or "").strip().lower()
-                if group in packaging_groups:
-                    continue
-                required_qty = bom_item["qty"]
-                already_consumed = consumed_from_load.get(item_code, 0)
-                remaining_qty = required_qty - already_consumed
-                # The shortfall is only real if it can be posted. A BOM ratio
-                # that is not representable at the posting precision (water is
-                # 1/30 per Kg of CORN MIX 1) always leaves a sub-tick remainder
-                # after the operator consumes the rounded quantity — the only
-                # quantity the Stock Ledger can hold. Emitting it produced a row
-                # whose transfer_qty rounded to zero, which ERPNext rejects
-                # outright, blocking the close. Quantise toward zero so a
-                # sub-tick remainder is what it actually is: nothing.
-                # A metered item is the exception: nobody can clear its leftover
-                # tick by hand, so it takes the tick its own inflow covers.
-                # (sfg_codes is excluded because such a row is sourced from
-                # the Semi-finished warehouse, not the WIP the headroom is
-                # measured in.)
-                if item_code in metered_items and item_code not in sfg_codes:
-                    postable_remaining = _metered_close_qty(
-                        remaining_qty,
-                        _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
-                    )
+        # One plan, shared with the dialog preview, so what the operator was
+        # warned about and what is posted here are the same computation.
+        # Packaging is absent from it by design: it is consumed from the
+        # quantities entered at Close Production by the dedicated loop below,
+        # and consuming it here too would double-count every carton.
+        for row in _bom_consumption_plan(wo, total_production_qty):
+            if row["post_qty"] > 0:
+                se.append("items", {
+                    "item_code": row["item_code"],
+                    "qty": row["post_qty"],
+                    "uom": row["uom"],
+                    "s_warehouse": row["source_warehouse"],
+                    "is_finished_item": 0,
+                })
+            elif row["remaining_qty"] < -QTY_EPSILON:
+                # Over-consumed. Reported from the raw remainder so the
+                # logged magnitude is never understated by quantisation.
+                required_qty = row["required_qty"]
+                remaining_qty = row["remaining_qty"]
+                if required_qty > QTY_EPSILON:
+                    variance_pct = (abs(remaining_qty) / required_qty * 100)
                 else:
-                    postable_remaining = truncate_qty(remaining_qty)
+                    variance_pct = 0
+                frappe.log_error(
+                    title="Material Over-Consumption",
+                    message=(
+                        f"Over-consumption detected for WO {wo_name}\n"
+                        f"Item: {row['item_code']}\n"
+                        f"Required: {required_qty:.4f}\n"
+                        f"Consumed: {row['already_consumed']:.4f}\n"
+                        f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
+                    ),
+                )
 
-                if postable_remaining > 0:
-                    src_wh = wip_wh
-                    if item_code in sfg_codes and sfg_src_wh:
-                        src_wh = sfg_src_wh
-                    se.append("items", {
-                        "item_code": item_code,
-                        "qty": postable_remaining,
-                        "uom": bom_item["uom"],
-                        "s_warehouse": src_wh,
-                        "is_finished_item": 0,
-                    })
-                elif remaining_qty < -QTY_EPSILON:
-                    # Over-consumed. Reported from the raw remainder so the
-                    # logged magnitude is never understated by quantisation.
-                    if required_qty > QTY_EPSILON:
-                        variance_pct = (abs(remaining_qty) / required_qty * 100)
-                    else:
-                        variance_pct = 0
-                    frappe.log_error(
-                        title="Material Over-Consumption",
-                        message=(
-                            f"Over-consumption detected for WO {wo_name}\n"
-                            f"Item: {item_code}\n"
-                            f"Required: {required_qty:.4f}\n"
-                            f"Consumed: {already_consumed:.4f}\n"
-                            f"Excess: {abs(remaining_qty):.4f} ({variance_pct:.1f}%)"
-                        ),
-                    )
+            if row["short_qty"] > 0:
+                _record_material_shortfall(wo, row, total_production_qty)
 
         # Packaging materials (only the portion not already consumed via LOAD)
         if split["packaging"]:
@@ -4459,6 +4641,105 @@ def close_production(groups: str = None, lines: str = None,
         "message": f"Successfully closed production for {len(completed_wos)} work order(s)",
         "completed_wos": completed_wos,
         "skipped_wos": skipped_wos,
+    }
+
+
+@frappe.whitelist()
+def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
+    """What this close will draw off the BOM, and anything that is not there.
+
+    The Close Production dialog calls this as the operator types, so an output
+    the staged material cannot support is explained — with the yield reading
+    that usually accounts for it — before the button is pressed, rather than
+    arriving afterwards as ERPNext's negative-stock error naming a quantity
+    nobody recognises ("1.599 units of CORN MIX 1 needed").
+
+    Read-only, and built on the very plan Close Production posts from
+    (:func:`_bom_consumption_plan`) after the same proportional split and the
+    same output clamp, so the warning cannot disagree with the outcome.
+
+    Args:
+        work_orders: JSON array of the ended Work Orders this close covers —
+            the ones ticked in the dialog, since unticking one changes both the
+            split and the material.
+        good_qty / reject_qty: the totals as typed, across those orders.
+
+    Returns:
+        dict with ``rows`` (one per BOM material, aggregated across the orders),
+        ``short`` (the subset that cannot be covered), ``planned_qty``,
+        ``output_qty``, ``over_qty`` and ``refused`` (orders whose output the
+        allowance would refuse outright).
+    """
+    _require_roles(ROLES_OPERATOR)
+
+    names = work_orders
+    if isinstance(names, str):
+        try:
+            names = json.loads(names)
+        except Exception:
+            names = []
+    names = [str(n).strip() for n in (names or []) if str(n or "").strip()]
+
+    good = flt(good_qty)
+    reject = flt(reject_qty)
+    empty = {"rows": [], "short": [], "planned_qty": 0.0, "output_qty": 0.0,
+             "over_qty": 0.0, "refused": []}
+    if not names or good <= 0:
+        return empty
+
+    wos = frappe.get_all(
+        "Work Order",
+        filters={"name": ["in", names]},
+        fields=["name", "qty"],
+        order_by="creation asc",
+    )
+    if not wos:
+        return empty
+
+    splits = _calculate_proportional_split(wos, good, reject, [])
+    planned_qty = sum(flt(w["qty"]) for w in wos)
+
+    totals: dict[str, dict] = {}
+    refused: list[str] = []
+    for w in wos:
+        split = splits[w["name"]]
+        clamped = _clamped_good_qty(flt(w["qty"]), split["good"])
+        if clamped is None:
+            # The output ceiling would refuse this order before any material is
+            # looked at; say so rather than reporting material for a close that
+            # cannot happen.
+            refused.append(w["name"])
+            continue
+        output = clamped + flt(split["reject"])
+        try:
+            wo = frappe.get_doc("Work Order", w["name"])
+        except Exception:
+            continue
+        for row in _bom_consumption_plan(wo, output):
+            agg = totals.setdefault(row["item_code"], {
+                "item_code": row["item_code"],
+                "item_name": frappe.db.get_value("Item", row["item_code"], "item_name")
+                             or row["item_code"],
+                "uom": row["uom"],
+                "source_warehouse": row["source_warehouse"],
+                "required_qty": 0.0,
+                "already_consumed": 0.0,
+                "post_qty": 0.0,
+                "short_qty": 0.0,
+            })
+            agg["required_qty"] += row["required_qty"]
+            agg["already_consumed"] += row["already_consumed"]
+            agg["post_qty"] += row["post_qty"]
+            agg["short_qty"] += row["short_qty"]
+
+    rows = list(totals.values())
+    return {
+        "rows": rows,
+        "short": [r for r in rows if r["short_qty"] > 0],
+        "planned_qty": planned_qty,
+        "output_qty": good + reject,
+        "over_qty": max(good + reject - planned_qty, 0.0),
+        "refused": refused,
     }
 
 @frappe.whitelist()

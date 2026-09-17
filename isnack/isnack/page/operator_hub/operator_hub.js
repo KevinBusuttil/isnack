@@ -2911,6 +2911,11 @@ function init_operator_hub($root) {
         });
       }
 
+      // Material coverage, filled in as the operator types. Section Break so it
+      // spans the full width rather than joining the three-column quantity row.
+      fields.push({ fieldtype: 'Section Break' });
+      fields.push({ fieldtype: 'HTML', fieldname: `g${gIdx}_coverage`, options: '' });
+
       // Row 3: packaging — stacked single column so labels and descriptions
       // never collide regardless of how many packaging items there are.
       if (g.packaging_items.length) {
@@ -3077,6 +3082,107 @@ function init_operator_hub($root) {
         }
         lastAuto = total;
       });
+    });
+
+    // What the entered output will actually draw off the BOM, shown before the
+    // button is pressed. The recipe scales with output, so a batch that yielded
+    // more than planned asks for input that was never made or staged — which
+    // used to surface only afterwards, as ERPNext's "1.599 units of CORN MIX 1
+    // needed" and a close that would not go through. Advisory only: the server
+    // consumes what is there and records the difference either way.
+    productGroups.forEach((g, gIdx) => {
+      const panel = d.fields_dict[`g${gIdx}_coverage`];
+      if (!panel) return;
+
+      const fmt = (n) => (Math.round((parseFloat(n) || 0) * 1000) / 1000).toLocaleString();
+      let latest = 0;
+      let timer = null;
+
+      function shortLine(row) {
+        return `<li><strong>${frappe.utils.escape_html(row.item_name || row.item_code)}</strong>`
+          + ` — recipe ${fmt(row.required_qty)} ${frappe.utils.escape_html(row.uom || '')},`
+          + ` ${fmt(row.already_consumed)} already used,`
+          + ` <strong>${fmt(row.short_qty)} short</strong>`
+          + ` in ${frappe.utils.escape_html(row.source_warehouse || '')}</li>`;
+      }
+
+      function html(data) {
+        const refused = data.refused || [];
+        if (refused.length) {
+          return `<div class="cp-coverage cp-coverage-bad">`
+            + `<div class="cp-coverage-head">Output above what the Work Order allows</div>`
+            + `<div>${frappe.utils.escape_html(refused.join(', '))} cannot receive this quantity. `
+            + `Raise Manufacturing Settings → Overproduction Percentage For Work Order, or lower the figure.</div>`
+            + `</div>`;
+        }
+
+        const short = data.short || [];
+        const over = parseFloat(data.over_qty) || 0;
+        const planned = parseFloat(data.planned_qty) || 0;
+        const overPct = planned > 0 ? (over / planned * 100) : 0;
+
+        if (!short.length) {
+          if (over <= 0) return '';
+          return `<div class="cp-coverage cp-coverage-ok">`
+            + `<div class="cp-coverage-head">+${fmt(over)} over the planned ${fmt(planned)}`
+            + ` (+${overPct.toFixed(1)}%)</div>`
+            + `<div>The material for it is there, so this closes as a normal over-run.</div>`
+            + `</div>`;
+        }
+
+        const why = over > 0
+          ? `This batch yielded ${fmt(over)} more than the ${fmt(planned)} planned (+${overPct.toFixed(1)}%). `
+            + `The recipe scales with output, so it now asks for material that was never made or staged — `
+            + `the extra output came out of the same input.`
+          : `The recipe asks for more than the warehouse holds. Output did not exceed the plan, `
+            + `so this is worth checking against the stock records.`;
+        const outcome = over > 0
+          ? `Closing consumes what is actually there and records the difference on the Work Order as a yield gain.`
+          : `Closing consumes what is actually there and records the shortfall on the Work Order.`;
+
+        return `<div class="cp-coverage cp-coverage-warn">`
+          + `<div class="cp-coverage-head">Recipe asks for more than is available</div>`
+          + `<div>${why}</div>`
+          + `<ul class="cp-coverage-list">${short.map(shortLine).join('')}</ul>`
+          + `<div class="cp-coverage-foot">${outcome}</div>`
+          + `</div>`;
+      }
+
+      async function refresh() {
+        const picked = pickedWorkOrders(gIdx);
+        const good = parseFloat(d.get_value(`g${gIdx}_good_qty`) || 0);
+        const reject = parseFloat(d.get_value(`g${gIdx}_reject_qty`) || 0);
+        if (!picked.length || !(good > 0)) { panel.$wrapper.html(''); return; }
+
+        const mine = ++latest;
+        try {
+          const r = await rpc('isnack.api.mes_ops.get_close_production_coverage', {
+            work_orders: JSON.stringify(picked),
+            good_qty: good,
+            reject_qty: reject,
+          });
+          if (mine !== latest) return;   // a later keystroke already answered
+          panel.$wrapper.html(html(r.message || {}));
+        } catch (e) {
+          if (mine !== latest) return;
+          // Advisory only — a failed preview must never stand between the
+          // operator and closing production.
+          console.warn('get_close_production_coverage failed', e);
+          panel.$wrapper.html('');
+        }
+      }
+
+      function schedule() {
+        clearTimeout(timer);
+        timer = setTimeout(refresh, 400);
+      }
+
+      ['good_qty', 'reject_qty'].forEach(suffix => {
+        const field = d.fields_dict[`g${gIdx}_${suffix}`];
+        if (field && field.$input) field.$input.on('input change', schedule);
+      });
+      d.$wrapper.on('change', `.cp-wo-pick[data-group="${gIdx}"]`, schedule);
+      schedule();
     });
 
     // Auto-insert dash after 3rd letter on each per-group batch input.
