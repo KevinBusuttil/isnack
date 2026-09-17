@@ -837,6 +837,20 @@ function init_operator_hub($root) {
           });
           const ctx = (ctxr && ctxr.message) || {};
 
+          // A metered item is consumed from the recipe when the Work Order is
+          // received into stock, so there is nothing to book. Say so — water
+          // has a printed label like anything else that passed through stores,
+          // and a silent ignore reads as a broken scanner, so the operator
+          // scans it again.
+          if (ctx.is_metered) {
+            const msg = `${parsed.item_code} is a metered item — it follows the recipe and is not loaded by hand.`;
+            appendScanHistory({ raw, status: 'Skipped', itemCode: parsed.item_code, message: msg, scanTime });
+            $scanStatus.length && $scanStatus.text('Skipped').removeClass().addClass('badge bg-secondary');
+            flashStatus(msg, 'warning');
+            resolve();
+            return;
+          }
+
           const availr = await rpc('isnack.api.mes_ops.get_batch_available_qty', {
             work_order: state.current_wo,
             item_code: parsed.item_code,
@@ -2558,6 +2572,13 @@ function init_operator_hub($root) {
       let badge, badgeText;
       if (it.is_sfg) {
         badge = 'bg-secondary'; badgeText = 'SFG (enter below)';
+      } else if (it.is_metered) {
+        // Deliberately does not name Close Production: with
+        // close_sfg_wo_at_end on, a semi-finished Work Order is received into
+        // stock inside End WO itself, so the recipe quantity is consumed
+        // seconds later rather than at a separate step.
+        badge = 'bg-info text-dark';
+        badgeText = 'Metered — follows the recipe, nothing to load';
       } else if (it.is_packaging) {
         // Packaging is intentionally deferred to Close Production — it
         // does not block End WO and is consumed via the Manufacture

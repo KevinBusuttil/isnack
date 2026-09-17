@@ -27,8 +27,9 @@
   "allow_packaging_at_material_loading",
   "backflush_item_groups",
   "allowed_item_groups",
-  "shift_return_section",
+  "metered_materials_section",
   "metered_items",
+  "shift_return_section",
   "min_return_qty",
   "per_line_rules_section",
   "default_semi_finished_warehouse",
@@ -209,16 +210,21 @@
    "options": "Line Allowed Item Groups"
   },
   {
-   "fieldname": "shift_return_section",
+   "fieldname": "metered_materials_section",
    "fieldtype": "Section Break",
-   "label": "End Shift Return"
+   "label": "Metered Materials"
   },
   {
-   "description": "Materials that arrive metered rather than handled — piped inputs such as water. They are consumed strictly per the BOM at Close Production, so an operator is never asked to count them at End WO, and they are never offered for End Shift Return. Costing is unaffected: the recipe quantity is still consumed.",
+   "description": "Materials that arrive metered rather than handled — piped inputs such as water. An operator is never asked to count one at End WO and is never offered one for End Shift Return; the BOM quantity is consumed for them when the Work Order is received into stock, truncated to the posting precision. Costing is unaffected to within one tick.",
    "fieldname": "metered_items",
    "fieldtype": "Table MultiSelect",
    "label": "Metered Items",
    "options": "Metered Item"
+  },
+  {
+   "fieldname": "shift_return_section",
+   "fieldtype": "Section Break",
+   "label": "End Shift Return"
   },
   {
    "default": "0.01",

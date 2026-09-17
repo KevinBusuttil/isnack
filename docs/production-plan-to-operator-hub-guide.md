@@ -353,7 +353,8 @@ When the machine has finished processing the batch:
 
 1. Click **End WO**.
 2. If the BOM contains **semi-finished components** (e.g., a slurry produced in-house), a dialog appears asking for the actual quantities used. Enter each one and click **Submit**.
-3. The Work Order is flagged as production-ended and disappears from the active queue.
+3. The dialog lists every BOM material with what the recipe wanted against what was consumed. A material still **Short** blocks End WO until it is consumed or a Production Manager overrides with a written reason — except for three kinds that are never the operator's to load: semi-finished components (entered in the dialog itself), packaging (deferred to Close Production), and anything listed under **Factory Settings → Metered Materials**, which follows the recipe and is consumed when the Work Order is received into stock.
+4. The Work Order is flagged as production-ended and disappears from the active queue.
 
 > **Note:** Clicking End WO does **not** yet create the Finished Goods stock entry. That happens in the next step, Close Production.
 

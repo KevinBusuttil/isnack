@@ -279,11 +279,19 @@ Click **End Shift Return** to return all remaining WIP inventory at end of shift
 Two Factory Settings under **End Shift Return** decide what an operator is offered. They answer
 different problems and only one of them is a rule:
 
-- **Metered Items** — materials that arrive metered rather than handled, such as piped water. They
-  are consumed strictly per the BOM at Close Production, so costing is unaffected; they are simply
-  never offered here, and `return_wip_to_staging` refuses one if a stale dialog sends it anyway.
-  The same list governs what an operator is asked to consume, since an item is metered for the same
-  reason in both places.
+- **Metered Items** (Factory Settings → *Metered Materials*) — materials that arrive metered rather
+  than handled, such as piped water. They are never offered here, and `return_wip_to_staging`
+  refuses one if a stale dialog sends it anyway. The same list governs consumption: a metered item
+  is never counted out at End WO and cannot be scanned or manually loaded, because the BOM quantity
+  is consumed for it when the Work Order is received into stock.
+
+  Note what that leaves behind. The transfer at Start rounds the recipe quantity **up** to the
+  posting precision while the consumption at receipt truncates it **down**, so a recipe ratio that
+  is not exactly representable strands up to one tick (0.001) in WIP per Work Order — water's line
+  is 1/30 per Kg. Operators used to clear that by hand; they no longer can, since both the consume
+  and the return routes now refuse a metered item. It is worth a fraction of a cent per run and is
+  the same residue **Minimum Return Quantity** hides, but it accumulates until a Stock
+  Reconciliation clears it.
 - **Minimum Return Quantity** (default `0.01`) — hides balances too small to carry back. A BOM
   ratio that is not exactly representable at the posting precision leaves a sub-tick remainder in
   WIP on every close — water's line is 1/30 per Kg — so these appear on any item with an awkward
