@@ -20,7 +20,7 @@ from isnack.utils.batch_lineage import (
     fg_batch_quantities_by_work_order,
 )
 from isnack.utils.printing import get_label_printer
-from isnack.utils.qty import postable_qty, qty_precision, qty_tick, truncate_qty
+from isnack.utils.qty import ceil_qty, postable_qty, qty_precision, qty_tick, truncate_qty
 from isnack.utils.scan import parse_gs1_or_basic as _parse_gs1_or_basic
 
 # ============================================================
@@ -814,6 +814,36 @@ def _submitted_mtfm_item_qty_by_key(work_order: str) -> dict[tuple, float]:
     }
 
 
+def _metered_close_qty(remaining_qty, headroom) -> float:
+    """
+    What a metered item's remainder should consume when the Work Order closes.
+
+    Ordinary items truncate: a sub-tick remainder is not postable and is left in
+    WIP for the operator to clear. A metered item has no operator — nobody can
+    scan or return piped water — so the tick would stay in WIP forever, and the
+    transfer at Start rounded the same requirement UP, so it is genuinely there.
+    Taking it consumes exactly what was brought in and leaves the line clean.
+
+    Raises only, never lowers, and only when the headroom covers it: anything
+    uncertain falls back to the truncation every other item gets, so the worst
+    case is one tick of a material the order demonstrably received and that the
+    ledger demonstrably still holds.
+
+    Args:
+        remaining_qty: raw BOM requirement still unconsumed
+        headroom: the lower of what this Work Order brought into WIP less what
+            it has consumed, and what the warehouse actually holds now
+
+    Returns:
+        the quantity to post, quantised to the posting precision
+    """
+    postable = truncate_qty(remaining_qty)
+    ceiled = ceil_qty(remaining_qty)
+    if ceiled > postable and flt(headroom) >= ceiled:
+        return ceiled
+    return postable
+
+
 def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]:
     """Per-item quantity this Work Order brought into its own WIP warehouse.
 
@@ -836,6 +866,48 @@ def _wip_inflow_by_item(work_order: str, wip_warehouse: str) -> dict[str, float]
         group by sed.item_code
     """, {"wo": work_order, "wip": wip_warehouse}, as_dict=True)
     return {r.item_code: flt(r.qty) for r in rows}
+
+
+def _wip_actual_qty(item_code: str, warehouse: str) -> float:
+    """What the ledger currently holds for an item in a warehouse.
+
+    A Work Order's own inflow is not proof that the stock is still there: WIP is
+    a pool shared by every order on the line, and an order that over-consumed
+    has already eaten into it. Since the hub never backdates an entry, the Bin
+    is exactly the balance ERPNext validates the new row against, and a row
+    beyond it is refused outright unless the site allows negative stock — which
+    would block the close, the one outcome this whole area exists to avoid.
+
+    0.0 when the Bin does not exist or cannot be read — the safe answer, because
+    it withholds the metered raise and leaves the remainder to truncate like
+    every other item's.
+    """
+    if not item_code or not warehouse:
+        return 0.0
+    try:
+        return flt(frappe.db.get_value(
+            "Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"
+        ))
+    except Exception:
+        return 0.0
+
+
+def _metered_headroom(item_code, wip_warehouse, inflow_by_item, already_consumed) -> float:
+    """How much of a metered item a close may round its remainder up into.
+
+    The lower of two ceilings, because either one alone is wrong: what this Work
+    Order brought into WIP and has not yet consumed keeps it from rounding up
+    into another order's material, and what the warehouse actually holds keeps
+    the row inside the balance ERPNext validates it against.
+
+    Lives next to the Bin read rather than at the call sites because Close
+    Production and End WO each run their own copy of the remainder loop, and the
+    two must not drift.
+    """
+    return min(
+        flt(inflow_by_item.get(item_code, 0.0)) - flt(already_consumed),
+        _wip_actual_qty(item_code, wip_warehouse),
+    )
 
 
 def _consumed_by_item(work_order: str) -> dict[str, float]:
@@ -1045,6 +1117,15 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
                 "AND LOWER(IFNULL(it.item_group, '')) NOT IN %(packaging_groups)s"
             )
 
+    # Metered items are consumed from the BOM when the Work Order is received
+    # into stock, so there is nothing to load by hand — the backend refuses them
+    # and the picker must mirror that rather than offer a dead entry.
+    metered_filter = ""
+    metered = _metered_items()
+    if metered:
+        params["metered_items"] = tuple(metered)
+        metered_filter = "AND bi.item_code NOT IN %(metered_items)s"
+
     rows = frappe.db.sql(f"""
         SELECT DISTINCT bi.item_code, bi.item_name
         FROM `tabBOM Item` bi
@@ -1055,6 +1136,7 @@ def get_staging_items_for_wo(doctype, txt, searchfield, start, page_len, filters
         WHERE bi.parent = %(bom_no)s
             AND (bi.item_code LIKE %(txt)s OR bi.item_name LIKE %(txt)s)
             {bom_packaging_filter}
+            {metered_filter}
         {packaging_union}
         ORDER BY item_code
         LIMIT %(page_len)s OFFSET %(start)s
@@ -2205,6 +2287,20 @@ def scan_material(code, job_card: Optional[str] = None, work_order: Optional[str
         if not item_code:
             return {"ok": False, "msg": _("Cannot parse item from code")}
 
+        # Before every other check on the item: a metered item is consumed from
+        # the BOM when the Work Order is received into stock, so there is
+        # nothing for a scan to book, and refusing it for any other reason
+        # (a missing batch, say) would name the wrong cause. This path builds
+        # and submits its own Stock Entry rather than going through
+        # _post_material_consumption_for_wo, so it needs its own refusal.
+        if item_code in _metered_items():
+            return {
+                "ok": False,
+                "msg": _(
+                    "{0} is a metered item: it is consumed per recipe and is not scanned in."
+                ).format(item_code),
+            }
+
         # Require batch if the item is batch-tracked
         if frappe.db.get_value("Item", item_code, "has_batch_no") and not parsed.get("batch_no"):
             return {"ok": False, "msg": _("Batch number required for {0}").format(item_code)}
@@ -2547,7 +2643,11 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
     # Get BOM items scaled for production quantity
     if wo.bom_no:
         bom_items = _planned_items_for_wo(wo, good)
-        
+        metered_items = _metered_items()
+        metered_inflow = (
+            _wip_inflow_by_item(work_order, wip_wh) if metered_items and wip_wh else {}
+        )
+
         # Add remaining materials to consume (subtract what was already consumed via LOAD)
         for bom_item in bom_items:
             item_code = bom_item["item_code"]
@@ -2555,8 +2655,15 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             already_consumed = consumed_from_load.get(item_code, 0)
             remaining_qty = required_qty - already_consumed
             # Only a shortfall that survives the posting precision is real —
-            # see the equivalent loop in _close_single_wo.
-            postable_remaining = truncate_qty(remaining_qty)
+            # see the equivalent loop in _close_single_wo, including why a
+            # metered item takes the tick truncation would leave behind.
+            if item_code in metered_items:
+                postable_remaining = _metered_close_qty(
+                    remaining_qty,
+                    _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
+                )
+            else:
+                postable_remaining = truncate_qty(remaining_qty)
 
             # Handle both under-consumption and over-consumption
             if postable_remaining > 0:
@@ -2767,6 +2874,7 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
 
     sfg_codes = {row["item_code"] for row in (get_sfg_components_for_wo(work_order).get("items") or [])}
     packaging_groups = _packaging_groups_global()
+    metered = _metered_items()
 
     rows: list[dict] = []
     shortfalls = 0
@@ -2777,6 +2885,7 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
         remaining = required - consumed
         group = (_get_item_group(item_code) or "").strip().lower()
         is_packaging = group in packaging_groups
+        is_metered = item_code in metered
         is_sfg = item_code in sfg_codes
         allowed_short = required * (tolerance_pct / 100.0)
 
@@ -2791,7 +2900,10 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
         # excluded from the "must be consumed" gate. Packaging items are
         # intentionally deferred to Close Production (consumed there via
         # the Manufacture Stock Entry), so they also do not block End WO.
-        if not is_sfg and not is_packaging and status == "short":
+        # A metered item is never handled at all: nobody weighs out piped
+        # water, so its whole quantity is left to the same BOM remainder loop
+        # and it can never be "short".
+        if not is_sfg and not is_packaging and not is_metered and status == "short":
             shortfalls += 1
 
         rows.append(
@@ -2803,6 +2915,7 @@ def _end_wo_consumption_summary(work_order: str) -> dict:
                 "consumed": consumed,
                 "remaining": remaining,
                 "is_packaging": is_packaging,
+                "is_metered": is_metered,
                 "is_sfg": is_sfg,
                 "status": status,
             }
@@ -2941,11 +3054,14 @@ def end_work_order(work_order: str, sfg_usage: str = None,
         user_roles = set(frappe.get_roles(frappe.session.user))
         is_override_allowed = bool(set(ROLES_END_WO_OVERRIDE) & user_roles)
 
-        # Packaging shortfalls are not blocking (deferred to Close Production)
-        # so keep them out of the audit / override message as well.
+        # The same exemptions as the counter above, or the message contradicts
+        # it: one shortfall claimed and two named, with the operator sent off to
+        # consume a material nobody can hand-measure. This list is also what the
+        # manager's override reason records.
         short_rows = [
             r for r in summary["items"]
-            if (not r["is_sfg"]) and (not r["is_packaging"]) and r["status"] == "short"
+            if (not r["is_sfg"]) and (not r["is_packaging"]) and (not r.get("is_metered"))
+            and r["status"] == "short"
         ]
         short_summary = ", ".join(
             f"{r['item_code']} ({r['consumed']:.4g}/{r['required']:.4g} {r['uom']})"
@@ -3943,6 +4059,10 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 for row in (get_sfg_components_for_wo(wo_name).get("items") or [])
             }
             sfg_src_wh = _default_sfg_source(wo_name)
+            metered_items = _metered_items()
+            metered_inflow = (
+                _wip_inflow_by_item(wo_name, wip_wh) if metered_items and wip_wh else {}
+            )
 
             for bom_item in bom_items:
                 item_code = bom_item["item_code"]
@@ -3960,7 +4080,18 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 # whose transfer_qty rounded to zero, which ERPNext rejects
                 # outright, blocking the close. Quantise toward zero so a
                 # sub-tick remainder is what it actually is: nothing.
-                postable_remaining = truncate_qty(remaining_qty)
+                # A metered item is the exception: nobody can clear its leftover
+                # tick by hand, so it takes the tick its own inflow covers.
+                # (sfg_codes is excluded because such a row is sourced from
+                # the Semi-finished warehouse, not the WIP the headroom is
+                # measured in.)
+                if item_code in metered_items and item_code not in sfg_codes:
+                    postable_remaining = _metered_close_qty(
+                        remaining_qty,
+                        _metered_headroom(item_code, wip_wh, metered_inflow, already_consumed),
+                    )
+                else:
+                    postable_remaining = truncate_qty(remaining_qty)
 
                 if postable_remaining > 0:
                     src_wh = wip_wh
@@ -5332,11 +5463,13 @@ def get_materials_snapshot(work_order: str):
     transferred_map = {r.item_code: float(r.qty or 0) for r in transferred}
     consumed_map = {r.item_code: float(r.qty or 0) for r in consumed}
     wip_map = {r.item_code: float(r.qty or 0) for r in wip_flow}
+    metered = _metered_items()
 
     for row in rows:
         item = row["item_code"]
         row["transferred"] = transferred_map.get(item, 0.0)
         row["consumed"] = consumed_map.get(item, 0.0)
+        row["is_metered"] = item in metered
         # Two different questions, two columns. Consumption is drawn OUT of the
         # transferred stock, so subtracting both from the requirement double
         # counts it: a row fully transferred and then fully consumed used to
@@ -5344,7 +5477,12 @@ def get_materials_snapshot(work_order: str):
         #
         #   remain  -> how much more the recipe still wants loaded
         #   in_wip  -> how much of this item the Work Order still has on the line
-        row["remain"] = max(row["required"] - row["consumed"], 0.0)
+        #
+        # A metered item is never loaded by hand, so its requirement is not
+        # outstanding work: left to the generic sum it would sit at the full
+        # recipe quantity, in red, for the whole run — the same complaint the
+        # End WO gate raises, relocated to the materials table.
+        row["remain"] = 0.0 if row["is_metered"] else max(row["required"] - row["consumed"], 0.0)
         row["in_wip"] = max(wip_map.get(item, 0.0), 0.0)
 
     scans = frappe.db.sql("""
@@ -5470,6 +5608,7 @@ def get_manual_load_item_context(work_order: str, item_code: str):
             "required_qty": 0.0,
             "consumed_qty": 0.0,
             "remaining_qty": 0.0,
+            "is_metered": False,
         }
 
     wo = frappe.get_doc("Work Order", work_order)
@@ -5508,12 +5647,21 @@ def get_manual_load_item_context(work_order: str, item_code: str):
 
     remaining_qty = max(required_qty - consumed_qty, 0.0)
 
+    # Flagged rather than refused: this is a read-only lookup the client makes
+    # BEFORE it has a dialog to show, so throwing here would surface as a bare
+    # error. The client declines the scan on the flag, and the posting endpoints
+    # refuse independently.
+    is_metered = item_code in _metered_items()
+
     return {
         "item_code": item_code,
         "uom": uom,
         "required_qty": required_qty,
         "consumed_qty": consumed_qty,
-        "remaining_qty": remaining_qty,
+        # A metered item is consumed from the BOM at receipt, so nothing about
+        # it is outstanding for an operator to load.
+        "remaining_qty": 0.0 if is_metered else remaining_qty,
+        "is_metered": is_metered,
     }
 
 
@@ -5547,6 +5695,19 @@ def _post_material_consumption_for_wo(work_order: str, items: list, allow_packag
 
     if not items:
         frappe.throw(_("No items provided"))
+
+    # Refused rather than silently dropped: a quantity an operator typed for a
+    # metered item is a misunderstanding worth naming, and the BOM remainder
+    # would consume the recipe amount on top of whatever was booked here.
+    metered = _metered_items()
+    metered_offered = sorted(
+        {(it.get("item_code") or "").strip() for it in items} & metered
+    )
+    if metered_offered:
+        frappe.throw(
+            _("{0} is a metered item: it is consumed per recipe and is not loaded by hand.")
+            .format(frappe.bold(", ".join(metered_offered)))
+        )
 
     wo = frappe.get_doc("Work Order", work_order)
     # Consume from WIP warehouse (mirrors scan_material behaviour)
@@ -5806,30 +5967,52 @@ def return_materials(job_card: Optional[str] = None, work_order: Optional[str] =
     return {"ok": True, "stock_entry": se.name}
 
 
-def _shift_return_policy() -> tuple:
+def _metered_items() -> set:
     """
-    ``(non_returnable_items, min_return_qty)`` from Factory Settings.
+    Items that arrive metered rather than handled, from Factory Settings.
 
-    The two answer different complaints. A metered input such as water is never
-    carried back at all, whatever the quantity. A minimum quantity covers the
-    residue that any BOM ratio not representable at the posting precision leaves
-    in WIP on every close — water's line is 1/30 per Kg — which is not specific
-    to any one item and would otherwise keep reappearing.
+    Water is piped: nobody carries it back to stores and nobody weighs it out at
+    the line, so it is consumed strictly per the BOM at Close Production. The one
+    list drives both halves of that — what the End Shift Return dialog offers and
+    what an operator is asked to count — because an item is metered for the same
+    reason in each. Costing is untouched either way: the recipe quantity is still
+    consumed.
+
+    Empty when the settings cannot be read: losing them must not take a screen
+    away from the operator.
     """
     try:
         fs = frappe.get_cached_doc("Factory Settings")
     except Exception:
-        return set(), 0.0
+        return set()
 
-    excluded = {
+    return {
         row.item
-        for row in (fs.get("non_returnable_items") or [])
+        for row in (fs.get("metered_items") or [])
         if getattr(row, "item", None)
     }
-    # Unset is not zero: a Single returns None for a field never saved, and the
-    # dialog is meant to hide residues out of the box.
+
+
+def _min_return_qty() -> float:
+    """
+    The quantity below which End Shift Return stops offering a WIP balance.
+
+    Unlike the metered list this is a display rule and applies to every item: any
+    BOM ratio not representable at the posting precision leaves a sub-tick
+    remainder in WIP on every close — water's line is 1/30 per Kg, and a
+    packaging film sits at 0.001 Kg for the same reason — and nobody carries back
+    0.001 of anything.
+
+    An unset Single field reads as None, which is not zero: the dialog is meant to
+    hide residues out of the box, so the default stands until somebody sets it.
+    """
+    try:
+        fs = frappe.get_cached_doc("Factory Settings")
+    except Exception:
+        return 0.0
+
     minimum = fs.get("min_return_qty")
-    return excluded, flt(minimum) if minimum is not None else 0.01
+    return flt(minimum) if minimum is not None else 0.01
 
 
 @frappe.whitelist()
@@ -5849,7 +6032,7 @@ def get_wip_inventory(line: Optional[str] = None):
     if not wip_wh:
         frappe.throw(_("WIP warehouse not configured for line {0}").format(line))
     
-    excluded_items, min_qty = _shift_return_policy()
+    excluded_items, min_qty = _metered_items(), _min_return_qty()
 
     # Query current stock in WIP warehouse
     bins = frappe.get_all(
@@ -5860,7 +6043,7 @@ def get_wip_inventory(line: Optional[str] = None):
 
     result = []
     for b in bins:
-        # Never physically returned, so never offered — see _shift_return_policy.
+        # Metered, so never handled and never offered — see _metered_items.
         if b.item_code in excluded_items:
             continue
         item_name = frappe.db.get_value("Item", b.item_code, "item_name")
@@ -5929,7 +6112,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     # input does not become returnable because a stale dialog offered it. The
     # minimum quantity is deliberately NOT enforced here — it decides what the
     # dialog is worth showing, and a deliberate small return is still valid.
-    excluded_items, _min_qty = _shift_return_policy()
+    excluded_items = _metered_items()
     offered = [
         (it.get("item_code") or "").strip()
         for it in items_list
@@ -5937,7 +6120,7 @@ def return_wip_to_staging(line: Optional[str] = None, items: Optional[str] = Non
     ]
     if offered:
         frappe.throw(
-            _("{0} cannot be returned: it is configured as a non-returnable (metered) item.")
+            _("{0} cannot be returned: it is configured as a metered item, consumed per recipe.")
             .format(frappe.bold(", ".join(sorted(set(offered)))))
         )
     

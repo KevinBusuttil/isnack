@@ -24,7 +24,7 @@
  "modified": "2026-09-16 15:10:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
- "name": "Non Returnable Item",
+ "name": "Metered Item",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",
