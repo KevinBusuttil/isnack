@@ -13,9 +13,11 @@ Why a Serial and Batch Bundle
 -----------------------------
 One line often needs several batches, because a single batch rarely holds enough
 stock to cover it. ``Delivery Note Item.batch_no`` can only carry one, so the
-allocation is written as an outward Serial and Batch Bundle — one entry per batch,
-quantities negative, exactly as ERPNext builds them itself in
-``erpnext/controllers/selling_controller.py::get_serial_and_batch_bundle``.
+allocation is written as an outward Serial and Batch Bundle — one entry per batch —
+exactly as ERPNext builds them itself in
+``erpnext/controllers/selling_controller.py::get_serial_and_batch_bundle``. Entries
+are written positive; ``SerialandBatchBundle.set_is_outward`` flips the sign on save,
+so the stored quantities end up negative without the caller doing it.
 
 Why a short bundle is never linked to the row
 ---------------------------------------------
@@ -32,9 +34,12 @@ fully allocated:
   ``voucher_detail_no``, and is **not** linked from the row. ERPNext never validates
   it, the Delivery Note keeps saving normally, and the scans survive until the
   storekeeper comes back.
-* fully allocated -> the same bundle is linked onto the row, ``batch_no`` is cleared
-  and ``use_serial_batch_fields`` is set to 0, which is what ERPNext requires of a
-  bundle-backed row.
+* fully allocated -> the same bundle is linked onto the row, and
+  ``use_serial_batch_fields`` goes to 0, which is what ERPNext requires of a
+  bundle-backed row. ``batch_no`` keeps the batch when one covers the line and is
+  blanked only when the allocation is split, because ERPNext's own scanner reads a
+  blank batch as "any batch will do". See :func:`_link_bundle_to_row`, which
+  snapshots what it overwrites so :func:`_clear_row_bundle` can put it back.
 
 The bundle is always left in draft. ERPNext submits it itself when the Delivery Note
 is submitted (``StockLedgerEntry.on_submit`` -> ``SerialBatchBundle.post_process``).

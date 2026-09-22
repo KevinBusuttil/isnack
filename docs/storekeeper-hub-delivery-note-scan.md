@@ -39,7 +39,7 @@ is complete:
 |---|---|---|
 | Nothing scanned | none | — |
 | Partially allocated | draft bundle, carries `voucher_no` + `voucher_detail_no` | **No** — ERPNext never validates it, so the draft keeps saving normally |
-| Fully allocated | same bundle, reused in place | **Yes**, and `batch_no` is cleared with `use_serial_batch_fields` set to 0 |
+| Fully allocated | same bundle, reused in place | **Yes** — see [Putting a line back](#putting-a-line-back) for what that writes on the row |
 
 The bundle is always left in draft. ERPNext submits it itself when the Delivery
 Note is submitted (`StockLedgerEntry.on_submit` → `SerialBatchBundle.post_process`).
@@ -82,9 +82,10 @@ Keeping a single batch on the row matters: ERPNext's `BarcodeScanner` matcher
 reads a blank `batch_no` as "any batch will do", so blanking it unconditionally
 would turn a bundle-backed row into a catch-all for the form scanner.
 
-Both custom fields ship in `isnack/fixtures/custom_field.json`. If either is
-missing the dialog refuses to open and says to run `bench migrate`, rather than
-half-working.
+All three custom fields ship in `isnack/fixtures/custom_field.json`. If the scan
+status or the ownership stamp is missing the dialog refuses to open and says to
+run `bench migrate`, rather than half-working; the restore point degrades quietly,
+since a line with no snapshot is simply left alone on Clear.
 
 ---
 
