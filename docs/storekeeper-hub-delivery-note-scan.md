@@ -195,7 +195,9 @@ is held at *Partially Scanned* so it can be re-scanned.
 Every payload carries a **state token** — the Delivery Note's `modified` stamp.
 A Post writes the scan status onto the note, so the token moves; a second dialog
 still holding the old one is told to reload rather than allowed to overwrite. An
-edit to the note's own lines invalidates it for the same reason.
+edit to the note's own lines invalidates it for the same reason. Post *requires*
+the token — omitting it would opt straight out of the check — so a dialog cached
+from before this shipped is asked to reopen, which is the right answer for it too.
 
 Separately, a line is only emptied when the storekeeper presses **Clear**: the
 Post names the rows to clear explicitly. Absence from the allocation map never

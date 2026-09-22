@@ -252,6 +252,15 @@ class TestNormaliseAllocations(unittest.TestCase):
         self.assertEqual(self._run("[1, 2, 3]"), {})
         self.assertEqual(self._run(None), {})
 
+    def test_malformed_rows_are_dropped_rather_than_raising(self):
+        # The docstring promises these are dropped; before this they reached
+        # str.get / int iteration and came back as an HTTP 500.
+        self.assertEqual(self._run('{"r1": {"a": 1}}'), {})
+        self.assertEqual(self._run('{"r1": ["BBB-113"]}'), {})
+        self.assertEqual(self._run('{"r1": [null]}'), {})
+        self.assertEqual(self._run('{"r1": 5}'), {})
+        self.assertEqual(self._run('{"r1": [{"batch_no": "BBB-113", "qty": "x"}]}'), {})
+
 
 class TestDeriveStatus(unittest.TestCase):
     def _rows(self, *specs):
@@ -448,7 +457,7 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         self.items = _fg_items("FG10011", "FG10002")
 
     def _post(self, allocations, previous=None, stock=None, cleared_rows=None,
-              state_token=None):
+              state_token="2026-09-22 09:00:00.000000"):
         stock = stock or {"BBB-113": 150.0, "AAA-007": 100.0}
 
         def _db_get_value(doctype, name, field, *args, **kwargs):
@@ -514,6 +523,11 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         })
         self.assertEqual(out["posted"]["status"], dnbs.STATUS_FULL)
         calls["set_status"].assert_called_once_with(self.doc.name, dnbs.STATUS_FULL)
+
+    def test_posting_without_a_state_token_is_refused(self):
+        # Omitting it would otherwise opt straight out of the staleness check.
+        with self.assertRaisesRegex(frappe.ValidationError, "out of date"):
+            self._post({"r1": [{"batch_no": "BBB-113", "qty": 150}]}, state_token=None)
 
     def test_a_stale_state_token_is_refused_before_anything_is_written(self):
         # Two dialogs open on one note: the second Post must not silently replace

@@ -344,12 +344,14 @@ def _normalise_allocations(raw, doc) -> dict:
 
     out: dict = {}
     for row_name, entries in raw.items():
-        if row_name not in scannable:
+        if row_name not in scannable or not isinstance(entries, list):
             continue
         merged: dict = {}
-        for entry in entries or []:
-            batch_no = ((entry or {}).get("batch_no") or "").strip()
-            qty = flt((entry or {}).get("qty"))
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            batch_no = (entry.get("batch_no") or "").strip()
+            qty = flt(entry.get("qty"))
             if not batch_no or qty <= 0:
                 continue
             merged[batch_no] = flt(merged.get(batch_no, 0.0) + qty, QTY_PRECISION)
@@ -588,8 +590,21 @@ def _state_token(doc) -> str:
     return str(doc.get("modified") or "")
 
 
-def _check_state_token(doc, token) -> None:
+def _check_state_token(doc, token, required: bool = False) -> None:
+    """Refuse work built on a picture of the Delivery Note that no longer holds.
+
+    ``required`` is set on the write path: a client that simply omits the token
+    would otherwise opt straight out of the check. A dialog cached from before this
+    shipped hits that, and being told to reopen is the right answer for it too.
+    """
     if token in (None, ""):
+        if required:
+            frappe.throw(
+                _(
+                    "This dialog is out of date. Close it and reopen Delivery Note {0} "
+                    "before posting."
+                ).format(frappe.bold(doc.name))
+            )
         return
     if str(token) != _state_token(doc):
         frappe.throw(
@@ -943,7 +958,7 @@ def post_delivery_note_scan(
     in another tab would otherwise wipe work someone else had already posted.
     """
     doc = _load_delivery_note(delivery_note, for_update=True)
-    _check_state_token(doc, state_token)
+    _check_state_token(doc, state_token, required=True)
     posting = _posting_context(doc)
     working = _normalise_allocations(allocations, doc)
 
