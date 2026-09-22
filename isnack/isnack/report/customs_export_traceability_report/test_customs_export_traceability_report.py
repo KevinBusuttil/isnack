@@ -93,6 +93,15 @@ class TestResolveFgBatches(unittest.TestCase):
 		bundles = {"B2": [{"batch_no": "AAO-007", "qty": -6}, {"batch_no": "AAO-007", "qty": -4}]}
 		self.assertEqual(report._resolve_fg_batches(row, bundles), [("AAO-007", 10.0)])
 
+	def test_return_invoice_reverses_the_sold_qty(self):
+		# a credit note bills a negative stock qty; the bundle is unsigned, so
+		# the sign has to come from the invoice line, as it does for a direct batch
+		row = _si_row(1, "FG10005", -449, bundle="RET")
+		bundles = {"RET": [{"batch_no": "AAO-007", "qty": 449}]}
+		self.assertEqual(report._resolve_fg_batches(row, bundles), [("AAO-007", -449.0)])
+		direct = _si_row(1, "FG10005", -449, batch_no="AAO-007")
+		self.assertEqual(report._resolve_fg_batches(direct, {}), [("AAO-007", -449.0)])
+
 	def test_no_batch_information(self):
 		self.assertEqual(report._resolve_fg_batches(_si_row(1, "FG10005", 10), {}), [(None, None)])
 		row = _si_row(1, "FG10005", 10, bundle="EMPTY")
@@ -238,6 +247,82 @@ class TestApportionedRows(GetDataHarness):
 		self.assertIsNone(rows[0].fg_batch_no)
 		self.assertIsNone(rows[0].batch_sold_qty)
 		self.assertIsNone(rows[0].apportioned_qty)
+
+
+def _finished_row(sed_name, batch_no, fg_qty, stock_entry="SE-1", work_order="WO-1", item_code="FG10005", scrap=0):
+	return frappe._dict(
+		stock_entry=stock_entry,
+		work_order=work_order,
+		manufacturing_date="2026-08-21",
+		sed_name=sed_name,
+		item_code=item_code,
+		batch_no=batch_no,
+		is_scrap_item=scrap,
+		fg_qty=fg_qty,
+	)
+
+
+class TestFinishedQtyPerDetailRow(unittest.TestCase):
+	WANTED = {("FG10005", "AAO-007")}
+
+	def test_bundle_rows_of_one_detail_row_are_summed(self):
+		# one Serial and Batch Entry per serial number, all in the same batch
+		bundle = [_finished_row("row-1", "AAO-007", 1) for _ in range(5)]
+		qty = report._finished_qty_per_detail_row([], bundle, self.WANTED)
+		self.assertEqual(qty, {("row-1", "FG10005", "AAO-007"): 5.0})
+
+	def test_detail_row_in_both_lookups_is_taken_once(self):
+		direct = [_finished_row("row-1", "AAO-007", 193)]
+		bundle = [_finished_row("row-1", "AAO-007", 193)]
+		qty = report._finished_qty_per_detail_row(direct, bundle, self.WANTED)
+		self.assertEqual(qty, {("row-1", "FG10005", "AAO-007"): 193.0})
+
+	def test_other_batches_are_ignored(self):
+		bundle = [_finished_row("row-1", "AAO-007", 3), _finished_row("row-1", "OTHER", 2)]
+		qty = report._finished_qty_per_detail_row([], bundle, self.WANTED)
+		self.assertEqual(qty, {("row-1", "FG10005", "AAO-007"): 3.0})
+
+
+class TestProducedAndPerEntryQuantities(unittest.TestCase):
+	def test_batch_produced_qty_sums_serialised_bundle_rows(self):
+		direct = []
+		bundle = [_finished_row("row-1", "AAO-007", 1, stock_entry="SE-170") for _ in range(193)] + [
+			_finished_row("row-2", "AAO-007", 267, stock_entry="SE-177")
+		]
+		with patch("frappe.db.sql", side_effect=[direct, bundle]):
+			produced = report._fetch_batch_produced_qty({("FG10005", "AAO-007")})
+		self.assertEqual(produced, {("FG10005", "AAO-007"): 460.0})
+
+	def test_manufacture_entries_carry_the_summed_entry_qty(self):
+		direct = [_finished_row("row-2", "AAO-007", 267, stock_entry="SE-177", work_order="WO-28")]
+		bundle = [
+			_finished_row("row-1", "AAO-007", 1, stock_entry="SE-170", work_order="WO-27") for _ in range(193)
+		] + [_finished_row("row-2", "AAO-007", 267, stock_entry="SE-177", work_order="WO-28")]
+		wo_details = [
+			frappe._dict(name="WO-27", production_item="FG10005", qty=193, actual_start_date=None),
+			frappe._dict(name="WO-28", production_item="FG10005", qty=267, actual_start_date=None),
+		]
+		with patch("frappe.db.sql", side_effect=[direct, bundle, wo_details]), patch.object(
+			report, "_fetch_wo_finished_qty", return_value={"WO-27": 193.0, "WO-28": 267.0}
+		):
+			wo_map = report._fetch_manufacture_entries({("FG10005", "AAO-007")})
+		entries = {e["stock_entry"]: e for e in wo_map[("FG10005", "AAO-007")]}
+		self.assertEqual(set(entries), {"SE-177", "SE-170"})
+		self.assertEqual(entries["SE-170"]["fg_qty"], 193.0)
+		self.assertEqual(entries["SE-177"]["fg_qty"], 267.0)
+		self.assertEqual(entries["SE-177"]["wo_fg_qty"], 267.0)
+
+	def test_scrap_rows_book_nothing(self):
+		direct = [
+			_finished_row("row-1", "AAO-007", 190, stock_entry="SE-170", work_order="WO-27"),
+			_finished_row("row-s", "AAO-007", 3, stock_entry="SE-170", work_order="WO-27", scrap=1),
+		]
+		wo_details = [frappe._dict(name="WO-27", production_item="FG10005", qty=193, actual_start_date=None)]
+		with patch("frappe.db.sql", side_effect=[direct, [], wo_details]), patch.object(
+			report, "_fetch_wo_finished_qty", return_value={"WO-27": 190.0}
+		):
+			wo_map = report._fetch_manufacture_entries({("FG10005", "AAO-007")})
+		self.assertEqual(wo_map[("FG10005", "AAO-007")][0]["fg_qty"], 190.0)
 
 
 class TestColumns(unittest.TestCase):

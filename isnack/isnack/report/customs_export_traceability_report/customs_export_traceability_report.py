@@ -280,7 +280,10 @@ def _resolve_fg_batches(si_row, bundle_entries):
 	Batch Bundle. An invoice billed from a Delivery Note resolves through the
 	DN's bundle, which carries the delivered qty; that is scaled to the invoiced
 	stock qty so a partially invoiced delivery apportions only what this line
-	bills. ``[(None, None)]`` when no batch can be established.
+	bills. Bundle quantities are unsigned, so the sign comes from the invoiced
+	stock qty as well: a return (credit note) reverses the sold and apportioned
+	figures the way the direct-batch path does. ``[(None, None)]`` when no
+	batch can be established.
 	"""
 	stock_qty = flt(si_row.stock_qty)
 	if si_row.batch_no:
@@ -292,7 +295,7 @@ def _resolve_fg_batches(si_row, bundle_entries):
 				per_batch[e["batch_no"]] = flt(per_batch.get(e["batch_no"])) + abs(flt(e.get("qty")))
 		if per_batch:
 			bundle_qty = sum(per_batch.values())
-			scale = stock_qty / bundle_qty if (bundle_qty > 0 and stock_qty > 0) else 1.0
+			scale = stock_qty / bundle_qty if (bundle_qty > 0 and stock_qty) else 1.0
 			return [(batch_no, qty * scale) for batch_no, qty in per_batch.items()]
 	return [(None, None)]
 
@@ -549,22 +552,18 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 		):
 			wo_details[wo.name] = wo
 
-	# Finished qty each Manufacture entry booked into the batch. A finished row
-	# that carries both a batch_no and a bundle matches both strategies, so rows
-	# are counted once by detail-row name; scrap rows book nothing.
+	# Finished qty each Manufacture entry booked into the batch; scrap rows
+	# book nothing.
+	stock_entry_of_row = {r.sed_name: r.stock_entry for r in all_se_rows}
+	fg_qty_by_row = _finished_qty_per_detail_row(
+		[r for r in direct_rows if not cint(r.is_scrap_item)],
+		[r for r in bundle_rows if not cint(r.is_scrap_item)],
+		wanted,
+	)
 	fg_qty_by_entry = {}
-	seen_rows = set()
-	for r in all_se_rows:
-		key = (r.item_code, r.batch_no)
-		if key not in wanted:
-			continue
-		row_key = (key, r.stock_entry, r.sed_name)
-		if row_key in seen_rows:
-			continue
-		seen_rows.add(row_key)
-		if not cint(r.is_scrap_item):
-			entry_key = (key, r.stock_entry)
-			fg_qty_by_entry[entry_key] = flt(fg_qty_by_entry.get(entry_key)) + flt(r.fg_qty)
+	for (sed_name, item_code, batch_no), fg_qty in fg_qty_by_row.items():
+		entry_key = ((item_code, batch_no), stock_entry_of_row[sed_name])
+		fg_qty_by_entry[entry_key] = flt(fg_qty_by_entry.get(entry_key)) + fg_qty
 
 	result = {}
 	seen = set()
@@ -589,6 +588,35 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 			result.setdefault(key, []).append(entry)
 
 	return result
+
+
+def _finished_qty_per_detail_row(direct_rows, bundle_rows, wanted):
+	"""Return ``{(sed_name, item_code, batch_no): fg_qty}`` from the rows of the
+	two manufacture lookups, restricted to the ``wanted`` (item_code, batch_no)
+	pairs.
+
+	A bundle holds one Serial and Batch Entry per serial number, so a batch can
+	appear on several bundle rows of one detail row; they are summed. A detail
+	row that carries both a batch_no and a bundle matches both lookups; ERPNext
+	keeps its bundle total equal to its transfer qty, so the direct row is taken
+	and its bundle rows are skipped rather than added.
+	"""
+	qty = {}
+	direct_keys = set()
+	for r in direct_rows:
+		if (r.item_code, r.batch_no) not in wanted:
+			continue
+		key = (r.sed_name, r.item_code, r.batch_no)
+		direct_keys.add(key)
+		qty[key] = flt(r.fg_qty)
+	for r in bundle_rows:
+		if (r.item_code, r.batch_no) not in wanted:
+			continue
+		key = (r.sed_name, r.item_code, r.batch_no)
+		if key in direct_keys:
+			continue
+		qty[key] = flt(qty.get(key)) + flt(r.fg_qty)
+	return qty
 
 
 def _fetch_wo_finished_qty(wo_names):
@@ -627,8 +655,8 @@ def _fetch_batch_produced_qty(fg_batch_pairs):
 
 	Only manufactured output counts: stock that entered the batch through a
 	return or a reconciliation is not consumption to apportion. Scrap rows are
-	excluded, and a finished row carrying both a batch_no and a bundle is
-	counted once.
+	excluded; bundle rows are summed per detail row and batch, and a finished
+	row carrying both a batch_no and a bundle is counted once.
 	"""
 	if not fg_batch_pairs:
 		return {}
@@ -679,18 +707,12 @@ def _fetch_batch_produced_qty(fg_batch_pairs):
 		as_dict=True,
 	)
 
-	wanted = set(fg_batch_pairs)
-	seen = set()
 	result = {}
-	for r in direct_rows + bundle_rows:
-		key = (r.item_code, r.batch_no)
-		if key not in wanted:
-			continue
-		row_key = (r.sed_name, key)
-		if row_key in seen:
-			continue
-		seen.add(row_key)
-		result[key] = flt(result.get(key)) + flt(r.fg_qty)
+	for (_sed_name, item_code, batch_no), fg_qty in _finished_qty_per_detail_row(
+		direct_rows, bundle_rows, set(fg_batch_pairs)
+	).items():
+		key = (item_code, batch_no)
+		result[key] = flt(result.get(key)) + fg_qty
 
 	return result
 
