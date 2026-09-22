@@ -253,6 +253,20 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 **Purpose:** Track proforma invoices and outstanding receivables.
 
+#### Customs Export Traceability Report
+
+**Location:** `isnack/isnack/report/customs_export_traceability_report/`
+
+**Purpose:** Trace every Sales Invoice line back through its finished-goods batch, the Work Orders that produced it, the raw materials they consumed and the Purchase Receipts (with customs document numbers) those materials came from. Available on screen, as a printed Consumption Form and as an Excel export.
+
+**Consumed vs apportioned figures:** `Consumed Qty` / `Consumed Cost` are the whole Work Order's consumption, listed once per Work Order that fed the batch. Because a batch is rarely sold on a single invoice line (part may still be in stock, or the delivery may have drawn a few cartons from an older batch), the report also apportions that consumption to the cartons actually sold:
+
+- `Batch Sold Qty` — cartons of the FG batch delivered on the invoice line (per batch when a line is served from several batches).
+- `Batch Produced Qty` — cartons booked into the batch by all submitted Manufacture entries (scrap excluded).
+- `Apportioned Qty` / `Apportioned Cost` — `Consumed Qty` / `Consumed Cost` × `Batch Sold Qty` ÷ `Batch Produced Qty` (a Work Order whose output went into several batches is scaled by its share into this batch first).
+
+Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of the Delivery Note, up to the small difference ERPNext's batch-wise moving average introduces when a batch was partly shipped before a later Manufacture entry added to it. The printed form and the Excel export carry `Batch Sold Qty`, `Batch Produced Qty` and `Apportioned Qty`; cost columns are shown on screen only.
+
 ---
 
 ## Data Flow Diagrams
