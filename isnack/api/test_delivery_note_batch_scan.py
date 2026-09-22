@@ -20,8 +20,10 @@ Payload parsing itself is covered by ``test_delivery_note_scan.py``; these tests
 stub ``parse_gs1_or_basic`` so a scan reads as the literal label string.
 """
 
-import datetime
 import contextlib
+import datetime
+import re
+import sqlite3
 import unittest
 from unittest.mock import patch
 
@@ -878,6 +880,160 @@ class TestRestorePoint(unittest.TestCase):
         self.assertEqual(self._read('{"batch_no": "B-OLD"}', installed=False), {})
 
 
+class TestPickerQueryExecutes(unittest.TestCase):
+    """The picker's SQL is run, not just inspected.
+
+    A malformed query here is invisible to every other test in this file, because
+    they stub ``frappe.db.sql`` and only read the statement back as a string. The
+    statement is therefore executed against an in-memory SQLite database carrying
+    the three tables it touches, with MariaDB's backticks and pyformat parameters
+    translated. It is a shape check, not a dialect check: what it proves is that
+    every identifier the query names is actually in scope — which is precisely what
+    an alias breaks.
+    """
+
+    #: What frappe emits for a Company User Permission, per
+    #: frappe/desk/reportview.py:817-822 and frappe/model/db_query.py:1464-1469.
+    MATCH_COND = (
+        " and ((ifnull(`tabDelivery Note`.`company`, '')=''"
+        " or `tabDelivery Note`.`company` in ('Isnack')))"
+    )
+
+    def _run(self, match_cond, txt=None, filters=None):
+        captured = {}
+
+        class _Meta:
+            def has_field(self, fieldname):
+                return True
+
+        def _sql(query, params):
+            captured["query"] = query
+            captured["params"] = params
+            return []
+
+        with patch("frappe.get_meta", return_value=_Meta()), patch(
+            "frappe.desk.reportview.get_match_cond", return_value=match_cond
+        ), patch("frappe.db.sql", side_effect=_sql):
+            dnbs.get_scannable_delivery_notes(
+                "Delivery Note", txt, "name", 0, 10, filters
+            )
+
+        con = sqlite3.connect(":memory:")
+        con.execute(
+            'create table "tabDelivery Note" (name text, customer text,'
+            " customer_name text, posting_date text, docstatus int, is_return int,"
+            " company text, custom_scan_status text)"
+        )
+        con.execute(
+            'create table "tabDelivery Note Item" (parent text, item_code text,'
+            " serial_and_batch_bundle text)"
+        )
+        con.execute('create table "tabItem" (name text, has_batch_no int, has_serial_no int)')
+        con.execute(
+            'insert into "tabDelivery Note" values ("MAT-DN-2026-00011", "Nectar Ltd",'
+            ' "Nectar Ltd", "2026-09-22", 0, 0, "Isnack", NULL)'
+        )
+        con.execute(
+            'insert into "tabDelivery Note Item" values ("MAT-DN-2026-00011",'
+            ' "FG10011", NULL)'
+        )
+        con.execute('insert into "tabItem" values ("FG10011", 1, 0)')
+
+        sql = captured["query"].replace("`", '"')
+        sql = re.sub(r"%\((\w+)\)s", r":\1", sql)
+        sql = sql.replace("ifnull(", "coalesce(")
+        sql = sql.replace("limit :start, :page_len", "limit :page_len offset :start")
+        return con.execute(sql, captured["params"]).fetchall()
+
+    def test_it_runs_for_a_user_carrying_a_user_permission(self):
+        self.assertEqual(
+            self._run(self.MATCH_COND),
+            [("MAT-DN-2026-00011", "Nectar Ltd", "2026-09-22")],
+        )
+
+    def test_it_runs_for_an_administrator_whose_match_condition_is_empty(self):
+        self.assertEqual(
+            self._run(""), [("MAT-DN-2026-00011", "Nectar Ltd", "2026-09-22")]
+        )
+
+    def test_it_runs_with_search_text_and_filters(self):
+        self.assertEqual(
+            self._run(self.MATCH_COND, txt="00011", filters={"company": "Isnack"}),
+            [("MAT-DN-2026-00011", "Nectar Ltd", "2026-09-22")],
+        )
+
+    def test_the_user_permission_actually_excludes_other_companies(self):
+        rows = self._run(
+            " and ((ifnull(`tabDelivery Note`.`company`, '')=''"
+            " or `tabDelivery Note`.`company` in ('Somebody Else')))"
+        )
+        self.assertEqual(rows, [])
+
+
+class TestAuthorisation(unittest.TestCase):
+    """The module's only permission gate, and that every endpoint goes through it.
+
+    Each endpoint is driven without stubbing ``_load_delivery_note``, so removing
+    or weakening the check turns these red.
+    """
+
+    def _patches(self, permission=True):
+        doc = _FakeDoc([_FakeRow(name="r1", idx=1, item_code="FG10011", qty=10)])
+
+        class _Meta:
+            def has_field(self, fieldname):
+                return True
+
+        def _has_permission(*a, **k):
+            if not permission:
+                raise frappe.PermissionError("not allowed")
+            return True
+
+        return doc, _StackedPatch(
+            patch("frappe.get_meta", return_value=_Meta()),
+            patch("frappe.db.exists", return_value=True),
+            patch("frappe.db.sql", return_value=[]),
+            patch("frappe.has_permission", side_effect=_has_permission),
+            patch("frappe.get_doc", return_value=doc),
+            patch.object(dnbs, "_scan_status", return_value=dnbs.STATUS_NOT_SCANNED),
+            patch.object(dnbs, "_item_cache", return_value=_fg_items("FG10011")),
+            patch.object(dnbs, "_posting_context", return_value=POSTING),
+            patch.object(dnbs, "_stored_allocations", return_value={}),
+            patch.object(dnbs, "_linked_bundle_batches", return_value={}),
+            patch.object(dnbs, "_available_qty", return_value=0.0),
+            patch.object(dnbs, "_batch_expiry", return_value=None),
+        )
+
+    def test_write_permission_is_demanded_on_the_delivery_note_itself(self):
+        doc, ctx = self._patches()
+        with ctx:
+            with patch("frappe.has_permission", return_value=True) as perm:
+                dnbs._load_delivery_note("MAT-DN-2026-00011")
+            perm.assert_called_once_with(
+                "Delivery Note", "write", doc="MAT-DN-2026-00011", throw=True
+            )
+
+    def test_a_user_without_write_permission_cannot_open_a_note(self):
+        _doc, ctx = self._patches(permission=False)
+        with ctx:
+            with self.assertRaises(frappe.PermissionError):
+                dnbs.get_delivery_note_scan_state("MAT-DN-2026-00011")
+
+    def test_a_user_without_write_permission_cannot_scan(self):
+        _doc, ctx = self._patches(permission=False)
+        with ctx:
+            with self.assertRaises(frappe.PermissionError):
+                dnbs.scan_label("MAT-DN-2026-00011", "FG10011|BBB-113|10")
+
+    def test_a_user_without_write_permission_cannot_post(self):
+        _doc, ctx = self._patches(permission=False)
+        with ctx:
+            with self.assertRaises(frappe.PermissionError):
+                dnbs.post_delivery_note_scan(
+                    "MAT-DN-2026-00011", {"r1": [{"batch_no": "BBB-113", "qty": 10}]}
+                )
+
+
 class TestLoadDeliveryNote(unittest.TestCase):
     """Which Delivery Notes are open for scanning."""
 
@@ -1024,7 +1180,7 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
 
     def test_only_drafts_that_are_not_fully_scanned(self):
         out = self._query()
-        self.assertIn("dn.docstatus = 0", out["query"])
+        self.assertIn("`tabDelivery Note`.docstatus = 0", out["query"])
         self.assertIn("custom_scan_status", out["query"])
         self.assertEqual(out["params"]["full_status"], dnbs.STATUS_FULL)
 
@@ -1039,6 +1195,16 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
         self.assertEqual(out["match_doctype"], "Delivery Note")
         self.assertIn("`tabDelivery Note`.owner", out["query"])
 
+    def test_the_table_is_not_aliased(self):
+        # get_match_cond qualifies its columns with the full table name, which SQL
+        # puts out of scope as soon as an alias is introduced. An aliased query
+        # raises "Unknown column" for exactly the restricted users the condition
+        # protects, and works for an Administrator whose condition is empty — so it
+        # survives hand testing.
+        out = self._query()
+        self.assertNotIn("`tabDelivery Note` dn", out["query"])
+        self.assertNotIn(" dn.", out["query"])
+
     def test_a_fully_scanned_note_returns_once_a_line_lacks_a_bundle(self):
         out = self._query()
         self.assertIn("serial_and_batch_bundle", out["query"])
@@ -1047,7 +1213,7 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
     def test_search_text_matches_name_and_customer(self):
         out = self._query(txt="00011")
         self.assertEqual(out["params"]["txt"], "%00011%")
-        self.assertIn("dn.customer_name like", out["query"])
+        self.assertIn("`tabDelivery Note`.customer_name like", out["query"])
 
     def test_customer_filter_is_applied(self):
         out = self._query(filters={"customer": "Nectar Ltd"})

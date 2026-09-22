@@ -639,30 +639,41 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
     """
     from frappe.desk.reportview import get_match_cond
 
-    conditions = ["dn.docstatus = 0", "ifnull(dn.is_return, 0) = 0"]
+    # The table is NOT aliased. get_match_cond qualifies its columns with the full
+    # table name, which SQL puts out of scope the moment an alias is introduced — an
+    # aliased query raises "Unknown column `tabDelivery Note`.`company`" for exactly
+    # the restricted users the condition exists to protect, while an Administrator
+    # (whose match condition is empty) sees it work. ERPNext's own match-condition
+    # queries are unaliased for the same reason.
+    conditions = [
+        "`tabDelivery Note`.docstatus = 0",
+        "ifnull(`tabDelivery Note`.is_return, 0) = 0",
+    ]
     params = {"start": cint(start), "page_len": cint(page_len)}
 
     if frappe.get_meta("Delivery Note").has_field(SCAN_STATUS_FIELD):
         conditions.append(
-            f'''(
-                ifnull(dn.`{SCAN_STATUS_FIELD}`, '') != %(full_status)s
+            f"""(
+                ifnull(`tabDelivery Note`.`{SCAN_STATUS_FIELD}`, '') != %(full_status)s
                 or exists (
                     select 1
                     from `tabDelivery Note Item` dni
                     inner join `tabItem` it on it.name = dni.item_code
-                    where dni.parent = dn.name
+                    where dni.parent = `tabDelivery Note`.name
                         and it.has_batch_no = 1
                         and ifnull(it.has_serial_no, 0) = 0
                         and ifnull(dni.serial_and_batch_bundle, '') = ''
                 )
-            )'''
+            )"""
         )
         params["full_status"] = STATUS_FULL
 
     if txt:
         params["txt"] = f"%{txt}%"
         conditions.append(
-            "(dn.name like %(txt)s or dn.customer like %(txt)s or dn.customer_name like %(txt)s)"
+            "(`tabDelivery Note`.name like %(txt)s"
+            " or `tabDelivery Note`.customer like %(txt)s"
+            " or `tabDelivery Note`.customer_name like %(txt)s)"
         )
 
     if filters:
@@ -670,11 +681,11 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
             filters = frappe.parse_json(filters)
         customer = (filters or {}).get("customer")
         if customer:
-            conditions.append("dn.customer = %(customer)s")
+            conditions.append("`tabDelivery Note`.customer = %(customer)s")
             params["customer"] = customer
         company = (filters or {}).get("company")
         if company:
-            conditions.append("dn.company = %(company)s")
+            conditions.append("`tabDelivery Note`.company = %(company)s")
             params["company"] = company
 
     where_clause = " and ".join(conditions)
@@ -683,12 +694,12 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
     return frappe.db.sql(
         f"""
         select
-            dn.name,
-            dn.customer_name,
-            dn.posting_date
-        from `tabDelivery Note` dn
+            `tabDelivery Note`.name,
+            `tabDelivery Note`.customer_name,
+            `tabDelivery Note`.posting_date
+        from `tabDelivery Note`
         where {where_clause} {match_cond}
-        order by dn.posting_date desc, dn.name desc
+        order by `tabDelivery Note`.posting_date desc, `tabDelivery Note`.name desc
         limit %(start)s, %(page_len)s
         """,
         params,
