@@ -1237,3 +1237,142 @@
   border-color: #d1d5db;
   color: #1f2937;
 }
+
+/* =====================================
+   Delivery Note Scan Dialog (.dn-scan-dialog)
+   =====================================
+   Header, footer and primary CTA come from .sk-dialog, exactly as the PO Receipt
+   dialog does. Only the bespoke section tints, the scan bar and the read-only
+   items table are declared here. */
+
+.dn-scan-dialog .frappe-control[data-fieldname="dn_section"] > .section-body,
+.dn-scan-dialog .frappe-control[data-fieldname="items_section"] > .section-body {
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary);
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+
+.dn-scan-dialog .frappe-control[data-fieldname="dn_section"] > .section-head,
+.dn-scan-dialog .frappe-control[data-fieldname="scan_section"] > .section-head,
+.dn-scan-dialog .frappe-control[data-fieldname="items_section"] > .section-head {
+  color: var(--isn-dialog-title);
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Delivery Note summary, rendered as an HTML field beside the picker */
+.dn-scan-dialog .dn-scan-summary {
+  background: var(--isn-dialog-info-bg);
+  border-left: 4px solid var(--isn-dialog-primary);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--isn-dialog-neutral-text);
+  line-height: 1.6;
+}
+.dn-scan-dialog .dn-scan-arrow {
+  margin: 0 4px;
+  color: var(--isn-dialog-title);
+  font-weight: 700;
+}
+
+/* ---- Scan bar: the control the storekeeper actually uses ---- */
+.dn-scan-dialog .dn-scan-bar {
+  background: var(--isn-dialog-primary-soft);
+  border: 1px solid var(--isn-dialog-primary-soft-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.dn-scan-dialog .dn-scan-input {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: .4px;
+  border: 2px solid var(--isn-dialog-primary);
+  border-radius: 6px;
+  padding: .5rem .75rem;
+  height: auto;
+}
+.dn-scan-dialog .dn-scan-input:focus {
+  border-color: var(--isn-dialog-primary-strong);
+  box-shadow: var(--isn-dialog-focus-shadow);
+}
+.dn-scan-dialog .dn-scan-note {
+  margin-top: 6px;
+  min-height: 1.1rem;
+  font-size: .8rem;
+  font-weight: 600;
+}
+.dn-scan-dialog .dn-scan-note-gray  { color: var(--isn-dialog-neutral-text); }
+.dn-scan-dialog .dn-scan-note-green { color: var(--isn-dialog-success-text); }
+.dn-scan-dialog .dn-scan-note-orange{ color: var(--isn-dialog-warning-text); }
+.dn-scan-dialog .dn-scan-note-red   { color: var(--isn-dialog-danger-text); }
+
+/* ---- Read-only items table ---- */
+.dn-scan-dialog .dn-scan-table {
+  margin-bottom: 6px;
+  background: #ffffff;
+}
+.dn-scan-dialog .dn-scan-table thead th {
+  background: var(--isn-dialog-primary-soft);
+  color: var(--isn-dialog-title);
+  font-weight: 600;
+  font-size: 12px;
+  vertical-align: middle;
+}
+.dn-scan-dialog .dn-scan-table td {
+  vertical-align: middle;
+  font-size: 12.5px;
+}
+.dn-scan-dialog .dn-scan-table tbody tr:nth-child(even) {
+  background: #fafcfe;
+}
+
+/* Row state — how far this line has got */
+.dn-scan-dialog .dn-scan-row-done    { background: var(--isn-dialog-success-bg) !important; }
+.dn-scan-dialog .dn-scan-row-partial { background: var(--isn-dialog-warning-bg) !important; }
+.dn-scan-dialog .dn-scan-row-na      { color: var(--text-muted); }
+.dn-scan-dialog .dn-scan-na-note {
+  font-size: .72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.dn-scan-dialog .dn-scan-progress {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Batch chips — one per allocated batch, so a split line reads at a glance */
+.dn-scan-dialog .dn-batch-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  margin: 1px 2px 1px 0;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--isn-dialog-primary-soft);
+  border: 1px solid var(--isn-dialog-primary-soft-strong);
+  color: var(--isn-dialog-title);
+  white-space: nowrap;
+}
+/* Allocated beyond what the warehouse currently shows */
+.dn-scan-dialog .dn-batch-chip-short {
+  background: var(--isn-dialog-danger-bg);
+  border-color: var(--isn-dialog-danger-border);
+  color: var(--isn-dialog-danger-text);
+}
+.dn-scan-dialog .dn-batch-preset {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.dn-scan-dialog .dn-scan-footer {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--isn-dialog-title);
+}
+.dn-scan-dialog .dn-scan-empty {
+  padding: 18px;
+  text-align: center;
+}

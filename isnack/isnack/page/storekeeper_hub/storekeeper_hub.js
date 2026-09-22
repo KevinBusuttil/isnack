@@ -369,6 +369,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   const se_issue_btn    = $filters.find('.se-issue');
   const se_receipt_btn  = $filters.find('.se-receipt');
   const po_receipt_btn  = $filters.find('.po-receipt'); 
+  const dn_scan_btn     = $filters.find('.dn-scan');
 
   // Fetch Factory Settings for role permissions
   frappe.call({
@@ -963,6 +964,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
 
   po_receipt_btn.on('click', () => {
     show_po_receipt_dialog();
+  });
+
+  dn_scan_btn.on('click', () => {
+    show_dn_scan_dialog();
   });
 
   // ---------- Global Scan ----------
@@ -3036,6 +3041,539 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         });
       },
     });
+  }
+
+  // ---------- Delivery Note Scan Dialog ----------
+  //
+  // Allocates batches to a DRAFT Delivery Note by scanning the finished-goods labels
+  // printed from Operator Hub -> Print Label. The Delivery Note is never edited here:
+  // lines cannot be added, removed or re-quantified, and Post does not submit — it
+  // records how far the scan has got. All writes go through
+  // isnack.api.delivery_note_batch_scan, which owns the Serial and Batch Bundles; this
+  // dialog holds nothing but the working allocation the server hands back.
+
+  const DN_SCAN_API = 'isnack.api.delivery_note_batch_scan';
+
+  let dn_scan_dialog = null;
+  let dn_scan_state = null;
+
+  const dn_scan_status_indicator = (status) => ({
+    'Fully Scanned': 'green',
+    'Partially Scanned': 'orange',
+  }[status] || 'gray');
+
+  // Bumped every time the dialog is pointed at a different Delivery Note, so a
+  // reply that was already in flight can be recognised as belonging to the old one.
+  let dn_scan_generation = 0;
+
+  function reset_dn_scan_state() {
+    dn_scan_generation += 1;
+    dn_scan_state = {
+      generation: dn_scan_generation,
+      delivery_note: '',
+      header: null,
+      rows: [],
+      allocations: {},
+      // Two pallets of the same item, batch and carton count print byte-identical
+      // QR payloads, so a repeated payload is ambiguous rather than wrong. Count
+      // them and ask, the way the Delivery Note form scanner does.
+      seen: {},
+      // Rows the storekeeper explicitly emptied. Post only clears what is named
+      // here — absence from the allocation map never means "delete".
+      cleared: {},
+      // Identifies the version of the Delivery Note this dialog was built from, so
+      // a second dialog left open elsewhere cannot overwrite work posted since.
+      token: '',
+      busy: false,
+    };
+  }
+
+  function dn_scan_focus_input() {
+    if (!dn_scan_dialog) return;
+    const $input = dn_scan_dialog.$wrapper.find('.dn-scan-input');
+    if (!$input.length) return;
+    setTimeout(() => $input.trigger('focus').select(), 0);
+    // A frappe msgprint or confirm takes focus ~300ms later, when Bootstrap's fade
+    // completes, and gives nothing back on dismiss — so the scanner would stop
+    // working until someone clicked the box. Claim it again once it has closed.
+    $(document).one('hidden.bs.modal', '.modal', () => {
+      if (!dn_scan_dialog || !dn_scan_dialog.$wrapper.is(':visible')) return;
+      setTimeout(() => dn_scan_dialog.$wrapper.find('.dn-scan-input').trigger('focus').select(), 0);
+    });
+  }
+
+  function dn_scan_set_note(message, indicator = 'gray') {
+    if (!dn_scan_dialog) return;
+    const $note = dn_scan_dialog.$wrapper.find('.dn-scan-note');
+    if (!$note.length) return;
+    $note.attr('class', `dn-scan-note dn-scan-note-${indicator}`).text(message || '');
+  }
+
+  // Mirrors _derive_status in isnack/api/delivery_note_batch_scan.py, so the pill
+  // stays honest after a local Clear. Every server response overwrites it anyway.
+  function dn_scan_pending_status() {
+    const scannable = (dn_scan_state.rows || []).filter((r) => r.scannable);
+    if (!scannable.length) return 'Not Scanned';
+    if (scannable.every((r) => r.fully_allocated)) return 'Fully Scanned';
+    if (scannable.some((r) => r.allocated_qty > 0)) return 'Partially Scanned';
+    return 'Not Scanned';
+  }
+
+  function dn_scan_batch_chips(row) {
+    if (row.batches && row.batches.length) {
+      return row.batches.map((b) => {
+        const short = b.available_qty < b.qty;
+        const title = __('Available in {0}: {1}', [row.warehouse || '', fmt_qty(b.available_qty || 0)])
+          + (b.expiry_date ? ` · ${__('Expires')} ${frappe.datetime.str_to_user(b.expiry_date)}` : '');
+        return `<span class="dn-batch-chip${short ? ' dn-batch-chip-short' : ''}" title="${frappe.utils.escape_html(title)}">`
+          + `${frappe.utils.escape_html(b.batch_no)} <b>${fmt_qty(b.qty)}</b></span>`;
+      }).join(' ');
+    }
+    if (row.preset_batches && row.preset_batches.length) {
+      const names = row.preset_batches.map((b) => `${b.batch_no} (${fmt_qty(b.qty)})`).join(', ');
+      return `<span class="dn-batch-preset" title="${frappe.utils.escape_html(__('Already on the line. Scanning replaces it.'))}">`
+        + `${__('On file')}: ${frappe.utils.escape_html(names)}</span>`;
+    }
+    if (row.preset_batch_no) {
+      return `<span class="dn-batch-preset">${__('On file')}: ${frappe.utils.escape_html(row.preset_batch_no)}</span>`;
+    }
+    return '<span class="muted">—</span>';
+  }
+
+  function dn_scan_render() {
+    if (!dn_scan_dialog || !dn_scan_state) return;
+    const header_field = dn_scan_dialog.get_field('dn_header');
+    const items_field = dn_scan_dialog.get_field('dn_items');
+    const header = dn_scan_state.header;
+
+    if (!header) {
+      if (header_field) header_field.$wrapper.html('');
+      if (items_field) {
+        items_field.$wrapper.html(
+          `<div class="dn-scan-empty muted">${__('Pick a draft Delivery Note to start scanning.')}</div>`
+        );
+      }
+      dn_scan_dialog.get_primary_btn().prop('disabled', true);
+      return;
+    }
+
+    const pending = header.pending_status;
+    header_field.$wrapper.html(`
+      <div class="dn-scan-summary">
+        <div><strong>${__('Customer')}:</strong> ${frappe.utils.escape_html(header.customer_name || header.customer || '')}</div>
+        <div><strong>${__('Posting Date')}:</strong> ${header.posting_date ? frappe.datetime.str_to_user(header.posting_date) : '—'}</div>
+        <div><strong>${__('Warehouse')}:</strong> ${frappe.utils.escape_html(header.set_warehouse || __('per line'))}</div>
+        <div>
+          <strong>${__('Scan Status')}:</strong>
+          <span class="indicator-pill ${dn_scan_status_indicator(header.scan_status)}">${__(header.scan_status)}</span>
+          ${pending !== header.scan_status
+            ? `<span class="dn-scan-arrow">→</span><span class="indicator-pill ${dn_scan_status_indicator(pending)}">${__(pending)}</span>`
+            : ''}
+        </div>
+      </div>
+    `);
+
+    const rows_html = (dn_scan_state.rows || []).map((row) => {
+      const uom_note = row.stock_uom && row.uom && row.stock_uom !== row.uom
+        ? ` <span class="muted">(${frappe.utils.escape_html(row.stock_uom)})</span>`
+        : '';
+      let progress = '<span class="muted">—</span>';
+      let state_class = 'dn-scan-row-na';
+      if (row.scannable) {
+        const done = row.fully_allocated;
+        state_class = done ? 'dn-scan-row-done' : (row.allocated_qty > 0 ? 'dn-scan-row-partial' : 'dn-scan-row-open');
+        progress = `<span class="dn-scan-progress">${fmt_qty(row.allocated_qty)} / ${fmt_qty(row.required_qty)}</span>${uom_note}`;
+      }
+      const action = row.scannable && row.allocated_qty > 0
+        ? `<button type="button" class="btn btn-xs btn-default dn-scan-clear" data-row="${frappe.utils.escape_html(row.name)}">${__('Clear')}</button>`
+        : '';
+      const note = row.scannable ? '' : `<div class="dn-scan-na-note">${frappe.utils.escape_html(row.not_scannable_reason || '')}</div>`;
+
+      return `
+        <tr class="${state_class}">
+          <td class="text-right">${row.idx}</td>
+          <td><strong>${frappe.utils.escape_html(row.item_code || '')}</strong></td>
+          <td>${frappe.utils.escape_html(row.item_name || '')}${note}</td>
+          <td class="text-right">${fmt_qty(row.qty)}</td>
+          <td>${frappe.utils.escape_html(row.uom || '')}</td>
+          <td class="dn-scan-batch-cell">${dn_scan_batch_chips(row)}</td>
+          <td class="text-right">${progress}</td>
+          <td class="text-right">${action}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const scannable = (dn_scan_state.rows || []).filter((r) => r.scannable);
+    const done_count = scannable.filter((r) => r.fully_allocated).length;
+
+    items_field.$wrapper.html(`
+      <table class="table table-bordered table-condensed dn-scan-table">
+        <thead>
+          <tr>
+            <th style="width:36px;" class="text-right">#</th>
+            <th style="width:110px;">${__('Item Code')}</th>
+            <th>${__('Item Name')}</th>
+            <th style="width:80px;" class="text-right">${__('Qty')}</th>
+            <th style="width:70px;">${__('UoM')}</th>
+            <th style="width:30%;">${__('Batch')}</th>
+            <th style="width:120px;" class="text-right">${__('Scanned')}</th>
+            <th style="width:70px;"></th>
+          </tr>
+        </thead>
+        <tbody>${rows_html}</tbody>
+      </table>
+      <div class="dn-scan-footer">
+        ${__('{0} of {1} batch-tracked lines fully allocated.', [done_count, scannable.length])}
+      </div>
+    `);
+
+    dn_scan_dialog.get_primary_btn().prop('disabled', false);
+  }
+
+  async function dn_scan_load(delivery_note) {
+    reset_dn_scan_state();
+    dn_scan_state.delivery_note = delivery_note || '';
+    if (!delivery_note) {
+      dn_scan_render();
+      dn_scan_set_note('');
+      return;
+    }
+
+    try {
+      const r = await frappe.call({
+        method: `${DN_SCAN_API}.get_delivery_note_scan_state`,
+        args: { delivery_note },
+        freeze: true,
+        freeze_message: __('Loading Delivery Note...'),
+      });
+      if (!r || !r.message) return;
+      dn_scan_apply(r.message);
+      dn_scan_set_note(__('Ready. Scan a finished-goods label.'), 'gray');
+      dn_scan_focus_input();
+    } catch (e) {
+      // The server explains why (submitted, already fully scanned, nothing to scan);
+      // drop back to an empty dialog rather than showing a stale Delivery Note.
+      reset_dn_scan_state();
+      dn_scan_render();
+      dn_scan_focus_input();
+    }
+  }
+
+  function dn_scan_apply(payload, generation) {
+    // The picker stays clickable while a scan is out, so a slow reply can land
+    // after the storekeeper has moved to another Delivery Note. Applying it would
+    // point the dialog — and every later scan and the Post — at the wrong note.
+    if (generation !== undefined && generation !== dn_scan_state.generation) return;
+    dn_scan_state.header = payload;
+    dn_scan_state.delivery_note = payload.delivery_note;
+    dn_scan_state.rows = payload.rows || [];
+    dn_scan_state.allocations = payload.allocations || {};
+    dn_scan_state.token = payload.state_token || '';
+    dn_scan_render();
+  }
+
+  async function dn_scan_submit_code(code, allow_partial) {
+    const r = await frappe.call({
+      method: `${DN_SCAN_API}.scan_label`,
+      args: {
+        delivery_note: dn_scan_state.delivery_note,
+        code,
+        allocations: JSON.stringify(dn_scan_state.allocations || {}),
+        allow_partial: allow_partial ? 1 : 0,
+        state_token: dn_scan_state.token || '',
+      },
+    });
+    return r && r.message;
+  }
+
+  // frappe.confirm and frappe.show_alert both render their message as HTML, and
+  // batch numbers, item codes and UoMs all come from the database — escape before
+  // they are interpolated into either.
+  const esc = (value) => frappe.utils.escape_html(String(value == null ? '' : value));
+
+  function dn_scan_ask(message_html) {
+    return new Promise((resolve) => {
+      frappe.confirm(message_html, () => resolve(true), () => resolve(false));
+    });
+  }
+
+  async function dn_scan_handle_code(raw) {
+    const code = (raw || '').trim();
+    if (!code) return;
+    if (!dn_scan_state || !dn_scan_state.delivery_note) {
+      frappe.show_alert({ message: __('Pick a Delivery Note first.'), indicator: 'orange' });
+      return;
+    }
+    // A fast scanner can fire the next Enter while this one is still out — including
+    // while a confirmation is on screen, so the guard is taken before the first one.
+    // Frappe's global Enter handler (ui/keyboard.js) answers an open frappe.confirm
+    // with its primary button, so a gun triggered over a question both answers it and
+    // loses its own payload. Say so rather than dropping a pallet silently.
+    if (dn_scan_state.busy) {
+      dn_scan_set_note(__('Busy — that label was not read. Scan it again.'), 'orange');
+      frappe.show_alert({
+        message: __('That label was not read. Scan it again.'),
+        indicator: 'orange',
+      });
+      return;
+    }
+    dn_scan_state.busy = true;
+    const generation = dn_scan_state.generation;
+
+    try {
+      const times_seen = dn_scan_state.seen[code] || 0;
+      if (times_seen > 0) {
+        const again = await dn_scan_ask(
+          __('This exact label has already been scanned {0} time(s). Scan it again?', [times_seen])
+            + `<br><code>${esc(code)}</code>`
+        );
+        if (!again) return;
+      }
+
+      dn_scan_set_note(__('Scanning...'), 'gray');
+      let message = await dn_scan_submit_code(code, false);
+      if (!message) return;
+
+      if (message.over_scan) {
+        const proceed = await dn_scan_ask(
+          __(
+            'This label carries {0} {1} of batch {2}, but only {3} is still needed for {4}. Allocate {3} and set the rest aside?',
+            [
+              fmt_qty(message.label_qty), esc(message.stock_uom || ''), esc(message.batch_no),
+              fmt_qty(message.remaining_qty), esc(message.item_code),
+            ]
+          )
+        );
+        if (!proceed) {
+          dn_scan_set_note(__('Label not applied.'), 'orange');
+          return;
+        }
+        message = await dn_scan_submit_code(code, true);
+        if (!message || message.over_scan) return;
+      }
+
+      if (generation !== dn_scan_state.generation) return;
+      dn_scan_state.seen[code] = times_seen + 1;
+      dn_scan_apply(message, generation);
+
+      const scan = message.scan || {};
+      // Plain text: the note is rendered with .text(), and escaped once on the way
+      // into show_alert, which renders its message as HTML.
+      let note = __('{0} {1} allocated from batch {2}.', [
+        fmt_qty(scan.applied_qty), scan.stock_uom || '', scan.batch_no,
+      ]);
+      if (scan.ignored_qty > 0) {
+        note += ' ' + __('{0} on the label was not needed.', [fmt_qty(scan.ignored_qty)]);
+      }
+      dn_scan_set_note(note, 'green');
+      frappe.show_alert({ message: esc(note), indicator: 'green' });
+    } catch (e) {
+      // frappe.call rejects on a server throw and has already shown the message;
+      // keep the scanner usable rather than leaving the dialog wedged.
+      dn_scan_set_note(__('Scan rejected — see the message above.'), 'red');
+    } finally {
+      dn_scan_state.busy = false;
+      dn_scan_focus_input();
+    }
+  }
+
+  function dn_scan_clear_row(row_name) {
+    if (!dn_scan_state || !dn_scan_state.allocations) return;
+    const row = (dn_scan_state.rows || []).find((r) => r.name === row_name);
+    if (!row) return;
+    frappe.confirm(
+      __('Clear every scan allocated to row {0} ({1})?', [row.idx, esc(row.item_code)]),
+      () => {
+        // A scan reply may have landed while the question was on screen, replacing
+        // every row object; mutating the captured one would leave the table showing
+        // an allocation that has already been dropped from the map.
+        const live = (dn_scan_state.rows || []).find((r) => r.name === row_name);
+        if (!live || !dn_scan_state.header) return;
+        delete dn_scan_state.allocations[row_name];
+        dn_scan_state.cleared[row_name] = 1;
+        // Re-derive the table locally; the server re-checks the map on the next
+        // scan and at Post, so no round trip is needed to drop an allocation.
+        live.batches = [];
+        live.allocated_qty = 0;
+        live.remaining_qty = live.required_qty;
+        live.fully_allocated = 0;
+        dn_scan_state.header.pending_status = dn_scan_pending_status();
+        dn_scan_render();
+        dn_scan_set_note(__('Row {0} cleared. Post to remove it from the Delivery Note.',
+          [live.idx]), 'orange');
+        dn_scan_focus_input();
+      }
+    );
+  }
+
+  function dn_scan_post() {
+    if (!dn_scan_state || !dn_scan_state.delivery_note) {
+      frappe.msgprint({
+        title: __('Validation Error'),
+        message: __('Pick a Delivery Note first.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
+    const scannable = (dn_scan_state.rows || []).filter((r) => r.scannable);
+    const pending_clears = Object.keys(dn_scan_state.cleared || {})
+      .filter((name) => !dn_scan_state.allocations[name]);
+    // Removing a wrong allocation is work too: without this a storekeeper who
+    // clears the last scanned line can never post the teardown.
+    if (!scannable.some((r) => r.allocated_qty > 0) && !pending_clears.length) {
+      frappe.msgprint({
+        title: __('Nothing Scanned'),
+        message: __('Scan at least one label before posting.'),
+        indicator: 'red',
+      });
+      return;
+    }
+
+    frappe.call({
+      method: `${DN_SCAN_API}.post_delivery_note_scan`,
+      args: {
+        delivery_note: dn_scan_state.delivery_note,
+        allocations: JSON.stringify(dn_scan_state.allocations || {}),
+        cleared_rows: JSON.stringify(pending_clears),
+        state_token: dn_scan_state.token || '',
+      },
+      freeze: true,
+      freeze_message: __('Posting scanned batches...'),
+      callback: (r) => {
+        if (r.exc || !r.message) return;
+        const posted = r.message.posted || {};
+        const dn = dn_scan_state.delivery_note;
+
+        let msg = __('Delivery Note {0} is now {1}.', [
+          `<a href="/app/delivery-note/${encodeURIComponent(dn)}" target="_blank">${frappe.utils.escape_html(dn)}</a>`,
+          `<b>${__(posted.status)}</b>`,
+        ]);
+        msg += '<br>' + __('{0} line(s) fully allocated, {1} still partial.', [
+          posted.linked_rows || 0, posted.partial_rows || 0,
+        ]);
+        msg += '<br>' + __('The Delivery Note has not been submitted.');
+        if ((posted.warnings || []).length) {
+          msg += '<hr>' + posted.warnings.map((w) => frappe.utils.escape_html(w)).join('<br>');
+        }
+
+        frappe.msgprint({
+          title: posted.status === 'Fully Scanned' ? __('Fully Scanned') : __('Partially Scanned'),
+          message: msg,
+          indicator: (posted.warnings || []).length ? 'orange' : 'green',
+        });
+
+        if (posted.status === 'Fully Scanned') {
+          // Fully scanned Delivery Notes cannot be reopened, so there is nothing
+          // left to come back to.
+          dn_scan_dialog.hide();
+          return;
+        }
+        dn_scan_state.cleared = {};
+        dn_scan_apply(r.message);
+        dn_scan_focus_input();
+      },
+    });
+  }
+
+  function show_dn_scan_dialog() {
+    if (dn_scan_dialog) {
+      dn_scan_dialog._suppressing_onchange = true;
+      dn_scan_dialog.set_value('delivery_note', '').then(() => {
+        dn_scan_dialog._suppressing_onchange = false;
+        reset_dn_scan_state();
+        dn_scan_render();
+        dn_scan_set_note('');
+      });
+      dn_scan_dialog.show();
+      return;
+    }
+
+    reset_dn_scan_state();
+
+    dn_scan_dialog = createStorekeeperDialog({
+      title: __('Delivery Note'),
+      size: 'extra-large',
+      static: true,
+      fields: [
+        {
+          fieldname: 'dn_section',
+          fieldtype: 'Section Break',
+          label: __('Delivery Note'),
+        },
+        {
+          fieldname: 'delivery_note',
+          fieldtype: 'Link',
+          label: __('Delivery Note'),
+          options: 'Delivery Note',
+          reqd: 1,
+          description: __('Draft Delivery Notes only. A fully scanned one is closed to further scanning.'),
+          get_query: () => ({ query: `${DN_SCAN_API}.get_scannable_delivery_notes` }),
+          onchange: () => {
+            if (dn_scan_dialog._suppressing_onchange) return;
+            const value = dn_scan_dialog.get_value('delivery_note');
+            if (value === dn_scan_state.delivery_note) return;
+            dn_scan_load(value);
+          },
+        },
+        { fieldname: 'dn_col_break', fieldtype: 'Column Break' },
+        { fieldname: 'dn_header', fieldtype: 'HTML' },
+        {
+          fieldname: 'scan_section',
+          fieldtype: 'Section Break',
+          label: __('Scan Labels'),
+        },
+        {
+          fieldname: 'dn_scan_input',
+          fieldtype: 'HTML',
+          options: `
+            <div class="dn-scan-bar">
+              <input type="text" class="form-control dn-scan-input"
+                placeholder="${__('Scan a finished-goods label and press Enter')}" autocomplete="off" />
+              <div class="dn-scan-note dn-scan-note-gray"></div>
+            </div>
+          `,
+        },
+        {
+          fieldname: 'items_section',
+          fieldtype: 'Section Break',
+          label: __('Items'),
+        },
+        { fieldname: 'dn_items', fieldtype: 'HTML' },
+      ],
+      primary_action_label: __('Post'),
+      primary_action: () => dn_scan_post(),
+      secondary_action_label: __('Close'),
+      secondary_action: () => dn_scan_dialog.hide(),
+    }, 'dn-scan-dialog');
+
+    // The scan input is raw markup rather than a Data field so a fast scanner's
+    // Enter is handled on keydown, before any control-level change event.
+    dn_scan_dialog.$wrapper.on('keydown', '.dn-scan-input', (ev) => {
+      if (ev.key !== 'Enter' && ev.keyCode !== 13) return;
+      ev.preventDefault();
+      const $input = $(ev.currentTarget);
+      const code = $input.val();
+      $input.val('');
+      dn_scan_handle_code(code);
+    });
+
+    dn_scan_dialog.$wrapper.on('click', '.dn-scan-clear', (ev) => {
+      dn_scan_clear_row($(ev.currentTarget).attr('data-row'));
+    });
+
+    dn_scan_dialog.$wrapper.on('hidden.bs.modal', () => {
+      // Remove any stacked backdrops left behind
+      const $backdrops = $('.modal-backdrop');
+      if ($backdrops.length > 0 && !$('.modal.show').length) {
+        $backdrops.remove();
+        $('body').removeClass('modal-open').css('overflow', '');
+      }
+    });
+
+    dn_scan_render();
+    dn_scan_dialog.show();
+    dn_scan_focus_input();
   }
 
   // ---------- Initial Paint ----------
