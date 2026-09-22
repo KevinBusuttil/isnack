@@ -179,6 +179,43 @@ class TestAttachProductionInputs(unittest.TestCase):
 		self.assertEqual(groups[0]["total_qty"], 193.0)
 		self.assertEqual(groups[1]["count"], 4)
 
+	@patch.object(be, "MAX_EAGER_INPUT_WOS", 1)
+	@patch.object(be, "_work_order_inputs", return_value={"children": ["inputs"], "tags": [], "lineage": {}})
+	@patch.object(be, "_batch_roles")
+	@patch("frappe.has_permission", return_value=True)
+	def test_eager_all_leaves_no_producer_deferred(self, _perm, roles, inputs):
+		roles.return_value = dict.fromkeys(("WO-A", "WO-B", "WO-C", "WO-D"), be.ROLE_PRODUCER)
+		groups = self._groups()
+		be._attach_production_inputs(
+			groups, BATCH, {"SE-M": frappe._dict(work_order="WO-A")}, eager_all=True
+		)
+
+		for node in groups[1]["nodes"]:
+			self.assertEqual(node["children"], ["inputs"])
+			self.assertNotIn("inputs_deferred", node)
+		self.assertEqual(inputs.call_count, 4)
+
+
+class TestGetBatchUsageEagerInputs(unittest.TestCase):
+	"""The PDF export asks for every producing Work Order's inputs up front."""
+
+	@patch.object(be, "_attach_production_inputs")
+	@patch.object(be, "_derived_vouchers", return_value={})
+	@patch.object(be, "_stock_entry_info", return_value={})
+	@patch.object(be, "_direct_vouchers", return_value={})
+	@patch.object(be, "_load_batch", return_value=BATCH)
+	@patch("frappe.has_permission", return_value=True)
+	def test_flag_reaches_the_attach_pass(self, _perm, _batch, _direct, _se, _derived, attach):
+		be.get_batch_usage("AAO-007")
+		self.assertIs(attach.call_args.kwargs["eager_all"], False)
+
+		be.get_batch_usage("AAO-007", eager_inputs=1)
+		self.assertIs(attach.call_args.kwargs["eager_all"], True)
+
+		# a whitelisted call carries its arguments as strings
+		be.get_batch_usage("AAO-007", eager_inputs="1")
+		self.assertIs(attach.call_args.kwargs["eager_all"], True)
+
 
 class TestWorkOrderInputs(unittest.TestCase):
 	"""Synthetic AAO-007: one Work Order, the full MES entry chain, one hidden and

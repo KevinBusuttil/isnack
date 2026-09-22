@@ -46,7 +46,7 @@ End-shift WIP returns reference a line, never a Work Order, and are not shown. M
 
 ## Permissions and load
 
-The nested level appears only for users with read access to Stock Entry. Stock Entries and Batches are filtered with permission-aware list calls before any detail row is read; entries the user may not read are counted in the group hint instead of silently dropped. A batch produced by more than ten Work Orders gets a **Load production inputs** button on the remaining Work Orders instead of loading everything with the page.
+The nested level appears only for users with read access to Stock Entry. Stock Entries and Batches are filtered with permission-aware list calls before any detail row is read; entries the user may not read are counted in the group hint instead of silently dropped. A batch produced by more than ten Work Orders gets a **Load production inputs** button on the remaining Work Orders instead of loading everything with the page. Saving the exploration to PDF loads those too, so nothing goes to paper unexpanded (see `batch-explorer-pdf-export.md`).
 
 ## Code
 

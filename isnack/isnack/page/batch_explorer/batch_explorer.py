@@ -85,8 +85,14 @@ _DOCSTATUS_LABEL = {0: "Draft", 1: "Submitted", 2: "Cancelled"}
 
 
 @frappe.whitelist()
-def get_batch_usage(batch_no: str | None = None):
-	"""Return ``{batch, groups, summary}`` describing where ``batch_no`` was used."""
+def get_batch_usage(batch_no: str | None = None, eager_inputs=0):
+	"""Return ``{batch, groups, summary}`` describing where ``batch_no`` was used.
+
+	``eager_inputs`` loads the production inputs of *every* producing Work Order
+	instead of deferring the ones past ``MAX_EAGER_INPUT_WOS``. The page asks for
+	it when saving the exploration to PDF, where nothing may stay behind a
+	"Load production inputs" button.
+	"""
 	batch_no = (batch_no or "").strip()
 	if not batch_no:
 		frappe.throw(_("Please select a Batch."))
@@ -130,7 +136,7 @@ def get_batch_usage(batch_no: str | None = None):
 	groups.sort(key=lambda g: (DOCTYPE_META.get(g["doctype"], {}).get("order", 99), g["doctype"]))
 
 	# 4) production inputs under the Work Orders (never changes the totals above)
-	_attach_production_inputs(groups, batch, se_info)
+	_attach_production_inputs(groups, batch, se_info, eager_all=bool(cint(eager_inputs)))
 
 	return {
 		"batch": batch,
@@ -374,8 +380,14 @@ def _direction(qty) -> str | None:
 # Step 4 - production inputs under the Work Order nodes
 # ---------------------------------------------------------------------------
 
-def _attach_production_inputs(groups: list[dict], batch, se_info: dict[str, dict]) -> None:
-	"""Attach ``lineage`` / ``tags`` / ``children`` to the Work Order nodes in place."""
+def _attach_production_inputs(
+	groups: list[dict], batch, se_info: dict[str, dict], eager_all: bool = False
+) -> None:
+	"""Attach ``lineage`` / ``tags`` / ``children`` to the Work Order nodes in place.
+
+	``eager_all`` ignores the ``MAX_EAGER_INPUT_WOS`` cap, so no producing Work
+	Order is left deferred.
+	"""
 	wo_group = next((g for g in groups if g["doctype"] == "Work Order"), None)
 	if not wo_group or not wo_group["nodes"]:
 		return
@@ -392,7 +404,7 @@ def _attach_production_inputs(groups: list[dict], batch, se_info: dict[str, dict
 		if role == ROLE_CONSUMER:
 			node.update(_work_order_outputs(node["name"], batch))
 			continue
-		if eager >= MAX_EAGER_INPUT_WOS:
+		if not eager_all and eager >= MAX_EAGER_INPUT_WOS:
 			node["inputs_deferred"] = True
 			continue
 		eager += 1

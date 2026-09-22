@@ -425,3 +425,171 @@
 	color: var(--text-color);
 	text-decoration: none;
 }
+
+/* ============================================================
+   Save as PDF
+   ------------------------------------------------------------
+   The page builds a `.be-print-doc` off-screen (see save_pdf) and prints it
+   through the browser, so the paper keeps this stylesheet and the tree keeps
+   its colours. Everything is already expanded in that copy; the rules below
+   only hide what is meaningless on paper, force the colours through, and stop
+   rows from being cut in half by a page break.
+   ============================================================ */
+/* Off-screen rather than display:none: the copy has to be laid out and painted
+   for the browser to fetch the avatars before it snapshots the page. */
+.be-print-doc {
+	position: fixed;
+	top: 0;
+	left: -99999px;
+	width: 900px;
+	opacity: 0;
+	z-index: -1;
+	pointer-events: none;
+}
+.be-print-head {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 16px;
+	padding-bottom: 10px;
+	margin-bottom: 14px;
+	border-bottom: 2px solid var(--primary, #2e7fff);
+}
+.be-print-title {
+	font-size: var(--text-xl, 1.1rem);
+	font-weight: 700;
+	color: var(--heading-color);
+}
+.be-print-sub {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	margin-top: 2px;
+}
+.be-print-meta {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	text-align: right;
+	line-height: 1.6;
+}
+.be-print-note {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	margin: 2px 0 8px 28px;
+}
+
+@media print {
+	@page {
+		margin: 12mm 10mm;
+	}
+
+	/* only the print document reaches the paper */
+	html.be-printing body > *:not(.be-print-doc) {
+		display: none !important;
+	}
+	html.be-printing,
+	html.be-printing body {
+		height: auto !important;
+		overflow: visible !important;
+		background: #fff !important;
+	}
+	html.be-printing .be-print-doc {
+		position: static !important;
+		left: auto !important;
+		width: auto !important;
+		opacity: 1 !important;
+		z-index: auto !important;
+	}
+
+	/* keep every colour, whatever the browser's "background graphics" setting */
+	.be-print-doc,
+	.be-print-doc * {
+		-webkit-print-color-adjust: exact !important;
+		print-color-adjust: exact !important;
+	}
+
+	/* a light surface palette, so a dark-theme desk still prints on white
+	   paper while the per-doctype accent colours come through untouched */
+	.be-print-doc {
+		--fg-color: #ffffff;
+		--card-bg: #ffffff;
+		--bg-color: #f7f8f9;
+		--subtle-fg: #f4f5f6;
+		--control-bg: #f4f5f6;
+		--border-color: #d8dfe7;
+		--text-color: #1f272e;
+		--heading-color: #16222c;
+		--text-muted: #6b7887;
+		--bg-light-gray: #f0f1f3;
+		--primary: #2e7fff;
+		--blue-500: #2e7fff;
+		--red-500: #e24c4c;
+		--red-600: #c0392b;
+		--green-600: #1f7a3d;
+		--orange-600: #b8620a;
+		--bg-blue: #e7f0ff;
+		--bg-green: #e3f7e9;
+		--bg-red: #fdeaea;
+		--bg-orange: #fff4e5;
+		--bg-gray: #f1f3f5;
+		--text-on-blue: #1f6fd0;
+		--text-on-green: #1f7a3d;
+		--text-on-red: #c0392b;
+		--text-on-orange: #b8620a;
+		--text-on-gray: #4a5560;
+		--shadow-sm: none;
+		color: var(--text-color);
+	}
+	.be-print-doc .be-container {
+		max-width: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	/* affordances that only mean something on screen */
+	.be-print-doc .be-toolbar,
+	.be-print-doc .be-caret,
+	.be-print-doc .be-load-inputs {
+		display: none !important;
+	}
+	.be-print-doc .be-group-head {
+		cursor: default;
+		break-after: avoid;
+		page-break-after: avoid;
+	}
+	.be-print-doc .be-card,
+	.be-print-doc .be-group-head,
+	.be-print-doc .be-leaf,
+	.be-print-doc .be-leaf-lines li {
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	/* nothing is clipped or dropped on paper */
+	.be-print-doc .be-leaf {
+		align-items: flex-start;
+	}
+	.be-print-doc .be-leaf-meta {
+		white-space: normal !important;
+		overflow: visible !important;
+		text-overflow: clip !important;
+	}
+	.be-print-doc .be-group-hint {
+		display: inline !important;
+		white-space: normal !important;
+		overflow: visible !important;
+		text-overflow: clip !important;
+	}
+	.be-print-doc .be-leaf-user {
+		max-width: none;
+	}
+	.be-print-doc .be-leaf-user-name {
+		display: inline !important;
+		max-width: none;
+		white-space: normal !important;
+		overflow: visible !important;
+	}
+	.be-print-doc a {
+		color: inherit;
+		text-decoration: none;
+	}
+}
