@@ -678,12 +678,49 @@ class TestRowBundleSelection(unittest.TestCase):
             self.assertEqual(dnbs._stored_allocations(self.doc), {})
 
 
+class TestRowsAwaitingBundle(unittest.TestCase):
+    """What tells a finished Delivery Note from one that has changed since."""
+
+    def _awaiting(self, rows, items):
+        with patch.object(dnbs, "_item_cache", return_value=items):
+            return [row.name for row in dnbs._rows_awaiting_bundle(_FakeDoc(rows))]
+
+    def test_every_scannable_line_bundled_means_none_awaiting(self):
+        rows = [
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=10,
+                     serial_and_batch_bundle="SABB-1"),
+        ]
+        self.assertEqual(self._awaiting(rows, _fg_items("FG10011")), [])
+
+    def test_a_line_added_after_the_post_is_awaiting(self):
+        rows = [
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=10,
+                     serial_and_batch_bundle="SABB-1"),
+            _FakeRow(name="r2", idx=2, item_code="FG10002", qty=5),
+        ]
+        self.assertEqual(self._awaiting(rows, _fg_items("FG10011", "FG10002")), ["r2"])
+
+    def test_an_untracked_line_is_never_awaiting(self):
+        rows = [
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=10,
+                     serial_and_batch_bundle="SABB-1"),
+            _FakeRow(name="r2", idx=2, item_code="Delivery Charges", qty=1),
+        ]
+        items = _fg_items("FG10011")
+        items["Delivery Charges"] = {"has_batch_no": 0, "has_serial_no": 0,
+                                     "stock_uom": "Unit"}
+        self.assertEqual(self._awaiting(rows, items), [])
+
+
 class TestLoadDeliveryNote(unittest.TestCase):
     """Which Delivery Notes are open for scanning."""
 
     def _load(self, docstatus=0, status=dnbs.STATUS_NOT_SCANNED, exists=True,
-              is_return=0, fields_installed=True):
-        doc = _FakeDoc([_FakeRow(name="r1", idx=1, item_code="FG10011", qty=10)])
+              is_return=0, fields_installed=True, bundle=None):
+        doc = _FakeDoc([
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=10,
+                     serial_and_batch_bundle=bundle)
+        ])
         doc.docstatus = docstatus
         doc.is_return = is_return
 
@@ -695,7 +732,9 @@ class TestLoadDeliveryNote(unittest.TestCase):
             "frappe.db.exists", return_value=exists
         ), patch("frappe.has_permission", return_value=True), patch(
             "frappe.get_doc", return_value=doc
-        ), patch.object(dnbs, "_scan_status", return_value=status):
+        ), patch.object(dnbs, "_scan_status", return_value=status), patch.object(
+            dnbs, "_item_cache", return_value=_fg_items("FG10011")
+        ):
             return dnbs._load_delivery_note("MAT-DN-2026-00011")
 
     def test_draft_not_yet_scanned_loads(self):
@@ -706,7 +745,14 @@ class TestLoadDeliveryNote(unittest.TestCase):
 
     def test_fully_scanned_cannot_be_reopened(self):
         with self.assertRaisesRegex(frappe.ValidationError, "already fully scanned"):
-            self._load(status=dnbs.STATUS_FULL)
+            self._load(status=dnbs.STATUS_FULL, bundle="SABB-r1")
+
+    def test_fully_scanned_reopens_once_a_line_has_no_bundle(self):
+        # The note is still an editable draft: adding a batch-tracked line after the
+        # Post leaves the flag claiming "finished" about a line nobody has scanned.
+        # The flag alone must not lock the note out forever.
+        doc = self._load(status=dnbs.STATUS_FULL, bundle=None)
+        self.assertEqual(doc.name, "MAT-DN-2026-00011")
 
     def test_submitted_delivery_note_is_refused(self):
         with self.assertRaisesRegex(frappe.ValidationError, "not a draft"):
@@ -798,9 +844,13 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
             captured["params"] = params
             return []
 
+        def _match_cond(doctype, as_condition=True):
+            captured["match_doctype"] = doctype
+            return " and (`tabDelivery Note`.owner = 'x')"
+
         with patch("frappe.get_meta", return_value=_Meta()), patch(
-            "frappe.db.sql", side_effect=_sql
-        ):
+            "frappe.desk.reportview.get_match_cond", side_effect=_match_cond
+        ), patch("frappe.db.sql", side_effect=_sql):
             dnbs.get_scannable_delivery_notes(
                 "Delivery Note", txt, "name", 0, 10, filters
             )
@@ -815,6 +865,18 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
     def test_returns_are_excluded(self):
         out = self._query()
         self.assertIn("is_return", out["query"])
+
+    def test_user_permissions_are_applied(self):
+        # Without the match condition the picker leaks the names, customers and
+        # posting dates of Delivery Notes the caller may not see.
+        out = self._query()
+        self.assertEqual(out["match_doctype"], "Delivery Note")
+        self.assertIn("`tabDelivery Note`.owner", out["query"])
+
+    def test_a_fully_scanned_note_returns_once_a_line_lacks_a_bundle(self):
+        out = self._query()
+        self.assertIn("serial_and_batch_bundle", out["query"])
+        self.assertIn("has_batch_no", out["query"])
 
     def test_search_text_matches_name_and_customer(self):
         out = self._query(txt="00011")

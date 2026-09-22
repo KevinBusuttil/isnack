@@ -234,7 +234,11 @@ def _load_delivery_note(delivery_note: str, for_update: bool = False):
             )
         )
 
-    if _scan_status(name) == STATUS_FULL:
+    # A fully scanned Delivery Note is still an editable draft. Adding a line, or
+    # swapping one for a batch-tracked item, leaves the stored status saying
+    # "finished" about a note that now has an unscanned line, so the lock is
+    # enforced against what the note looks like now rather than against the flag.
+    if _scan_status(name) == STATUS_FULL and not _rows_awaiting_bundle(doc):
         frappe.throw(
             _(
                 "Delivery Note {0} is already fully scanned and cannot be reopened for scanning."
@@ -242,6 +246,21 @@ def _load_delivery_note(delivery_note: str, for_update: bool = False):
         )
 
     return doc
+
+
+def _rows_awaiting_bundle(doc) -> list:
+    """Batch-tracked lines that carry no bundle at all.
+
+    After a Post that reached Fully Scanned every scannable line is linked to one,
+    so a line without a bundle means the note has changed since. That is also what
+    brings it back into the picker."""
+    items = _item_cache(doc)
+    return [
+        row
+        for row in doc.get("items") or []
+        if _row_is_scannable(items.get(row.item_code) or {})
+        and not row.get("serial_and_batch_bundle")
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -592,19 +611,40 @@ def _state_payload(doc, allocations: dict, posting: dict) -> dict:
 
 
 @frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
 def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, filters):
     """Link-field query: draft Delivery Notes still open for scanning.
 
     A Delivery Note drops off this list the moment it is fully scanned, which is how
     "revisit until fully scanned" is enforced in the picker; the server refuses a
     fully scanned Delivery Note as well, so the rule holds even if the name is typed
-    by hand.
+    by hand. It comes back if a line is added afterwards, because a fully scanned
+    note carries a bundle on every batch-tracked line and a new line does not.
+
+    The query is permission-aware: ``get_match_cond`` applies the caller's User
+    Permissions, so the picker cannot disclose the names, customers or posting
+    dates of Delivery Notes they are not entitled to see.
     """
+    from frappe.desk.reportview import get_match_cond
+
     conditions = ["dn.docstatus = 0", "ifnull(dn.is_return, 0) = 0"]
     params = {"start": cint(start), "page_len": cint(page_len)}
 
     if frappe.get_meta("Delivery Note").has_field(SCAN_STATUS_FIELD):
-        conditions.append(f"ifnull(dn.`{SCAN_STATUS_FIELD}`, '') != %(full_status)s")
+        conditions.append(
+            f'''(
+                ifnull(dn.`{SCAN_STATUS_FIELD}`, '') != %(full_status)s
+                or exists (
+                    select 1
+                    from `tabDelivery Note Item` dni
+                    inner join `tabItem` it on it.name = dni.item_code
+                    where dni.parent = dn.name
+                        and it.has_batch_no = 1
+                        and ifnull(it.has_serial_no, 0) = 0
+                        and ifnull(dni.serial_and_batch_bundle, '') = ''
+                )
+            )'''
+        )
         params["full_status"] = STATUS_FULL
 
     if txt:
@@ -626,6 +666,7 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
             params["company"] = company
 
     where_clause = " and ".join(conditions)
+    match_cond = get_match_cond("Delivery Note")
 
     return frappe.db.sql(
         f"""
@@ -634,7 +675,7 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
             dn.customer_name,
             dn.posting_date
         from `tabDelivery Note` dn
-        where {where_clause}
+        where {where_clause} {match_cond}
         order by dn.posting_date desc, dn.name desc
         limit %(start)s, %(page_len)s
         """,
@@ -646,6 +687,13 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
 def get_delivery_note_scan_state(delivery_note: str) -> dict:
     """Open a Delivery Note in the dialog: its lines plus whatever was scanned before."""
     doc = _load_delivery_note(delivery_note)
+
+    # Reaching here with the flag still set means the note changed after it was
+    # posted; leave the stored status telling the truth rather than "finished".
+    if _scan_status(doc.name) == STATUS_FULL:
+        _set_scan_status(doc.name, STATUS_PARTIAL)
+        doc.reload()
+
     posting = _posting_context(doc)
     payload = _state_payload(doc, _stored_allocations(doc), posting)
 

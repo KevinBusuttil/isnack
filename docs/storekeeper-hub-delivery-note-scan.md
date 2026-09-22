@@ -81,6 +81,14 @@ A **Fully Scanned** Delivery Note is closed to further scanning: it drops out of
 the dialog's picker and the server refuses it even if the name is typed by hand.
 Anything else can be revisited as often as needed.
 
+The lock is checked against the note, not against the flag. A fully scanned
+Delivery Note is still an editable draft, so a line added afterwards would
+otherwise leave the flag claiming "finished" about something nobody has scanned
+and lock the note out for good. A note that has reached *Fully Scanned* carries a
+bundle on every batch-tracked line, so a line without one means the note has
+changed since: it reappears in the picker, reopens, and its stored status is
+corrected on the way in.
+
 Lines that are not batch-tracked (delivery charges and the like) and serialised
 items are listed but greyed out — they take no part in the allocation and do not
 hold a Delivery Note back from reaching *Fully Scanned*.
@@ -218,6 +226,13 @@ Every endpoint checks `write` permission on the Delivery Note itself
 (`frappe.has_permission("Delivery Note", "write", doc=..., throw=True)`), so the
 dialog grants nothing the user could not already do on the document. The button
 is not role-gated in the toolbar, matching *PO Receipt*.
+
+The picker query is permission-aware in its own right: it carries frappe's
+`get_match_cond("Delivery Note")` and the standard
+`@frappe.validate_and_sanitize_search_inputs` decorator, so it cannot disclose the
+names, customers or posting dates of Delivery Notes outside the caller's User
+Permissions — the write check on open would refuse those notes, but only after the
+metadata had already been listed.
 
 ---
 
