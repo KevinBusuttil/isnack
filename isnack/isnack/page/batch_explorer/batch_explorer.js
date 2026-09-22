@@ -58,11 +58,14 @@ isnack.BatchExplorer = class BatchExplorer {
 
 		this.expand_btn = this.page.add_button(__("Expand all"), () => this.toggle_all(true));
 		this.collapse_btn = this.page.add_button(__("Collapse all"), () => this.toggle_all(false));
+		this.pdf_btn = this.page.add_button(__("Save as PDF"), () => this.save_pdf());
 		this.set_tree_buttons(false);
 	}
 
 	set_tree_buttons(enabled) {
-		[this.expand_btn, this.collapse_btn].forEach((b) => b && b.prop("disabled", !enabled));
+		[this.expand_btn, this.collapse_btn, this.pdf_btn].forEach(
+			(b) => b && b.prop("disabled", !enabled)
+		);
 	}
 
 	layout() {
@@ -126,10 +129,14 @@ isnack.BatchExplorer = class BatchExplorer {
 
 	// ---- summary card -------------------------------------------------
 	render_summary(batch, summary) {
+		this.$summary.html(this.summary_html(batch, summary));
+	}
+
+	summary_html(batch, summary) {
 		const fmt_date = (d) => (d ? frappe.datetime.str_to_user(d) : "—");
 		const expiry_lbl = batch.expired ? __("Expired") : __("Expiry");
 
-		this.$summary.html(`
+		return `
 			<div class="be-card">
 				<div class="be-card-head">
 					<div class="be-card-title">
@@ -171,7 +178,7 @@ isnack.BatchExplorer = class BatchExplorer {
 					<span>${__("Created by")} <b>${frappe.utils.escape_html(batch.owner_name || batch.owner || "")}</b></span>
 				</div>
 			</div>
-		`);
+		`;
 	}
 
 	render_toolbar() {
@@ -196,8 +203,13 @@ isnack.BatchExplorer = class BatchExplorer {
 			this.show_empty(__("This batch has not been used in any transaction yet."));
 			return;
 		}
+		this.build_tree(this.$tree, batch, groups);
+	}
 
-		const $root = $('<div class="be-node be-root"></div>').appendTo(this.$tree);
+	/** Render the whole tree into ``$target``. ``opts.print`` drops the
+	 *  interactive bits and leaves every group open. */
+	build_tree($target, batch, groups, opts = {}) {
+		const $root = $('<div class="be-node be-root"></div>').appendTo($target);
 		$(`
 			<div class="be-root-head">
 				<span class="be-root-dot"></span>
@@ -207,13 +219,14 @@ isnack.BatchExplorer = class BatchExplorer {
 
 		const $children = $('<div class="be-children"></div>').appendTo($root);
 
-		groups.forEach((group) => this.render_group(group, $children));
+		groups.forEach((group) => this.render_group(group, $children, opts));
 	}
 
-	render_group(group, $parent) {
+	render_group(group, $parent, opts = {}) {
 		const $group = $('<div class="be-group"></div>').appendTo($parent);
-		// nested (production input) groups start collapsed
-		if (group.sub) $group.addClass("be-sub-group be-collapsed");
+		// nested (production input) groups start collapsed, except on paper
+		if (group.sub) $group.addClass("be-sub-group");
+		if (group.sub && !opts.print) $group.addClass("be-collapsed");
 
 		const total = group.total_qty != null
 			? `<span class="be-group-qty">${format_number(group.total_qty)}</span>`
@@ -234,12 +247,12 @@ isnack.BatchExplorer = class BatchExplorer {
 		`).appendTo($group);
 
 		const $leaves = $('<div class="be-leaves"></div>').appendTo($group);
-		group.nodes.forEach((node) => this.render_leaf(node, group, $leaves));
+		group.nodes.forEach((node) => this.render_leaf(node, group, $leaves, opts));
 
-		$head.on("click", () => $group.toggleClass("be-collapsed"));
+		if (!opts.print) $head.on("click", () => $group.toggleClass("be-collapsed"));
 	}
 
-	render_leaf(node, group, $parent) {
+	render_leaf(node, group, $parent, opts = {}) {
 		const esc = frappe.utils.escape_html;
 		const status = this.status_indicator(node);
 		const qty = this.qty_chip(node);
@@ -292,23 +305,32 @@ isnack.BatchExplorer = class BatchExplorer {
 		// searchable haystack (includes the nested production inputs)
 		$leaf.attr("data-search", this.haystack(node, group));
 
-		if (has_link) {
+		// on paper the hrefs stay, so the PDF links back into the desk
+		if (has_link && !opts.print) {
 			$leaf.find(".be-leaf-name").on("click", (e) => {
 				e.preventDefault();
 				if (node.route) frappe.set_route(...node.route);
 				else frappe.set_route("Form", node.doctype, node.name);
 			});
 		}
-		$leaf.find(".be-leaf-lines a").on("click", function (e) {
-			e.preventDefault();
-			frappe.set_route("Form", "Stock Entry", $(this).attr("data-name"));
-		});
+		if (!opts.print) {
+			$leaf.find(".be-leaf-lines a").on("click", function (e) {
+				e.preventDefault();
+				frappe.set_route("Form", "Stock Entry", $(this).attr("data-name"));
+			});
+		}
 
 		if (node.children && node.children.length) {
 			const $sub = $('<div class="be-sub"></div>').appendTo($parent);
-			node.children.forEach((child) => this.render_group(child, $sub));
+			node.children.forEach((child) => this.render_group(child, $sub, opts));
 		} else if (node.inputs_deferred) {
-			this.render_deferred(node, $parent);
+			if (opts.print) {
+				$(`<div class="be-print-note">${__("Production inputs could not be loaded.")}</div>`).appendTo(
+					$parent
+				);
+			} else {
+				this.render_deferred(node, $parent);
+			}
 		}
 		return $leaf;
 	}
@@ -452,6 +474,131 @@ isnack.BatchExplorer = class BatchExplorer {
 		const color = map[node.status] || (node.docstatus === 2 ? "red" : node.docstatus === 1 ? "blue" : "gray");
 		if (!node.status) return "";
 		return `<span class="be-status indicator-pill ${color}">${frappe.utils.escape_html(node.status)}</span>`;
+	}
+
+	// ---- save as PDF --------------------------------------------------
+	/** Print the whole exploration of the selected batch, fully expanded.
+	 *
+	 *  The document is built off-screen from the data rather than from the tree
+	 *  on screen, so the filter and whatever the user has collapsed never reach
+	 *  the paper, and the page itself is left exactly as it was. Printing it
+	 *  keeps the page's own stylesheet, so the colours survive; the browser's
+	 *  "Save as PDF" destination writes the file.
+	 */
+	save_pdf() {
+		if (!this.data || !(this.data.groups || []).length) {
+			frappe.show_alert({ message: __("Explore a batch first"), indicator: "orange" });
+			return;
+		}
+		if (this.preparing_pdf) return;
+		this.preparing_pdf = true;
+
+		const batch = this.current_batch;
+		const label = __("Save as PDF");
+		if (this.pdf_btn) this.pdf_btn.prop("disabled", true).text(__("Preparing…"));
+
+		const done = () => {
+			this.preparing_pdf = false;
+			if (!this.pdf_btn) return;
+			this.pdf_btn.text(label);
+			this.pdf_btn.prop("disabled", this.loading || !(this.data && (this.data.groups || []).length));
+		};
+
+		this.full_data()
+			.then((data) => {
+				// the user moved on to another batch while we were loading
+				if (batch === this.current_batch) this.print_document(data);
+			})
+			.catch(() => frappe.show_alert({ message: __("Could not prepare the PDF."), indicator: "red" }))
+			.then(done, done);
+	}
+
+	/** The exploration with every producing Work Order's inputs loaded, so that
+	 *  nothing is left behind a "Load production inputs" button on paper. */
+	full_data() {
+		const deferred = (this.data.groups || []).some((g) =>
+			(g.nodes || []).some((n) => n.inputs_deferred)
+		);
+		if (!deferred) return Promise.resolve(this.data);
+
+		const fallback = this.data;
+		return frappe
+			.call({
+				method: BE_METHOD + ".get_batch_usage",
+				args: { batch_no: this.current_batch, eager_inputs: 1 },
+			})
+			.then((r) => (r && r.message) || fallback)
+			.catch(() => {
+				// still worth a PDF: the Work Orders that stay deferred say so on paper
+				frappe.show_alert({
+					message: __("Some production inputs could not be loaded."),
+					indicator: "orange",
+				});
+				return fallback;
+			});
+	}
+
+	print_document(data) {
+		const { batch, groups, summary } = data;
+		$(".be-print-doc").remove();
+
+		const $doc = $('<div class="be-print-doc" aria-hidden="true"></div>').appendTo(document.body);
+		$doc.append(this.print_header_html(batch));
+		const $body = $('<div class="be-container"></div>').appendTo($doc);
+		$('<div class="be-summary"></div>').appendTo($body).html(this.summary_html(batch, summary));
+		this.build_tree($('<div class="be-tree"></div>').appendTo($body), batch, groups, { print: true });
+
+		// the title is the name the browser offers for the saved file
+		const title = document.title;
+		const print_title = `${__("Batch Explorer")} - ${batch.name}`;
+		document.title = print_title;
+		document.documentElement.classList.add("be-printing");
+
+		const mql = window.matchMedia ? window.matchMedia("print") : null;
+		let cleaned = false;
+		const cleanup = () => {
+			if (cleaned) return;
+			cleaned = true;
+			window.removeEventListener("afterprint", cleanup);
+			if (mql && mql.removeEventListener) mql.removeEventListener("change", on_print_media);
+			document.documentElement.classList.remove("be-printing");
+			// the router may have retitled the page while the dialog was open
+			if (document.title === print_title) document.title = title;
+			$doc.remove();
+		};
+		const on_print_media = (e) => {
+			if (!e.matches) cleanup();
+		};
+
+		window.addEventListener("afterprint", cleanup);
+		if (mql && mql.addEventListener) mql.addEventListener("change", on_print_media);
+		// last resort, for a browser that fires neither
+		setTimeout(cleanup, 60000);
+
+		// two frames, so the off-screen copy is laid out and painted — and its
+		// avatars fetched — before the browser snapshots the page
+		requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+	}
+
+	print_header_html(batch) {
+		const esc = frappe.utils.escape_html;
+		const company = (frappe.defaults && frappe.defaults.get_default("company")) || "";
+		const who = frappe.session.user_fullname || frappe.session.user || "";
+		const when = frappe.datetime.str_to_user(frappe.datetime.now_datetime());
+		const item = [batch.item, batch.item_name].filter(Boolean).map(esc).join(" · ");
+
+		return `
+			<div class="be-print-head">
+				<div>
+					<div class="be-print-title">${__("Batch Explorer")} · ${esc(batch.name)}</div>
+					<div class="be-print-sub">${item}</div>
+				</div>
+				<div class="be-print-meta">
+					${company ? esc(company) + "<br>" : ""}
+					${__("Generated {0} by {1}", [esc(when), esc(who)])}
+				</div>
+			</div>
+		`;
 	}
 
 	// ---- interactions -------------------------------------------------
