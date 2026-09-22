@@ -38,6 +38,7 @@
 ✅ **Material Staging & FIFO Allocation** - Intelligent work order preparation and material allocation  
 ✅ **Kiosk-Mode Production Interface** - Touch-friendly operator hub for shop-floor use  
 ✅ **Barcode Scanning Integration** - Real-time material consumption tracking  
+✅ **Delivery Note Batch Scan** - Scan finished-goods labels to allocate batches, multi-batch per line  
 ✅ **Label Printing with QZ Tray** - Silent printing for finished goods and pallets  
 ✅ **Multi-Currency Support** - Enhanced financial handling with currency conversion fixes  
 ✅ **Custom Invoicing** - Service invoice functionality with VAT support  
@@ -703,6 +704,12 @@ Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of 
 - Quick receiving workflow
 - Bypasses standard form for speed
 
+**Delivery Note:**
+- Allocate batches to a draft Delivery Note by scanning finished-goods labels
+- Multi-batch per line via Serial and Batch Bundle
+- Records Partially/Fully Scanned; never submits the Delivery Note
+- See [8. Delivery Note Batch Scan](#8-delivery-note-batch-scan)
+
 **Access Control:** Button visibility controlled by Factory Settings → Stock Entry Button Roles
 
 **Result:** Flexible material handling for non-standard scenarios.
@@ -740,6 +747,57 @@ Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of 
 - Audit material flow
 
 **Result:** Complete visibility into all material movements and staging activities.
+
+---
+
+#### 8. Delivery Note Batch Scan
+
+**Purpose:** Record exactly which batches leave the factory on a delivery, by
+scanning the pallets as they are loaded.
+
+**Steps:**
+- Click **Delivery Note** in the toolbar (right of PO Receipt)
+- Pick a draft Delivery Note — the picker lists only those not yet fully scanned
+- Scan the finished-goods QR labels printed from **Operator Hub → Print Label**
+  (payload `ITEM_CODE|BATCH_NO|QTY`, quantity in cartons)
+- Each label's batch is allocated to the matching line; a line takes as many
+  batches as it needs
+- Click **Post**
+
+**Multiple Batches Per Line:**
+A line usually needs more than one batch, because a single batch rarely holds
+enough stock to cover it. The allocation is written as an outward **Serial and
+Batch Bundle** — one entry per batch — rather than the single-valued
+`batch_no` field.
+
+A bundle is only linked onto `Delivery Note Item.serial_and_batch_bundle` once
+the line is **fully** allocated: ERPNext's `validate_quantity` rejects a bundle
+that does not total the row's stock quantity, so a half-scanned line would
+otherwise block every save of the draft. Partially scanned lines keep their
+bundle unlinked until the scan is finished.
+
+**Scan Status** (`Delivery Note → Scan Status`, read-only):
+
+| Value | Meaning |
+|---|---|
+| *(blank)* / Not Scanned | Never posted from this dialog |
+| Partially Scanned | At least one batch-tracked line is short — revisit any time |
+| Fully Scanned | Every batch-tracked line allocated — closed to further scanning |
+
+**Validated at scan time:** item is on the Delivery Note, batch belongs to the
+item, batch not expired, batch has stock in the line's warehouse as of the
+posting date, and enough left after everything this Delivery Note already
+claims of it. Over-scans and repeated labels ask for confirmation rather than
+being refused.
+
+**Not affected:** the Delivery Note is never submitted, its lines are never
+added to or re-quantified, and nothing about the rest of the Storekeeper Hub
+changes.
+
+**Result:** A draft Delivery Note carrying an exact, batch-level record of what
+was physically loaded — ready for someone to submit.
+
+Full documentation: [docs/storekeeper-hub-delivery-note-scan.md](docs/storekeeper-hub-delivery-note-scan.md)
 
 ---
 
