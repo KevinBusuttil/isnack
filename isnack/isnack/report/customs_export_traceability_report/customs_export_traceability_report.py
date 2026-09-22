@@ -5,12 +5,13 @@ import base64
 import json
 import os
 import re
+from collections import OrderedDict
 from html import unescape
 from io import BytesIO
 
 import frappe
 from frappe import _
-from frappe.utils import getdate, nowdate, now_datetime
+from frappe.utils import cint, flt, getdate, nowdate, now_datetime
 
 
 def execute(filters=None):
@@ -61,6 +62,8 @@ def get_columns():
 		{"label": _("Item Group"), "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 120},
 		# B. Finished good traceability
 		{"label": _("FG Batch No"), "fieldname": "fg_batch_no", "fieldtype": "Link", "options": "Batch", "width": 130},
+		{"label": _("Batch Sold Qty"), "fieldname": "batch_sold_qty", "fieldtype": "Float", "width": 100},
+		{"label": _("Batch Produced Qty"), "fieldname": "batch_produced_qty", "fieldtype": "Float", "width": 110},
 		{"label": _("Work Order"), "fieldname": "work_order", "fieldtype": "Link", "options": "Work Order", "width": 150},
 		{"label": _("WO Item"), "fieldname": "wo_item", "fieldtype": "Link", "options": "Item", "width": 130},
 		{"label": _("WO Qty"), "fieldname": "wo_qty", "fieldtype": "Float", "width": 80},
@@ -73,6 +76,8 @@ def get_columns():
 		{"label": _("RM UOM"), "fieldname": "rm_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Consumed Qty"), "fieldname": "consumed_qty", "fieldtype": "Float", "width": 100},
 		{"label": _("Consumed Cost"), "fieldname": "consumed_cost", "fieldtype": "Currency", "options": "Company:company:default_currency", "width": 110},
+		{"label": _("Apportioned Qty"), "fieldname": "apportioned_qty", "fieldtype": "Float", "width": 110},
+		{"label": _("Apportioned Cost"), "fieldname": "apportioned_cost", "fieldtype": "Currency", "options": "Company:company:default_currency", "width": 120},
 		{"label": _("RM Batch No"), "fieldname": "rm_batch_no", "fieldtype": "Link", "options": "Batch", "width": 130},
 		# D. Purchase / customs traceability
 		{"label": _("Purchase Receipt"), "fieldname": "purchase_receipt", "fieldtype": "Link", "options": "Purchase Receipt", "width": 150},
@@ -111,6 +116,11 @@ def get_data(filters):
 	# Step 4: Resolve Work Orders for FG batches
 	wo_map = _fetch_manufacture_entries(fg_batch_pairs)  # {(item_code, batch_no): [{work_order, ...}]}
 
+	# Step 4b: Finished-goods qty booked into each FG batch by every submitted
+	# Manufacture entry, with or without a Work Order. This is the denominator
+	# of the apportioning: what share of the batch this invoice line took.
+	batch_produced_map = _fetch_batch_produced_qty(fg_batch_pairs)  # {(item_code, batch_no): qty}
+
 	# Step 5: Collect all work orders → resolve consumed raw materials
 	all_work_orders = set()
 	for entries in wo_map.values():
@@ -147,14 +157,30 @@ def get_data(filters):
 	# Step 7: Assemble output rows
 	rows = []
 	for si_row in si_items:
-		# Build list of (fg_batch_no, batch_qty_fraction) for this SI item
+		# Build list of (fg_batch_no, batch_sold_qty) for this SI item
 		fg_batches = _resolve_fg_batches(si_row, bundle_entries)
 
-		for fg_batch_no in fg_batches:
+		for fg_batch_no, batch_sold_qty in fg_batches:
+			batch_produced_qty = (
+				batch_produced_map.get((si_row.fg_item_code, fg_batch_no)) if fg_batch_no else None
+			)
 			wo_entries = wo_map.get((si_row.fg_item_code, fg_batch_no)) or [{}]
 			for wo_entry in wo_entries:
 				work_order = wo_entry.get("work_order")
 				rm_list = rm_map.get(work_order) or [{}] if work_order else [{}]
+				# Share of this Work Order's consumption that belongs to the
+				# cartons of this batch sold on this invoice line (None when
+				# it cannot be established).
+				factor = (
+					_apportionment_factor(
+						batch_sold_qty,
+						batch_produced_qty,
+						wo_entry.get("fg_qty"),
+						wo_entry.get("wo_fg_qty"),
+					)
+					if work_order
+					else None
+				)
 				for rm in rm_list:
 					pr_name = rm.get("purchase_receipt")
 					pr = pr_details.get(pr_name) or {} if pr_name else {}
@@ -193,6 +219,8 @@ def get_data(filters):
 						item_group=si_row.item_group,
 						# B
 						fg_batch_no=fg_batch_no or None,
+						batch_sold_qty=batch_sold_qty,
+						batch_produced_qty=batch_produced_qty,
 						work_order=work_order,
 						wo_item=wo_entry.get("wo_item"),
 						wo_qty=wo_entry.get("wo_qty"),
@@ -205,6 +233,8 @@ def get_data(filters):
 						rm_uom=rm.get("stock_uom"),
 						consumed_qty=rm.get("qty"),
 						consumed_cost=rm.get("consumed_cost"),
+						apportioned_qty=_apportion(rm.get("qty"), factor),
+						apportioned_cost=_apportion(rm.get("consumed_cost"), factor),
 						rm_batch_no=rm.get("batch_no"),
 						# D
 						purchase_receipt=pr_name,
@@ -243,15 +273,57 @@ def passes_post_filters(row, filters):
 # ---------------------------------------------------------------------------
 
 def _resolve_fg_batches(si_row, bundle_entries):
-	"""Return list of fg_batch_no strings (may be empty string / None if unknown)."""
+	"""Return a list of ``(fg_batch_no, batch_sold_qty)`` for one SI item row.
+
+	``batch_sold_qty`` is the stock qty of that batch billed on the line: the
+	line's stock qty for a direct batch, else each batch's qty in the Serial and
+	Batch Bundle. An invoice billed from a Delivery Note resolves through the
+	DN's bundle, which carries the delivered qty; that is scaled to the invoiced
+	stock qty so a partially invoiced delivery apportions only what this line
+	bills. ``[(None, None)]`` when no batch can be established.
+	"""
+	stock_qty = flt(si_row.stock_qty)
 	if si_row.batch_no:
-		return [si_row.batch_no]
+		return [(si_row.batch_no, stock_qty)]
 	if si_row.serial_and_batch_bundle:
-		entries = bundle_entries.get(si_row.serial_and_batch_bundle) or []
-		batches = [e["batch_no"] for e in entries if e.get("batch_no")]
-		if batches:
-			return batches
-	return [None]
+		per_batch = OrderedDict()
+		for e in bundle_entries.get(si_row.serial_and_batch_bundle) or []:
+			if e.get("batch_no"):
+				per_batch[e["batch_no"]] = flt(per_batch.get(e["batch_no"])) + abs(flt(e.get("qty")))
+		if per_batch:
+			bundle_qty = sum(per_batch.values())
+			scale = stock_qty / bundle_qty if (bundle_qty > 0 and stock_qty > 0) else 1.0
+			return [(batch_no, qty * scale) for batch_no, qty in per_batch.items()]
+	return [(None, None)]
+
+
+def _apportionment_factor(batch_sold_qty, batch_produced_qty, entry_fg_qty, wo_fg_qty):
+	"""Fraction of a Work Order's consumption embodied in the cartons of one FG
+	batch sold on one invoice line.
+
+	``batch_sold_qty / batch_produced_qty`` is the share of the batch this line
+	took; every Work Order that fed the batch is scaled by it, which mirrors the
+	batch-wise moving average ERPNext values the delivery at. When the Work
+	Order's Manufacture entry booked only part of the order's output into this
+	batch (``entry_fg_qty`` of ``wo_fg_qty``), that part is scaled as well.
+	Returns ``None`` when the sold or produced qty is unknown.
+	"""
+	if batch_sold_qty is None or batch_produced_qty is None:
+		return None
+	produced = flt(batch_produced_qty)
+	if produced <= 0:
+		return None
+	wo_share = 1.0
+	if entry_fg_qty is not None and flt(wo_fg_qty) > 0:
+		wo_share = flt(entry_fg_qty) / flt(wo_fg_qty)
+	return wo_share * flt(batch_sold_qty) / produced
+
+
+def _apportion(value, factor):
+	"""``value * factor``; ``None`` when either side is unknown."""
+	if value is None or factor is None:
+		return None
+	return flt(value) * factor
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +485,11 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 			se.name          AS stock_entry,
 			se.work_order,
 			se.posting_date  AS manufacturing_date,
+			sed.name         AS sed_name,
 			sed.item_code,
-			sed.batch_no
+			sed.batch_no,
+			sed.is_scrap_item,
+			CASE WHEN IFNULL(sed.transfer_qty, 0) > 0 THEN sed.transfer_qty ELSE sed.qty END AS fg_qty
 		FROM `tabStock Entry Detail` sed
 		JOIN `tabStock Entry` se ON se.name = sed.parent
 		WHERE se.purpose = 'Manufacture'
@@ -434,8 +509,11 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 			se.name          AS stock_entry,
 			se.work_order,
 			se.posting_date  AS manufacturing_date,
+			sed.name         AS sed_name,
 			sed.item_code,
-			sbe.batch_no
+			sbe.batch_no,
+			sed.is_scrap_item,
+			ABS(sbe.qty)     AS fg_qty
 		FROM `tabStock Entry Detail` sed
 		JOIN `tabStock Entry` se ON se.name = sed.parent
 		JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = sed.serial_and_batch_bundle
@@ -451,11 +529,14 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 	)
 
 	all_se_rows = direct_rows + bundle_rows
+	wanted = set(fg_batch_pairs)
 
-	# Bulk fetch Work Order details
+	# Bulk fetch Work Order details and each order's total finished output
 	wo_names = list({r.work_order for r in all_se_rows if r.work_order})
 	wo_details = {}
+	wo_fg_totals = {}
 	if wo_names:
+		wo_fg_totals = _fetch_wo_finished_qty(wo_names)
 		wo_placeholders = ", ".join(["%s"] * len(wo_names))
 		for wo in frappe.db.sql(
 			f"""
@@ -468,11 +549,28 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 		):
 			wo_details[wo.name] = wo
 
+	# Finished qty each Manufacture entry booked into the batch. A finished row
+	# that carries both a batch_no and a bundle matches both strategies, so rows
+	# are counted once by detail-row name; scrap rows book nothing.
+	fg_qty_by_entry = {}
+	seen_rows = set()
+	for r in all_se_rows:
+		key = (r.item_code, r.batch_no)
+		if key not in wanted:
+			continue
+		row_key = (key, r.stock_entry, r.sed_name)
+		if row_key in seen_rows:
+			continue
+		seen_rows.add(row_key)
+		if not cint(r.is_scrap_item):
+			entry_key = (key, r.stock_entry)
+			fg_qty_by_entry[entry_key] = flt(fg_qty_by_entry.get(entry_key)) + flt(r.fg_qty)
+
 	result = {}
 	seen = set()
 	for r in all_se_rows:
 		key = (r.item_code, r.batch_no)
-		if key not in {(ic, b) for ic, b in fg_batch_pairs}:
+		if key not in wanted:
 			continue
 		wo = wo_details.get(r.work_order) or {}
 		entry = {
@@ -481,11 +579,118 @@ def _fetch_manufacture_entries(fg_batch_pairs):
 			"manufacturing_date": r.manufacturing_date,
 			"wo_item": wo.get("production_item"),
 			"wo_qty": wo.get("qty"),
+			# finished qty this entry booked into the batch / the order's total
+			"fg_qty": fg_qty_by_entry.get((key, r.stock_entry)),
+			"wo_fg_qty": wo_fg_totals.get(r.work_order),
 		}
 		dedup_key = (key, r.stock_entry)
 		if dedup_key not in seen:
 			seen.add(dedup_key)
 			result.setdefault(key, []).append(entry)
+
+	return result
+
+
+def _fetch_wo_finished_qty(wo_names):
+	"""Return {work_order: finished stock qty} over every submitted Manufacture
+	entry of the Work Order, all batches together, scrap rows excluded."""
+	if not wo_names:
+		return {}
+	placeholders = ", ".join(["%s"] * len(wo_names))
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			se.work_order,
+			SUM(CASE WHEN IFNULL(sed.transfer_qty, 0) > 0 THEN sed.transfer_qty ELSE sed.qty END) AS fg_qty
+		FROM `tabStock Entry Detail` sed
+		JOIN `tabStock Entry` se ON se.name = sed.parent
+		WHERE se.purpose = 'Manufacture'
+		  AND se.docstatus = 1
+		  AND se.work_order IN ({placeholders})
+		  AND sed.is_finished_item = 1
+		  AND IFNULL(sed.is_scrap_item, 0) = 0
+		GROUP BY se.work_order
+		""",
+		tuple(wo_names),
+		as_dict=True,
+	)
+	return {r.work_order: flt(r.fg_qty) for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Step 4b: Finished qty produced into each FG batch (apportioning denominator)
+# ---------------------------------------------------------------------------
+
+def _fetch_batch_produced_qty(fg_batch_pairs):
+	"""Return {(item_code, batch_no): finished stock qty} booked into each FG
+	batch by every submitted Manufacture entry, with or without a Work Order.
+
+	Only manufactured output counts: stock that entered the batch through a
+	return or a reconciliation is not consumption to apportion. Scrap rows are
+	excluded, and a finished row carrying both a batch_no and a bundle is
+	counted once.
+	"""
+	if not fg_batch_pairs:
+		return {}
+
+	batch_nos = list({b for _, b in fg_batch_pairs if b})
+	if not batch_nos:
+		return {}
+
+	placeholders = ", ".join(["%s"] * len(batch_nos))
+
+	direct_rows = frappe.db.sql(
+		f"""
+		SELECT
+			sed.name         AS sed_name,
+			sed.item_code,
+			sed.batch_no,
+			CASE WHEN IFNULL(sed.transfer_qty, 0) > 0 THEN sed.transfer_qty ELSE sed.qty END AS fg_qty
+		FROM `tabStock Entry Detail` sed
+		JOIN `tabStock Entry` se ON se.name = sed.parent
+		WHERE se.purpose = 'Manufacture'
+		  AND se.docstatus = 1
+		  AND sed.is_finished_item = 1
+		  AND IFNULL(sed.is_scrap_item, 0) = 0
+		  AND sed.batch_no IN ({placeholders})
+		""",
+		tuple(batch_nos),
+		as_dict=True,
+	)
+
+	bundle_rows = frappe.db.sql(
+		f"""
+		SELECT
+			sed.name         AS sed_name,
+			sed.item_code,
+			sbe.batch_no,
+			ABS(sbe.qty)     AS fg_qty
+		FROM `tabStock Entry Detail` sed
+		JOIN `tabStock Entry` se ON se.name = sed.parent
+		JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = sed.serial_and_batch_bundle
+		WHERE se.purpose = 'Manufacture'
+		  AND se.docstatus = 1
+		  AND sed.is_finished_item = 1
+		  AND IFNULL(sed.is_scrap_item, 0) = 0
+		  AND sed.serial_and_batch_bundle IS NOT NULL
+		  AND sbe.batch_no IN ({placeholders})
+		""",
+		tuple(batch_nos),
+		as_dict=True,
+	)
+
+	wanted = set(fg_batch_pairs)
+	seen = set()
+	result = {}
+	for r in direct_rows + bundle_rows:
+		key = (r.item_code, r.batch_no)
+		if key not in wanted:
+			continue
+		row_key = (r.sed_name, key)
+		if row_key in seen:
+			continue
+		seen.add(row_key)
+		result[key] = flt(result.get(key)) + flt(r.fg_qty)
 
 	return result
 
@@ -919,6 +1124,8 @@ def get_print_html(filters):
 					"fg_total_volume": _v(row.get("fg_total_volume")),
 					"fg_volume_uom": _v(row.get("fg_volume_uom")),
 					"fg_batch_no": _v(row.get("fg_batch_no")),
+					"batch_sold_qty": _v(row.get("batch_sold_qty")),
+					"batch_produced_qty": _v(row.get("batch_produced_qty")),
 					"work_order": _v(row.get("work_order")),
 					"manufacturing_date": _v(row.get("manufacturing_date")),
 				})
@@ -930,6 +1137,7 @@ def get_print_html(filters):
 				"rm_item_code": _v(row.get("rm_item_code")),
 				"rm_item_name": _v(row.get("rm_item_name")),
 				"consumed_qty": _num2(row.get("consumed_qty")),
+				"apportioned_qty": _num2(row.get("apportioned_qty")),
 				"rm_batch_no": _v(row.get("rm_batch_no")),
 				"purchase_receipt": _v(row.get("purchase_receipt")),
 				"purchase_receipt_date": _v(row.get("purchase_receipt_date")),
@@ -1059,8 +1267,8 @@ def get_export_excel(filters):
 	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 
-	# FG table: 13 cols; RM table: 10 cols → use 13 as total width
-	TOTAL_COLS = 13
+	# FG table: 15 cols; RM table: 11 cols → use 15 as total width
+	TOTAL_COLS = 15
 
 	wb = Workbook()
 	ws = wb.active
@@ -1131,14 +1339,22 @@ def get_export_excel(filters):
 		"Total Volume",
 		"Volume UOM",
 		"FG Batch No",
+		"Batch Sold Qty",
+		"Batch Produced Qty",
 		"Work Order",
 		"Mfg Date",
 	]
 	RM_HEADERS = [
-		"RM Item Code", "RM Item Name", "Consumed Qty", "RM Batch No",
+		"RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", "RM Batch No",
 		"Purchase Receipt", "PR Date", "Supplier Name",
 		"PR Qty", "Balance Stock", "Customs Doc No",
 	]
+	FG_DATE_COL = FG_HEADERS.index("Mfg Date") + 1
+	RM_GROUP_END = RM_HEADERS.index("RM Batch No") + 1
+	RM_DATE_COL = RM_HEADERS.index("PR Date") + 1
+	RM_QTY_COLS = tuple(
+		RM_HEADERS.index(h) + 1 for h in ("Consumed Qty", "Apportioned Qty", "PR Qty", "Balance Stock")
+	)
 
 	for si_name, rows in invoices_grouped.items():
 		first = rows[0]
@@ -1232,6 +1448,18 @@ def get_export_excel(filters):
 			except (TypeError, ValueError):
 				fg_total_volume = str(fg_total_volume) if fg_total_volume is not None else ""
 
+			batch_sold_qty = row.get("batch_sold_qty")
+			try:
+				batch_sold_qty = float(batch_sold_qty) if batch_sold_qty is not None else ""
+			except (TypeError, ValueError):
+				batch_sold_qty = str(batch_sold_qty) if batch_sold_qty is not None else ""
+
+			batch_produced_qty = row.get("batch_produced_qty")
+			try:
+				batch_produced_qty = float(batch_produced_qty) if batch_produced_qty is not None else ""
+			except (TypeError, ValueError):
+				batch_produced_qty = str(batch_produced_qty) if batch_produced_qty is not None else ""
+
 			fg_row = [
 				row.get("si_item_idx") or "",
 				row.get("fg_item_code") or "",
@@ -1244,14 +1472,16 @@ def get_export_excel(filters):
 				fg_total_volume,
 				row.get("fg_volume_uom") or "",
 				row.get("fg_batch_no") or "",
+				batch_sold_qty,
+				batch_produced_qty,
 				row.get("work_order") or "",
 				mfg_date if mfg_date else "",
 			]
 			data_row_idx = ws.max_row + 1
 			ws.append(fg_row + [""] * (TOTAL_COLS - len(fg_row)))
-			# Format date cell (Mfg Date is now column 13)
+			# Format date cell (Mfg Date)
 			if mfg_date:
-				date_cell = ws.cell(row=data_row_idx, column=13)
+				date_cell = ws.cell(row=data_row_idx, column=FG_DATE_COL)
 				date_cell.number_format = "YYYY-MM-DD"
 
 		# — FG totals: net / gross weight and volume (one row per SI line) —
@@ -1282,20 +1512,23 @@ def get_export_excel(filters):
 		# — RM/Purchase/Customs group header row —
 		grp_row_idx = ws.max_row + 1
 		ws.append([""] * TOTAL_COLS)
-		# "Raw Material" spans cols 1-4
+		# "Raw Material" spans the columns up to RM Batch No
 		rm_group_cell = ws.cell(row=grp_row_idx, column=1)
 		rm_group_cell.value = "Raw Material Consumed"
 		rm_group_cell.font = WHITE_BOLD
 		rm_group_cell.fill = FILL_RM_GROUP
 		rm_group_cell.alignment = ALIGN_CENTER
-		ws.merge_cells(start_row=grp_row_idx, start_column=1, end_row=grp_row_idx, end_column=4)
-		# "Purchase / Customs" spans cols 5-10
-		pr_group_cell = ws.cell(row=grp_row_idx, column=5)
+		ws.merge_cells(start_row=grp_row_idx, start_column=1, end_row=grp_row_idx, end_column=RM_GROUP_END)
+		# "Purchase / Customs" spans the remaining RM columns
+		pr_group_cell = ws.cell(row=grp_row_idx, column=RM_GROUP_END + 1)
 		pr_group_cell.value = "Purchase / Customs"
 		pr_group_cell.font = WHITE_BOLD
 		pr_group_cell.fill = FILL_PR_GROUP
 		pr_group_cell.alignment = ALIGN_CENTER
-		ws.merge_cells(start_row=grp_row_idx, start_column=5, end_row=grp_row_idx, end_column=10)
+		ws.merge_cells(
+			start_row=grp_row_idx, start_column=RM_GROUP_END + 1,
+			end_row=grp_row_idx, end_column=len(RM_HEADERS),
+		)
 
 		# — RM column header row —
 		rm_col_row_idx = ws.max_row + 1
@@ -1310,6 +1543,7 @@ def get_export_excel(filters):
 		for row in rows:
 			pr_date = row.get("purchase_receipt_date")
 			consumed_qty = row.get("consumed_qty")
+			apportioned_qty = row.get("apportioned_qty")
 			pr_qty = row.get("pr_qty")
 			balance_stock = row.get("balance_stock")
 
@@ -1317,6 +1551,10 @@ def get_export_excel(filters):
 				consumed_qty = float(consumed_qty) if consumed_qty is not None else ""
 			except (TypeError, ValueError):
 				consumed_qty = str(consumed_qty) if consumed_qty is not None else ""
+			try:
+				apportioned_qty = float(apportioned_qty) if apportioned_qty is not None else ""
+			except (TypeError, ValueError):
+				apportioned_qty = str(apportioned_qty) if apportioned_qty is not None else ""
 			try:
 				pr_qty = float(pr_qty) if pr_qty is not None else ""
 			except (TypeError, ValueError):
@@ -1330,6 +1568,7 @@ def get_export_excel(filters):
 				row.get("rm_item_code") or "",
 				row.get("rm_item_name") or "",
 				consumed_qty,
+				apportioned_qty,
 				row.get("rm_batch_no") or "",
 				row.get("purchase_receipt") or "",
 				pr_date if pr_date else "",
@@ -1340,12 +1579,12 @@ def get_export_excel(filters):
 			]
 			data_row_idx = ws.max_row + 1
 			ws.append(rm_row)
-			# Format date cell (column 6)
+			# Format date cell (PR Date)
 			if pr_date:
-				date_cell = ws.cell(row=data_row_idx, column=6)
+				date_cell = ws.cell(row=data_row_idx, column=RM_DATE_COL)
 				date_cell.number_format = "YYYY-MM-DD"
-			# Show qty columns to 2 decimal places: Consumed Qty (3), PR Qty (8), Balance Stock (9)
-			for qty_col in (3, 8, 9):
+			# Show qty columns to 2 decimal places: Consumed / Apportioned Qty, PR Qty, Balance Stock
+			for qty_col in RM_QTY_COLS:
 				qty_cell = ws.cell(row=data_row_idx, column=qty_col)
 				if isinstance(qty_cell.value, float):
 					qty_cell.number_format = "0.00"
@@ -1363,7 +1602,9 @@ def get_export_excel(filters):
 	_write_merged_row(
 		"Blank fields indicate that traceability could not be established from available ERPNext data. "
 		"Only submitted documents (Sales Invoice, Stock Entry, Purchase Receipt) are included. "
-		"Raw material consumption is based on actual Stock Entry records, not BOM explosion.",
+		"Raw material consumption is based on actual Stock Entry records, not BOM explosion. "
+		"Consumed Qty is the whole Work Order; Apportioned Qty is the part embodied in the cartons of the "
+		"FG batch sold on this invoice (Consumed Qty × Batch Sold Qty ÷ Batch Produced Qty).",
 		font=_normal_font(size=8),
 		align=ALIGN_CENTER,
 	)
@@ -1377,7 +1618,7 @@ def get_export_excel(filters):
 	# ---------------------------------------------------------------------------
 	# Column widths (reasonable fixed widths)
 	# ---------------------------------------------------------------------------
-	col_widths = [6, 20, 30, 10, 10, 14, 14, 12, 14, 12, 22, 25, 15]
+	col_widths = [6, 20, 30, 10, 10, 14, 14, 12, 14, 12, 22, 14, 16, 25, 15]
 	for i, width in enumerate(col_widths, start=1):
 		ws.column_dimensions[get_column_letter(i)].width = width
 
