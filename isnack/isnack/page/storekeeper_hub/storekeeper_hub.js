@@ -3062,8 +3062,14 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     'Partially Scanned': 'orange',
   }[status] || 'gray');
 
+  // Bumped every time the dialog is pointed at a different Delivery Note, so a
+  // reply that was already in flight can be recognised as belonging to the old one.
+  let dn_scan_generation = 0;
+
   function reset_dn_scan_state() {
+    dn_scan_generation += 1;
     dn_scan_state = {
+      generation: dn_scan_generation,
       delivery_note: '',
       header: null,
       rows: [],
@@ -3085,7 +3091,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
   function dn_scan_focus_input() {
     if (!dn_scan_dialog) return;
     const $input = dn_scan_dialog.$wrapper.find('.dn-scan-input');
-    if ($input.length) setTimeout(() => $input.trigger('focus').select(), 0);
+    if (!$input.length) return;
+    setTimeout(() => $input.trigger('focus').select(), 0);
+    // A frappe msgprint or confirm takes focus ~300ms later, when Bootstrap's fade
+    // completes, and gives nothing back on dismiss — so the scanner would stop
+    // working until someone clicked the box. Claim it again once it has closed.
+    $(document).one('hidden.bs.modal', '.modal', () => {
+      if (!dn_scan_dialog || !dn_scan_dialog.$wrapper.is(':visible')) return;
+      setTimeout(() => dn_scan_dialog.$wrapper.find('.dn-scan-input').trigger('focus').select(), 0);
+    });
   }
 
   function dn_scan_set_note(message, indicator = 'gray') {
@@ -3241,10 +3255,15 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       // drop back to an empty dialog rather than showing a stale Delivery Note.
       reset_dn_scan_state();
       dn_scan_render();
+      dn_scan_focus_input();
     }
   }
 
-  function dn_scan_apply(payload) {
+  function dn_scan_apply(payload, generation) {
+    // The picker stays clickable while a scan is out, so a slow reply can land
+    // after the storekeeper has moved to another Delivery Note. Applying it would
+    // point the dialog — and every later scan and the Post — at the wrong note.
+    if (generation !== undefined && generation !== dn_scan_state.generation) return;
     dn_scan_state.header = payload;
     dn_scan_state.delivery_note = payload.delivery_note;
     dn_scan_state.rows = payload.rows || [];
@@ -3287,8 +3306,19 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
     // A fast scanner can fire the next Enter while this one is still out — including
     // while a confirmation is on screen, so the guard is taken before the first one.
-    if (dn_scan_state.busy) return;
+    // Frappe's global Enter handler (ui/keyboard.js) answers an open frappe.confirm
+    // with its primary button, so a gun triggered over a question both answers it and
+    // loses its own payload. Say so rather than dropping a pallet silently.
+    if (dn_scan_state.busy) {
+      dn_scan_set_note(__('Busy — that label was not read. Scan it again.'), 'orange');
+      frappe.show_alert({
+        message: __('That label was not read. Scan it again.'),
+        indicator: 'orange',
+      });
+      return;
+    }
     dn_scan_state.busy = true;
+    const generation = dn_scan_state.generation;
 
     try {
       const times_seen = dn_scan_state.seen[code] || 0;
@@ -3322,8 +3352,9 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         if (!message || message.over_scan) return;
       }
 
+      if (generation !== dn_scan_state.generation) return;
       dn_scan_state.seen[code] = times_seen + 1;
-      dn_scan_apply(message);
+      dn_scan_apply(message, generation);
 
       const scan = message.scan || {};
       // Plain text: the note is rendered with .text(), and escaped once on the way
@@ -3353,17 +3384,23 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     frappe.confirm(
       __('Clear every scan allocated to row {0} ({1})?', [row.idx, esc(row.item_code)]),
       () => {
+        // A scan reply may have landed while the question was on screen, replacing
+        // every row object; mutating the captured one would leave the table showing
+        // an allocation that has already been dropped from the map.
+        const live = (dn_scan_state.rows || []).find((r) => r.name === row_name);
+        if (!live || !dn_scan_state.header) return;
         delete dn_scan_state.allocations[row_name];
         dn_scan_state.cleared[row_name] = 1;
         // Re-derive the table locally; the server re-checks the map on the next
         // scan and at Post, so no round trip is needed to drop an allocation.
-        row.batches = [];
-        row.allocated_qty = 0;
-        row.remaining_qty = row.required_qty;
-        row.fully_allocated = 0;
+        live.batches = [];
+        live.allocated_qty = 0;
+        live.remaining_qty = live.required_qty;
+        live.fully_allocated = 0;
         dn_scan_state.header.pending_status = dn_scan_pending_status();
         dn_scan_render();
-        dn_scan_set_note(__('Row {0} cleared.', [row.idx]), 'orange');
+        dn_scan_set_note(__('Row {0} cleared. Post to remove it from the Delivery Note.',
+          [live.idx]), 'orange');
         dn_scan_focus_input();
       }
     );
@@ -3380,7 +3417,11 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     }
 
     const scannable = (dn_scan_state.rows || []).filter((r) => r.scannable);
-    if (!scannable.some((r) => r.allocated_qty > 0)) {
+    const pending_clears = Object.keys(dn_scan_state.cleared || {})
+      .filter((name) => !dn_scan_state.allocations[name]);
+    // Removing a wrong allocation is work too: without this a storekeeper who
+    // clears the last scanned line can never post the teardown.
+    if (!scannable.some((r) => r.allocated_qty > 0) && !pending_clears.length) {
       frappe.msgprint({
         title: __('Nothing Scanned'),
         message: __('Scan at least one label before posting.'),
@@ -3394,9 +3435,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       args: {
         delivery_note: dn_scan_state.delivery_note,
         allocations: JSON.stringify(dn_scan_state.allocations || {}),
-        cleared_rows: JSON.stringify(
-          Object.keys(dn_scan_state.cleared || {}).filter((name) => !dn_scan_state.allocations[name])
-        ),
+        cleared_rows: JSON.stringify(pending_clears),
         state_token: dn_scan_state.token || '',
       },
       freeze: true,

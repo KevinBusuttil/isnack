@@ -712,6 +712,172 @@ class TestRowsAwaitingBundle(unittest.TestCase):
         self.assertEqual(self._awaiting(rows, items), [])
 
 
+class TestRowWrites(unittest.TestCase):
+    """What the dialog writes onto a Delivery Note Item, and how it puts it back.
+
+    These are the writes that touch a document the dialog does not own, so each one
+    has to be reversible and has to leave a line it was never asked about alone.
+    """
+
+    def setUp(self):
+        self.doc = _FakeDoc([])
+        self.row = _FakeRow(name="r1", idx=1, item_code="FG10011", qty=132,
+                            batch_no="B-OLD", use_serial_batch_fields=1)
+        self.written = {}
+
+    def _capture(self):
+        def _set_value(doctype, name, field, value=None, *a, **k):
+            if isinstance(field, dict):
+                self.written.setdefault(name, {}).update(field)
+            else:
+                self.written.setdefault(name, {})[field] = value
+        return patch("frappe.db.set_value", side_effect=_set_value)
+
+    def test_a_single_batch_stays_on_the_row(self):
+        # Blanking it would make the row a catch-all for the Delivery Note form's
+        # own scanner, whose matcher treats an empty batch as "any batch will do".
+        with self._capture():
+            dnbs._link_bundle_to_row(self.row, "SABB-1", {"BBB-113": 132.0})
+        self.assertEqual(self.written["r1"]["batch_no"], "BBB-113")
+        self.assertEqual(self.written["r1"]["serial_and_batch_bundle"], "SABB-1")
+        self.assertEqual(self.written["r1"]["use_serial_batch_fields"], 0)
+        self.assertEqual(self.written["r1"]["has_item_scanned"], 1)
+
+    def test_a_multi_batch_allocation_clears_the_row_batch(self):
+        # ERPNext refuses a row carrying both a bundle and a conflicting batch.
+        with self._capture():
+            dnbs._link_bundle_to_row(self.row, "SABB-1",
+                                     {"BBB-113": 100.0, "BBB-114": 32.0})
+        self.assertEqual(self.written["r1"]["batch_no"], "")
+
+    def test_a_foreign_bundle_is_never_detached(self):
+        # Nulling it would strip a pre-existing allocation off the row and leave it
+        # with neither batch nor bundle, which the pallet validator then rejects.
+        self.row.serial_and_batch_bundle = "ERPNEXT-BUILT"
+        with patch.object(dnbs, "_owned_bundles", return_value={}), self._capture():
+            dnbs._unlink_bundle_from_row(self.doc, self.row)
+        self.assertEqual(self.written, {})
+
+    def test_an_owned_bundle_is_detached_and_the_row_restored(self):
+        self.row.serial_and_batch_bundle = "SABB-1"
+        with patch.object(dnbs, "_owned_bundles", return_value={"r1": ["SABB-1"]}), patch.object(
+            dnbs, "_restore_point", return_value={"batch_no": "B-OLD",
+                                                  "use_serial_batch_fields": 1,
+                                                  "has_item_scanned": 0}
+        ), self._capture():
+            dnbs._unlink_bundle_from_row(self.doc, self.row)
+        self.assertEqual(self.written["r1"]["batch_no"], "B-OLD")
+        self.assertEqual(self.written["r1"]["use_serial_batch_fields"], 1)
+        self.assertIsNone(self.written["r1"]["serial_and_batch_bundle"])
+
+    def test_clearing_puts_the_line_back_the_way_it_arrived(self):
+        # Without this a Clear leaves the line with neither the batch it came with
+        # nor a bundle, which is worse than never having scanned it.
+        self.row.serial_and_batch_bundle = "SABB-1"
+        deleted = []
+        with patch.object(dnbs, "_find_row_bundle", return_value="SABB-1"), patch.object(
+            dnbs, "_restore_point", return_value={"batch_no": "B-OLD",
+                                                  "use_serial_batch_fields": 1,
+                                                  "has_item_scanned": 0}
+        ), patch("frappe.delete_doc", side_effect=lambda dt, n, **k: deleted.append(n)), self._capture():
+            self.assertTrue(dnbs._clear_row_bundle(self.doc, self.row))
+        self.assertEqual(deleted, ["SABB-1"])
+        self.assertEqual(self.written["r1"]["batch_no"], "B-OLD")
+        self.assertEqual(self.written["r1"]["use_serial_batch_fields"], 1)
+
+    def test_a_missing_restore_point_leaves_the_row_untouched(self):
+        self.row.serial_and_batch_bundle = "SABB-1"
+        with patch.object(dnbs, "_find_row_bundle", return_value="SABB-1"), patch.object(
+            dnbs, "_restore_point", return_value={}
+        ), patch("frappe.delete_doc"), self._capture():
+            dnbs._clear_row_bundle(self.doc, self.row)
+        # Only the unlink, no invented values.
+        self.assertEqual(list(self.written["r1"]), ["serial_and_batch_bundle"])
+
+
+class TestSyncBundle(unittest.TestCase):
+    """The bundle write itself: stamped, reversible, and shaped as ERPNext wants."""
+
+    def setUp(self):
+        self.doc = _FakeDoc([])
+        self.row = _FakeRow(name="r1", idx=1, item_code="FG10011", qty=132,
+                            batch_no="B-OLD", use_serial_batch_fields=1)
+
+    def _create(self, batches):
+        captured = {}
+
+        class _Bundle:
+            def __init__(self, payload):
+                captured.update(payload)
+                self.name = "SABB-NEW"
+                self.flags = type("F", (), {})()
+
+            def insert(self):
+                return self
+
+        with patch.object(dnbs, "_find_row_bundle", return_value=None), patch.object(
+            dnbs, "_has_restore_field", return_value=True
+        ), patch("frappe.get_doc", side_effect=_Bundle):
+            name = dnbs._sync_bundle(self.doc, self.row, batches, POSTING)
+        return name, captured
+
+    def test_a_new_bundle_is_stamped_and_carries_a_restore_point(self):
+        name, payload = self._create({"BBB-113": 100.0, "BBB-114": 32.0})
+        self.assertEqual(name, "SABB-NEW")
+        self.assertEqual(payload[dnbs.BUNDLE_OWNER_FIELD], 1)
+        self.assertEqual(
+            frappe.parse_json(payload[dnbs.BUNDLE_RESTORE_FIELD]),
+            {"batch_no": "B-OLD", "use_serial_batch_fields": 1, "has_item_scanned": 0},
+        )
+
+    def test_entries_are_positive_and_carry_the_row_warehouse(self):
+        # ERPNext's set_is_outward flips the sign on save; the warehouse is read off
+        # the entry by its availability validation at submit.
+        _name, payload = self._create({"BBB-113": 100.0, "BBB-114": 32.0})
+        self.assertEqual(
+            payload["entries"],
+            [
+                {"batch_no": "BBB-113", "qty": 100.0, "warehouse": "Finished Goods - ISN"},
+                {"batch_no": "BBB-114", "qty": 32.0, "warehouse": "Finished Goods - ISN"},
+            ],
+        )
+
+    def test_the_voucher_is_the_delivery_note_row(self):
+        _name, payload = self._create({"BBB-113": 132.0})
+        self.assertEqual(payload["voucher_type"], "Delivery Note")
+        self.assertEqual(payload["voucher_no"], self.doc.name)
+        self.assertEqual(payload["voucher_detail_no"], "r1")
+        self.assertEqual(payload["type_of_transaction"], "Outward")
+
+
+class TestRestorePoint(unittest.TestCase):
+    """The snapshot is read defensively: it is stored as text on the bundle."""
+
+    def _read(self, raw, installed=True):
+        with patch.object(dnbs, "_has_restore_field", return_value=installed), patch(
+            "frappe.db.get_value", return_value=raw
+        ):
+            return dnbs._restore_point("SABB-1")
+
+    def test_round_trips_the_fields_it_owns(self):
+        out = self._read('{"batch_no": "B-OLD", "use_serial_batch_fields": 1, '
+                         '"has_item_scanned": 0}')
+        self.assertEqual(out, {"batch_no": "B-OLD", "use_serial_batch_fields": 1,
+                               "has_item_scanned": 0})
+
+    def test_unknown_keys_are_dropped(self):
+        self.assertEqual(self._read('{"qty": 999, "batch_no": "B-OLD"}'),
+                         {"batch_no": "B-OLD"})
+
+    def test_garbage_is_ignored(self):
+        self.assertEqual(self._read("not json"), {})
+        self.assertEqual(self._read("[1, 2]"), {})
+        self.assertEqual(self._read(None), {})
+
+    def test_absent_field_reads_as_no_snapshot(self):
+        self.assertEqual(self._read('{"batch_no": "B-OLD"}', installed=False), {})
+
+
 class TestLoadDeliveryNote(unittest.TestCase):
     """Which Delivery Notes are open for scanning."""
 

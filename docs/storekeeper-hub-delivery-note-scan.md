@@ -60,6 +60,28 @@ storekeeper can see what is already on the line, and the dialog leaves it alone.
 The consequence is deliberate — an allocation that was never scanned is never
 reported as verified, and a scan never destroys one.
 
+Only a stamped bundle is detached from its row, too. A line whose bundle the
+dialog does not own is left linked even when the scan is short — nulling it would
+strip a complete allocation off the row and leave it with neither a batch nor a
+bundle, which the app's own Delivery Note pallet validator then rejects on every
+later save.
+
+### Putting a line back
+
+Linking a bundle overwrites three fields on the Delivery Note Item, so what they
+were is snapshotted onto the stamped bundle first
+(`custom_isnack_dn_scan_restore`) and restored when the scan is cleared:
+
+| Field | While the dialog owns the line | On Clear |
+|---|---|---|
+| `batch_no` | the single allocated batch, or blank when the line is split across several | whatever it was before |
+| `use_serial_batch_fields` | `0`, which is what a bundle-backed row needs | whatever it was before |
+| `has_item_scanned` | `1`, which keeps the Delivery Note form's own scanner from re-quantifying a line this dialog owns | whatever it was before |
+
+Keeping a single batch on the row matters: ERPNext's `BarcodeScanner` matcher
+reads a blank `batch_no` as "any batch will do", so blanking it unconditionally
+would turn a bundle-backed row into a catch-all for the form scanner.
+
 Both custom fields ship in `isnack/fixtures/custom_field.json`. If either is
 missing the dialog refuses to open and says to run `bench migrate`, rather than
 half-working.
@@ -193,7 +215,9 @@ scanning is the act that verifies what is physically on the pallet. Such batches
 are shown in the Batch column as *On file* so the storekeeper can see what their
 scans are about to replace, and the dialog never deletes them on its own.
 
-Each line's **Clear** button drops that line's scans so a mis-scan can be undone.
+Each line's **Clear** button drops that line's scans so a mis-scan can be undone;
+it takes effect on the next Post, which is allowed even when clearing is the only
+thing left to record.
 
 ---
 
@@ -245,7 +269,7 @@ metadata had already been listed.
 | Button | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.html` (`.dn-scan`) |
 | Dialog | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.js` (*Delivery Note Scan Dialog*) |
 | Styling | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.css` (`.dn-scan-dialog`) |
-| Custom fields | `isnack/fixtures/custom_field.json` (`Delivery Note-custom_scan_status`, `Serial and Batch Bundle-custom_isnack_dn_scan`) |
+| Custom fields | `isnack/fixtures/custom_field.json` (`Delivery Note-custom_scan_status`, `Serial and Batch Bundle-custom_isnack_dn_scan`, `Serial and Batch Bundle-custom_isnack_dn_scan_restore`) |
 
 Endpoints, all whitelisted on `isnack.api.delivery_note_batch_scan`:
 

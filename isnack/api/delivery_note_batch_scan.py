@@ -74,6 +74,14 @@ SCAN_STATUS_FIELD = "custom_scan_status"
 #: a foreign bundle would destroy work the storekeeper never scanned.
 BUNDLE_OWNER_FIELD = "custom_isnack_dn_scan"
 
+#: Holds what the Delivery Note Item looked like before this dialog took the line
+#: over, so clearing the scan puts it back instead of leaving the row with no batch
+#: at all. Lives on the bundle because that is what the dialog owns.
+BUNDLE_RESTORE_FIELD = "custom_isnack_dn_scan_restore"
+
+#: Fields of the Delivery Note Item this dialog overwrites, and therefore snapshots.
+ROW_RESTORE_FIELDS = ("batch_no", "use_serial_batch_fields", "has_item_scanned")
+
 #: Quantities are compared at three decimals, matching the hub's fmt_qty/round_qty.
 QTY_PRECISION = 3
 QTY_TOLERANCE = 0.001
@@ -159,6 +167,10 @@ def _has_scan_status_field() -> bool:
 
 def _has_bundle_owner_field() -> bool:
     return bool(frappe.get_meta("Serial and Batch Bundle").has_field(BUNDLE_OWNER_FIELD))
+
+
+def _has_restore_field() -> bool:
+    return bool(frappe.get_meta("Serial and Batch Bundle").has_field(BUNDLE_RESTORE_FIELD))
 
 
 def _require_custom_fields() -> None:
@@ -990,10 +1002,10 @@ def post_delivery_note_scan(
         total = flt(sum(flt(q) for q in batches.values()), QTY_PRECISION)
 
         if required - total <= QTY_TOLERANCE:
-            _link_bundle_to_row(row, bundle_name)
+            _link_bundle_to_row(row, bundle_name, batches)
             linked += 1
         else:
-            _unlink_bundle_from_row(row)
+            _unlink_bundle_from_row(doc, row)
             partial += 1
 
     status = _derive_status(_build_rows(doc, working, posting))
@@ -1120,41 +1132,64 @@ def _sync_bundle(doc, row, batches: dict, posting: dict) -> str:
     }
     payload.update(posting["bundle_fields"])
 
+    # Captured before the line is touched, so a later Clear can undo it exactly.
+    if _has_restore_field():
+        payload[BUNDLE_RESTORE_FIELD] = frappe.as_json(_row_snapshot(row))
+
     bundle = frappe.get_doc(payload)
     bundle.flags.ignore_permissions = True
     bundle.insert()
     return bundle.name
 
 
-def _link_bundle_to_row(row, bundle_name: str) -> None:
+def _link_bundle_to_row(row, bundle_name: str, batches: dict) -> None:
     """Point a fully allocated line at its bundle.
 
-    ``batch_no`` has to go and ``use_serial_batch_fields`` has to be off: ERPNext
-    refuses a row that carries both a bundle and a legacy batch
-    (``validate_serial_nos_and_batches_with_bundle``), which is exactly the
-    multi-batch case this dialog exists for. The batch is blanked to the empty
-    string rather than NULL, matching every bundle-backed row already on site.
+    ``use_serial_batch_fields`` has to be off, and a *multi-batch* allocation has
+    to clear ``batch_no``: ERPNext refuses a row carrying both a bundle and a
+    conflicting legacy batch (``validate_serial_nos_and_batches_with_bundle``).
+    When one batch covers the line it is left on the row instead, which keeps the
+    Delivery Note form's own scanner matching that row by batch rather than
+    treating a blank one as "any batch will do".
+
+    ``has_item_scanned`` is set for the same reason: ERPNext's BarcodeScanner
+    excludes an already-scanned row from its matcher, so a line this dialog owns
+    can no longer be picked up and re-quantified from the Delivery Note form.
     """
+    single_batch = next(iter(batches)) if len(batches) == 1 else ""
     frappe.db.set_value(
         "Delivery Note Item",
         row.name,
         {
             "serial_and_batch_bundle": bundle_name,
             "use_serial_batch_fields": 0,
-            "batch_no": "",
+            # Blanked to the empty string rather than NULL, matching every
+            # bundle-backed row already on site.
+            "batch_no": single_batch,
+            "has_item_scanned": 1,
         },
     )
 
 
-def _unlink_bundle_from_row(row) -> None:
+def _unlink_bundle_from_row(doc, row) -> None:
     """Leave a partly scanned line without a bundle link.
 
     A bundle that does not cover the whole line would fail
     ``SerialandBatchBundle.validate_quantity`` on the next save of the Delivery
     Note, so the work is parked in the unlinked bundle instead.
+
+    Only a bundle this dialog owns is ever detached. Nulling a foreign one would
+    strip a pre-existing allocation off the row and leave it with neither a batch
+    nor a bundle, which the app's own Delivery Note pallet validator then rejects
+    on every later save.
     """
-    if row.get("serial_and_batch_bundle"):
-        frappe.db.set_value("Delivery Note Item", row.name, "serial_and_batch_bundle", None)
+    linked = row.get("serial_and_batch_bundle")
+    if not linked:
+        return
+    if linked not in (_owned_bundles(doc.name, [row.name]).get(row.name) or []):
+        return
+    _restore_row(row, _restore_point(linked))
+    frappe.db.set_value("Delivery Note Item", row.name, "serial_and_batch_bundle", None)
 
 
 def _clear_row_bundle(doc, row) -> bool:
@@ -1167,10 +1202,55 @@ def _clear_row_bundle(doc, row) -> bool:
     bundle_name = _find_row_bundle(doc.name, row.name, row.get("serial_and_batch_bundle"))
     if not bundle_name:
         return False
+    restore = _restore_point(bundle_name)
     if row.get("serial_and_batch_bundle") == bundle_name:
         frappe.db.set_value("Delivery Note Item", row.name, "serial_and_batch_bundle", None)
+    _restore_row(row, restore)
     frappe.delete_doc("Serial and Batch Bundle", bundle_name, ignore_permissions=True)
     return True
+
+
+def _row_snapshot(row) -> dict:
+    """The row fields this dialog is about to overwrite, as they are now.
+
+    ``batch_no`` is kept verbatim because the column is nullable and the site
+    distinguishes NULL from the empty string; the two flags are coerced, since their
+    columns are NOT NULL and restoring a None would fail the write.
+    """
+    return {
+        "batch_no": row.get("batch_no"),
+        "use_serial_batch_fields": cint(row.get("use_serial_batch_fields")),
+        "has_item_scanned": cint(row.get("has_item_scanned")),
+    }
+
+
+def _restore_point(bundle_name: str) -> dict:
+    """What the line looked like before the dialog took it over, if recorded."""
+    if not _has_restore_field():
+        return {}
+    raw = frappe.db.get_value(
+        "Serial and Batch Bundle", bundle_name, BUNDLE_RESTORE_FIELD
+    )
+    if not raw:
+        return {}
+    try:
+        snapshot = frappe.parse_json(raw)
+    except Exception:
+        return {}
+    if not isinstance(snapshot, dict):
+        return {}
+    return {k: v for k, v in snapshot.items() if k in ROW_RESTORE_FIELDS}
+
+
+def _restore_row(row, snapshot: dict) -> None:
+    """Put back the fields the dialog overwrote when it linked the bundle.
+
+    Without this a Clear leaves the line with neither the batch it arrived with
+    nor a bundle, which is worse than never having scanned it.
+    """
+    if not snapshot:
+        return
+    frappe.db.set_value("Delivery Note Item", row.name, snapshot)
 
 
 def _set_scan_status(delivery_note: str, status: str) -> None:
