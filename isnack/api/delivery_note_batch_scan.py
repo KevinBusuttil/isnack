@@ -281,25 +281,22 @@ def _stored_allocations(doc) -> dict:
     if _scan_status(doc.name) not in (STATUS_PARTIAL, STATUS_FULL):
         return {}
 
-    row_names = [row.name for row in doc.get("items") or []]
-    if not row_names:
+    rows = doc.get("items") or []
+    if not rows:
         return {}
 
-    bundles = frappe.get_all(
-        "Serial and Batch Bundle",
-        filters={
-            "voucher_type": "Delivery Note",
-            "voucher_no": doc.name,
-            "voucher_detail_no": ("in", row_names),
-            "docstatus": 0,
-            "is_cancelled": 0,
-        },
-        fields=["name", "voucher_detail_no"],
-    )
-    if not bundles:
+    # Exactly one bundle per line, even where the line carries debris — summing
+    # every bundle found would restore the same quantity twice on a revisit.
+    candidates = _row_bundle_names(doc.name, [row.name for row in rows])
+    by_bundle = {}
+    for row in rows:
+        names = candidates.get(row.name) or []
+        if not names:
+            continue
+        linked = row.get("serial_and_batch_bundle")
+        by_bundle[linked if linked in names else names[0]] = row.name
+    if not by_bundle:
         return {}
-
-    by_bundle = {b.name: b.voucher_detail_no for b in bundles}
     entries = frappe.get_all(
         "Serial and Batch Entry",
         filters={"parent": ("in", list(by_bundle)), "parenttype": "Serial and Batch Bundle"},
@@ -869,23 +866,52 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _find_row_bundle(delivery_note: str, row_name: str):
-    """The draft bundle this dialog owns for a line, linked or not.
+def _row_bundle_names(delivery_note: str, row_names: list) -> dict:
+    """``{row_name: [bundle names, canonical first]}`` for a Delivery Note's lines.
+
+    A line can carry more than one draft bundle: ERPNext's own allocation paths
+    have left orphaned drafts behind, and the uploaded site database has a row with
+    two bundles sharing a ``voucher_detail_no``. Whichever one the row points at is
+    the canonical one; otherwise the oldest wins. Picking deterministically is what
+    keeps a revisit from adding the same quantity twice, once per bundle.
+
+    Nothing is deleted here — debris this dialog did not create is not its to
+    remove — but everything downstream reads the same single bundle per line.
+    """
+    if not row_names:
+        return {}
+
+    rows = frappe.get_all(
+        "Serial and Batch Bundle",
+        filters={
+            "voucher_type": "Delivery Note",
+            "voucher_no": delivery_note,
+            "voucher_detail_no": ("in", row_names),
+            "docstatus": 0,
+            "is_cancelled": 0,
+        },
+        fields=["name", "voucher_detail_no"],
+        order_by="creation asc",
+    )
+
+    out: dict = {}
+    for row in rows:
+        out.setdefault(row.voucher_detail_no, []).append(row.name)
+    return out
+
+
+def _find_row_bundle(delivery_note: str, row_name: str, linked: str | None = None):
+    """The one draft bundle this dialog treats as a line's own, linked or not.
 
     Reused rather than replaced on every Post: re-allocating by creating a second
     bundle is what left the orphaned drafts already visible on site.
     """
-    return frappe.db.get_value(
-        "Serial and Batch Bundle",
-        {
-            "voucher_type": "Delivery Note",
-            "voucher_no": delivery_note,
-            "voucher_detail_no": row_name,
-            "docstatus": 0,
-            "is_cancelled": 0,
-        },
-        "name",
-    )
+    names = _row_bundle_names(delivery_note, [row_name]).get(row_name) or []
+    if not names:
+        return None
+    if linked and linked in names:
+        return linked
+    return names[0]
 
 
 def _sync_bundle(doc, row, batches: dict, posting: dict) -> str:
@@ -901,7 +927,7 @@ def _sync_bundle(doc, row, batches: dict, posting: dict) -> str:
         for batch_no, qty in sorted(batches.items())
     ]
 
-    bundle_name = _find_row_bundle(doc.name, row.name)
+    bundle_name = _find_row_bundle(doc.name, row.name, row.get("serial_and_batch_bundle"))
     if bundle_name:
         bundle = frappe.get_doc("Serial and Batch Bundle", bundle_name)
         bundle.set("entries", [])
@@ -966,7 +992,7 @@ def _unlink_bundle_from_row(row) -> None:
 
 def _clear_row_bundle(doc, row) -> bool:
     """Drop this dialog's bundle for a line that now has nothing scanned."""
-    bundle_name = _find_row_bundle(doc.name, row.name)
+    bundle_name = _find_row_bundle(doc.name, row.name, row.get("serial_and_batch_bundle"))
     if not bundle_name:
         return False
     if row.get("serial_and_batch_bundle") == bundle_name:

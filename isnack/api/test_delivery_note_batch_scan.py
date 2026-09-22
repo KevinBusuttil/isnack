@@ -467,6 +467,83 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         calls["clear"].assert_called_once()
 
 
+class TestRowBundleSelection(unittest.TestCase):
+    """A line can carry more than one draft bundle, so exactly one must be chosen.
+
+    The uploaded site database has a Delivery Note Item with two draft bundles
+    sharing a voucher_detail_no — one of them unreferenced debris from an earlier
+    re-allocation. Reading both back would restore the same quantity twice.
+    """
+
+    def setUp(self):
+        self.rows = [_FakeRow(name="r1", idx=1, item_code="FG10003", qty=132)]
+        self.doc = _FakeDoc(self.rows, name="MAT-DN-2026-00016")
+
+    def _patched(self, bundles, entries):
+        # frappe.get_all returns frappe._dict rows, so the stand-ins must too.
+        def _get_all(doctype, **kwargs):
+            if doctype == "Serial and Batch Bundle":
+                return bundles
+            if doctype == "Serial and Batch Entry":
+                return entries
+            return []
+        return patch("frappe.get_all", side_effect=_get_all)
+
+    def test_canonical_is_the_bundle_the_row_points_at(self):
+        bundles = [
+            frappe._dict(name="OLD-DEBRIS", voucher_detail_no="r1"),
+            frappe._dict(name="LIVE", voucher_detail_no="r1"),
+        ]
+        with self._patched(bundles, []):
+            self.assertEqual(
+                dnbs._find_row_bundle("MAT-DN-2026-00016", "r1", "LIVE"), "LIVE"
+            )
+
+    def test_oldest_wins_when_the_row_points_at_nothing(self):
+        bundles = [
+            frappe._dict(name="OLDEST", voucher_detail_no="r1"),
+            frappe._dict(name="NEWER", voucher_detail_no="r1"),
+        ]
+        with self._patched(bundles, []):
+            self.assertEqual(dnbs._find_row_bundle("MAT-DN-2026-00016", "r1"), "OLDEST")
+
+    def test_no_bundle_returns_none(self):
+        with self._patched([], []):
+            self.assertIsNone(dnbs._find_row_bundle("MAT-DN-2026-00016", "r1"))
+
+    def test_stored_allocations_reads_one_bundle_per_row(self):
+        self.rows[0].serial_and_batch_bundle = "LIVE"
+        bundles = [
+            frappe._dict(name="OLD-DEBRIS", voucher_detail_no="r1"),
+            frappe._dict(name="LIVE", voucher_detail_no="r1"),
+        ]
+        entries = [
+            frappe._dict(parent="LIVE", batch_no="JBJ-777", qty=-123.0),
+            frappe._dict(parent="OLD-DEBRIS", batch_no="JBJ-777", qty=-123.0),
+        ]
+
+        def _get_all(doctype, **kwargs):
+            if doctype == "Serial and Batch Bundle":
+                return bundles
+            # Only the canonical bundle should have been asked about.
+            self.assertEqual(list(kwargs["filters"]["parent"][1]), ["LIVE"])
+            return [e for e in entries if e.parent in kwargs["filters"]["parent"][1]]
+
+        with patch.object(dnbs, "_scan_status", return_value=dnbs.STATUS_PARTIAL), patch(
+            "frappe.get_all", side_effect=_get_all
+        ):
+            out = dnbs._stored_allocations(self.doc)
+        # 123, not 246.
+        self.assertEqual(out, {"r1": {"JBJ-777": 123.0}})
+
+    def test_stored_allocations_ignored_until_the_dialog_has_posted(self):
+        # A Pick List bundle, or one of the legacy drafts on site, is not scanned work.
+        with patch.object(dnbs, "_scan_status", return_value=dnbs.STATUS_NOT_SCANNED), patch(
+            "frappe.get_all", side_effect=AssertionError("must not query bundles")
+        ):
+            self.assertEqual(dnbs._stored_allocations(self.doc), {})
+
+
 class TestLoadDeliveryNote(unittest.TestCase):
     """Which Delivery Notes are open for scanning."""
 
