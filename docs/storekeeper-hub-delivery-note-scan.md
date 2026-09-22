@@ -46,6 +46,26 @@ Note is submitted (`StockLedgerEntry.on_submit` → `SerialBatchBundle.post_proc
 
 ---
 
+## Which bundles the dialog owns
+
+A draft Delivery Note routinely already carries a Serial and Batch Bundle that
+ERPNext or a Pick List built — every draft on the current site does. The dialog
+must never mistake one of those for its own work, so each bundle it creates is
+stamped with a hidden custom field, **Serial and Batch Bundle →
+`custom_isnack_dn_scan`**.
+
+Only stamped bundles are read back, rewritten or deleted. Anything else is
+display-only: its batches appear in the Batch column as *On file* so the
+storekeeper can see what is already on the line, and the dialog leaves it alone.
+The consequence is deliberate — an allocation that was never scanned is never
+reported as verified, and a scan never destroys one.
+
+Both custom fields ship in `isnack/fixtures/custom_field.json`. If either is
+missing the dialog refuses to open and says to run `bench migrate`, rather than
+half-working.
+
+---
+
 ## Scan status
 
 A new read-only custom field, **Delivery Note → Scan Status**
@@ -64,6 +84,15 @@ Anything else can be revisited as often as needed.
 Lines that are not batch-tracked (delivery charges and the like) and serialised
 items are listed but greyed out — they take no part in the allocation and do not
 hold a Delivery Note back from reaching *Fully Scanned*.
+
+Two cases deliberately never reach *Fully Scanned*:
+
+- A **return** Delivery Note (`is_return`) is refused outright. Its lines carry
+  negative quantities, which would read as already covered, and its bundle would
+  need to be inward — a different job than scanning pallets onto a truck.
+- A note whose allocation is **short of stock** is held at *Partially Scanned*
+  even when every line is covered, because *Fully Scanned* is a one-way door and
+  a note that cannot submit must stay re-scannable.
 
 ---
 
@@ -105,9 +134,10 @@ At **scan time**, while the pallet is still in the storekeeper's hands:
 - the item exists and is on this Delivery Note — a label for something else is
   refused rather than adding a line;
 - the batch exists and belongs to that item;
-- the batch has not expired before the Delivery Note's posting date;
-- the batch has stock in the line's warehouse **as of the Delivery Note's posting
-  date and time**, which is what ERPNext validates at submit;
+- the batch has not expired before the note's effective posting date;
+- the batch has stock in the line's warehouse **as of the moment the note will
+  post**, which is what ERPNext validates at submit (see *Warehouse, UOM and
+  posting date* below);
 - the batch still has enough left after everything this Delivery Note already
   claims of it — this is what pushes the storekeeper onto a second batch;
 - the label carries a batch. A mixed pallet prints with an empty batch segment
@@ -127,7 +157,20 @@ not a fact. Allocating more than a line requires is refused. A batch that has
 *lost* stock since it was scanned is only **reported**, not refused: ERPNext lets
 a draft bundle exceed current stock (draft bundles reserve nothing), and refusing
 would strand work already done on the floor. The warning names the line and the
-shortfall, and the Delivery Note will not submit until it is resolved.
+shortfall, the Delivery Note will not submit until it is resolved, and the note
+is held at *Partially Scanned* so it can be re-scanned.
+
+### Two dialogs on one Delivery Note
+
+Every payload carries a **state token** — the Delivery Note's `modified` stamp.
+A Post writes the scan status onto the note, so the token moves; a second dialog
+still holding the old one is told to reload rather than allowed to overwrite. An
+edit to the note's own lines invalidates it for the same reason.
+
+Separately, a line is only emptied when the storekeeper presses **Clear**: the
+Post names the rows to clear explicitly. Absence from the allocation map never
+means "delete", so a dialog left open in another tab cannot wipe work posted in
+the meantime.
 
 ---
 
@@ -154,10 +197,18 @@ Each line's **Clear** button drops that line's scans so a mis-scan can be undone
   measured in stock UOM, so the two agree without conversion. A line whose `uom`
   differs from its `stock_uom` shows both, and the allocation target is the line's
   `stock_qty`.
-- **Availability follows the posting date.** If the Delivery Note is backdated
-  before the batch was produced, the batch reads as unavailable here — which is
-  what would have happened at submit anyway, surfaced early with a message that
-  names the date.
+- **One label, one warehouse.** A Delivery Note can ship one item from two
+  warehouses. A label is applied to the lines whose warehouse actually holds that
+  batch; the others are left for a label from their own stock, rather than
+  vetoing the scan.
+- **Availability follows the moment the note will post**, not the moment stored
+  on the draft. With `Edit Posting Date and Time` off — the ERPNext default —
+  `TransactionBase.validate_posting_time` rewrites the stored posting date and
+  time with `now()` on every save and at submit, so the stored values are only
+  "when the draft was last saved". Judging availability against them would hide
+  every batch produced since, which here is most of them, because the Delivery
+  Note is raised from the Sales Order before the goods are made. The stored
+  moment is honoured only when the user pinned it.
 
 ---
 
@@ -179,7 +230,7 @@ is not role-gated in the toolbar, matching *PO Receipt*.
 | Button | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.html` (`.dn-scan`) |
 | Dialog | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.js` (*Delivery Note Scan Dialog*) |
 | Styling | `isnack/isnack/page/storekeeper_hub/storekeeper_hub.css` (`.dn-scan-dialog`) |
-| Custom field | `isnack/fixtures/custom_field.json` (`Delivery Note-custom_scan_status`) |
+| Custom fields | `isnack/fixtures/custom_field.json` (`Delivery Note-custom_scan_status`, `Serial and Batch Bundle-custom_isnack_dn_scan`) |
 
 Endpoints, all whitelisted on `isnack.api.delivery_note_batch_scan`:
 

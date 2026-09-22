@@ -69,6 +69,11 @@ STATUS_FULL = "Fully Scanned"
 
 SCAN_STATUS_FIELD = "custom_scan_status"
 
+#: Marks the Serial and Batch Bundles this dialog created. Without it there is no
+#: way to tell a scan from an allocation ERPNext or a Pick List built, and adopting
+#: a foreign bundle would destroy work the storekeeper never scanned.
+BUNDLE_OWNER_FIELD = "custom_isnack_dn_scan"
+
 #: Quantities are compared at three decimals, matching the hub's fmt_qty/round_qty.
 QTY_PRECISION = 3
 QTY_TOLERANCE = 0.001
@@ -99,13 +104,23 @@ def _posting_context(doc) -> dict:
     ``bundle_fields`` go onto a Serial and Batch Bundle; ``qty_kwargs`` go to
     ``get_batch_qty``; ``key`` identifies the moment for the availability memo.
 
-    Availability is judged as of the Delivery Note's posting moment rather than
-    "now", because that is what ERPNext validates at submit — a batch produced after
-    the posting datetime is not available to this Delivery Note however much of it is
-    on the floor today.
+    Availability is judged as of the moment the Delivery Note will actually post,
+    because that is what ERPNext validates at submit. On a note with
+    ``set_posting_time`` off — the default — the stored posting date and time are
+    only "when the draft was last saved":
+    ``TransactionBase.validate_posting_time`` overwrites them with ``now()`` on every
+    save and at submit. Judging availability at the stored moment would report every
+    batch produced since that save as absent, which on this site is most of them,
+    because the Delivery Note is raised from the Sales Order before the goods are
+    made. So the stored moment is only honoured when the user pinned it.
     """
-    posting_date = doc.get("posting_date")
-    posting_time = doc.get("posting_time")
+    if cint(doc.get("set_posting_time")):
+        posting_date = doc.get("posting_date")
+        posting_time = doc.get("posting_time")
+    else:
+        now = now_datetime()
+        posting_date = now.strftime("%Y-%m-%d")
+        posting_time = now.strftime("%H:%M:%S.%f")
     combined = _combine_datetime(posting_date, posting_time)
 
     meta = frappe.get_meta("Serial and Batch Bundle")
@@ -138,9 +153,39 @@ def _posting_context(doc) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _has_scan_status_field() -> bool:
+    return bool(frappe.get_meta("Delivery Note").has_field(SCAN_STATUS_FIELD))
+
+
+def _has_bundle_owner_field() -> bool:
+    return bool(frappe.get_meta("Serial and Batch Bundle").has_field(BUNDLE_OWNER_FIELD))
+
+
+def _require_custom_fields() -> None:
+    """Both custom fields must exist before anything is written.
+
+    Without the status field a Post cannot be remembered, and without the owner
+    field the dialog cannot tell its own bundles from ERPNext's — it would adopt and
+    overwrite them. Failing loudly beats half-working: the fields ship in
+    ``isnack/fixtures/custom_field.json`` and arrive with ``bench migrate``.
+    """
+    missing = []
+    if not _has_scan_status_field():
+        missing.append(f"Delivery Note.{SCAN_STATUS_FIELD}")
+    if not _has_bundle_owner_field():
+        missing.append(f"Serial and Batch Bundle.{BUNDLE_OWNER_FIELD}")
+    if missing:
+        frappe.throw(
+            _(
+                "Delivery Note scanning is not installed on this site yet: {0} is "
+                "missing. Run bench migrate to sync the iSnack custom fields."
+            ).format(", ".join(missing))
+        )
+
+
 def _scan_status(delivery_note: str) -> str:
     """The stored scan status, with NULL normalised to "Not Scanned"."""
-    if not frappe.get_meta("Delivery Note").has_field(SCAN_STATUS_FIELD):
+    if not _has_scan_status_field():
         return STATUS_NOT_SCANNED
     return (
         frappe.db.get_value("Delivery Note", delivery_note, SCAN_STATUS_FIELD)
@@ -154,6 +199,8 @@ def _load_delivery_note(delivery_note: str, for_update: bool = False):
     ``for_update`` takes a row lock so two storekeepers posting the same Delivery
     Note at once cannot both allocate the last of a batch.
     """
+    _require_custom_fields()
+
     name = (delivery_note or "").strip()
     if not name:
         frappe.throw(_("Select a Delivery Note first."))
@@ -175,6 +222,16 @@ def _load_delivery_note(delivery_note: str, for_update: bool = False):
             _(
                 "Delivery Note {0} is not a draft, so its batches can no longer be scanned."
             ).format(frappe.bold(name))
+        )
+
+    # A return moves stock inward with negative line quantities. Every line would
+    # read as already covered, and the bundle would need type_of_transaction
+    # "Inward" — a different job than scanning pallets onto a truck.
+    if cint(doc.get("is_return")):
+        frappe.throw(
+            _("Delivery Note {0} is a return, which is not scanned from this dialog.").format(
+                frappe.bold(name)
+            )
         )
 
     if _scan_status(name) == STATUS_FULL:
@@ -273,21 +330,19 @@ def _normalise_allocations(raw, doc) -> dict:
 def _stored_allocations(doc) -> dict:
     """Read back what a previous Post wrote, as ``{row_name: {batch_no: qty}}``.
 
-    Only trusted once the Delivery Note has actually been posted from this dialog.
-    A bundle that ERPNext built by itself — a Pick List allocation, or one of the
-    legacy drafts already on site — is *not* treated as scanned work, because
-    scanning is the act that verifies what is physically on the pallet.
+    Only bundles this dialog stamped are read. A bundle ERPNext built by itself — a
+    Pick List allocation, or one of the legacy drafts already on site — is *not*
+    treated as scanned work, because scanning is the act that verifies what is
+    physically on the pallet, and restoring one would report an unscanned pallet as
+    verified.
     """
-    if _scan_status(doc.name) not in (STATUS_PARTIAL, STATUS_FULL):
-        return {}
-
     rows = doc.get("items") or []
     if not rows:
         return {}
 
     # Exactly one bundle per line, even where the line carries debris — summing
     # every bundle found would restore the same quantity twice on a revisit.
-    candidates = _row_bundle_names(doc.name, [row.name for row in rows])
+    candidates = _owned_bundles(doc.name, [row.name for row in rows])
     by_bundle = {}
     for row in rows:
         names = candidates.get(row.name) or []
@@ -491,9 +546,33 @@ def _derive_status(rows: list) -> str:
     return STATUS_NOT_SCANNED
 
 
+def _state_token(doc) -> str:
+    """Identifies the version of the Delivery Note a dialog is working against.
+
+    Every Post writes the scan status onto the Delivery Note, so its ``modified``
+    moves; a second dialog still holding the old token is therefore working from a
+    picture that no longer exists, and is told to reload rather than allowed to
+    overwrite. An edit to the note's lines invalidates it for the same reason.
+    """
+    return str(doc.get("modified") or "")
+
+
+def _check_state_token(doc, token) -> None:
+    if token in (None, ""):
+        return
+    if str(token) != _state_token(doc):
+        frappe.throw(
+            _(
+                "Delivery Note {0} changed since you opened it — someone else may be "
+                "scanning it. Reopen it in the dialog to pick up the current batches."
+            ).format(frappe.bold(doc.name))
+        )
+
+
 def _state_payload(doc, allocations: dict, posting: dict) -> dict:
     rows = _build_rows(doc, allocations, posting)
     return {
+        "state_token": _state_token(doc),
         "delivery_note": doc.name,
         "customer": doc.customer,
         "customer_name": doc.get("customer_name"),
@@ -521,7 +600,7 @@ def get_scannable_delivery_notes(doctype, txt, searchfield, start, page_len, fil
     fully scanned Delivery Note as well, so the rule holds even if the name is typed
     by hand.
     """
-    conditions = ["dn.docstatus = 0"]
+    conditions = ["dn.docstatus = 0", "ifnull(dn.is_return, 0) = 0"]
     params = {"start": cint(start), "page_len": cint(page_len)}
 
     if frappe.get_meta("Delivery Note").has_field(SCAN_STATUS_FIELD):
@@ -581,7 +660,9 @@ def get_delivery_note_scan_state(delivery_note: str) -> dict:
 
 
 @frappe.whitelist()
-def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0) -> dict:
+def scan_label(
+    delivery_note: str, code: str, allocations=None, allow_partial=0, state_token=None
+) -> dict:
     """Apply one scanned label to the working allocation and hand it back.
 
     The whole allocation travels with each scan so the server stays the single judge
@@ -590,6 +671,7 @@ def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0)
     checked here, while the pallet is still in front of the storekeeper.
     """
     doc = _load_delivery_note(delivery_note)
+    _check_state_token(doc, state_token)
     posting = _posting_context(doc)
     working = _normalise_allocations(allocations, doc)
     allow_partial = cint(allow_partial)
@@ -640,11 +722,14 @@ def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0)
             )
         )
 
+    # Judged against the date the Delivery Note will actually post, which is not the
+    # stored one unless the user pinned it — see _posting_context.
+    effective_date = posting["posting_date"]
     expiry = _batch_expiry(batch_no)
-    if expiry and doc.posting_date and getdate(expiry) < getdate(doc.posting_date):
+    if expiry and effective_date and getdate(expiry) < getdate(effective_date):
         frappe.throw(
             _("Batch {0} expired on {1}, before this Delivery Note's posting date {2}.").format(
-                frappe.bold(batch_no), frappe.bold(expiry), frappe.bold(doc.posting_date)
+                frappe.bold(batch_no), frappe.bold(expiry), frappe.bold(effective_date)
             )
         )
 
@@ -674,21 +759,38 @@ def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0)
         )
 
     open_rows = []
-    total_remaining = 0.0
     for row in candidates:
         allocated = sum(flt(q) for q in (working.get(row.name) or {}).values())
         remaining = flt(_required_qty(row) - allocated, QTY_PRECISION)
         if remaining > QTY_TOLERANCE:
             open_rows.append((row, remaining))
-            total_remaining += remaining
-    total_remaining = flt(total_remaining, QTY_PRECISION)
 
-    if total_remaining <= QTY_TOLERANCE:
+    if not open_rows:
         frappe.throw(
             _("Item {0} is already fully allocated on this Delivery Note.").format(
                 frappe.bold(item_code)
             )
         )
+
+    # A Delivery Note can ship one item from two warehouses. The batch was produced
+    # into one of them, so only the lines drawing on that warehouse can take it —
+    # judging the label against all of them would refuse a scan the first line can
+    # fully absorb.
+    eligible = [
+        (row, remaining)
+        for row, remaining in open_rows
+        if _available_qty(item_code, batch_no, row.warehouse, posting) > 0
+    ]
+    if not eligible:
+        warehouses = sorted({row.warehouse for row, _r in open_rows})
+        frappe.throw(
+            _(
+                "Batch {0} has no stock in {1}. Scan a label from a batch that is in "
+                "the warehouse this Delivery Note ships from."
+            ).format(frappe.bold(batch_no), frappe.bold(", ".join(warehouses)))
+        )
+
+    total_remaining = flt(sum(remaining for _row, remaining in eligible), QTY_PRECISION)
 
     # More on the label than the Delivery Note still wants — two pallets of 78 against
     # a line of 150, say. The storekeeper decides: take what is left and set the rest
@@ -707,21 +809,10 @@ def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0)
             }
         apply_qty = total_remaining
 
-    # "No stock at all here" deserves its own message — it is nearly always a label
-    # scanned against the wrong warehouse, not an over-allocation.
-    for warehouse in {row.warehouse for row, _r in open_rows}:
-        if _available_qty(item_code, batch_no, warehouse, posting) <= 0:
-            frappe.throw(
-                _(
-                    "Batch {0} has no stock in {1} as of {2}. Scan a label from a batch "
-                    "that is in this warehouse."
-                ).format(frappe.bold(batch_no), frappe.bold(warehouse), frappe.bold(doc.posting_date))
-            )
-
     # Spread the label over the open lines, in order.
     applied = []
     left = apply_qty
-    for row, remaining in open_rows:
+    for row, remaining in eligible:
         if left <= QTY_TOLERANCE:
             break
         take = flt(min(left, remaining), QTY_PRECISION)
@@ -766,15 +857,22 @@ def scan_label(delivery_note: str, code: str, allocations=None, allow_partial=0)
 
 
 @frappe.whitelist()
-def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
+def post_delivery_note_scan(
+    delivery_note: str, allocations=None, cleared_rows=None, state_token=None
+) -> dict:
     """Write the scanned batches onto the Delivery Note and record the scan status.
 
     The Delivery Note is *not* submitted. Fully allocated lines end up pointing at
     their bundle; partially allocated lines keep theirs unlinked so the draft still
     saves. Everything is validated again here — the client's map is a proposal, not
     a fact.
+
+    A line is only emptied when the storekeeper says so, through ``cleared_rows``.
+    Absence from ``allocations`` is never read as "delete this": a dialog left open
+    in another tab would otherwise wipe work someone else had already posted.
     """
     doc = _load_delivery_note(delivery_note, for_update=True)
+    _check_state_token(doc, state_token)
     posting = _posting_context(doc)
     working = _normalise_allocations(allocations, doc)
 
@@ -782,6 +880,10 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
     # their bundle torn down — a bundle this dialog never wrote (a Pick List
     # allocation, or one of the legacy drafts on site) is not ours to delete.
     previous = _stored_allocations(doc)
+
+    if isinstance(cleared_rows, str):
+        cleared_rows = frappe.parse_json(cleared_rows or "[]")
+    cleared = {name for name in (cleared_rows or []) if name in previous}
 
     items = _item_cache(doc)
     rows_by_name = {row.name: row for row in doc.get("items") or []}
@@ -824,15 +926,15 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
                     )
                 )
 
-    linked, partial, cleared = 0, 0, 0
+    linked, partial, cleared_count = 0, 0, 0
     for row in doc.get("items") or []:
         if not _row_is_scannable(items.get(row.item_code) or {}):
             continue
 
         batches = working.get(row.name) or {}
         if not batches:
-            if row.name in previous and _clear_row_bundle(doc, row):
-                cleared += 1
+            if row.name in cleared and _clear_row_bundle(doc, row):
+                cleared_count += 1
             continue
 
         bundle_name = _sync_bundle(doc, row, batches, posting)
@@ -847,6 +949,12 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
             partial += 1
 
     status = _derive_status(_build_rows(doc, working, posting))
+    if status == STATUS_FULL and warnings:
+        # The allocation is complete but will not submit as it stands. Fully Scanned
+        # is a one-way door — the Delivery Note leaves the picker and every endpoint
+        # refuses it — so a note the code has just reported as unshippable is held at
+        # Partially Scanned, where the storekeeper can still re-scan the line.
+        status = STATUS_PARTIAL
     _set_scan_status(doc.name, status)
 
     doc.reload()
@@ -855,7 +963,7 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
         "status": status,
         "linked_rows": linked,
         "partial_rows": partial,
-        "cleared_rows": cleared,
+        "cleared_rows": cleared_count,
         "warnings": warnings,
     }
     return payload
@@ -866,19 +974,21 @@ def post_delivery_note_scan(delivery_note: str, allocations=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _row_bundle_names(delivery_note: str, row_names: list) -> dict:
-    """``{row_name: [bundle names, canonical first]}`` for a Delivery Note's lines.
+def _owned_bundles(delivery_note: str, row_names: list) -> dict:
+    """``{row_name: bundle name}`` for the bundles *this dialog* wrote.
 
-    A line can carry more than one draft bundle: ERPNext's own allocation paths
-    have left orphaned drafts behind, and the uploaded site database has a row with
-    two bundles sharing a ``voucher_detail_no``. Whichever one the row points at is
-    the canonical one; otherwise the oldest wins. Picking deterministically is what
-    keeps a revisit from adding the same quantity twice, once per bundle.
+    Ownership is the whole point. A Delivery Note line routinely already carries a
+    draft bundle that ERPNext or a Pick List built — every draft on the uploaded
+    site database does — and adopting one would mean the first scan silently wiped a
+    complete allocation nobody asked to change. So only bundles stamped with
+    ``custom_isnack_dn_scan`` are ever read back, rewritten or deleted here;
+    everything else is display-only (see :func:`_linked_bundle_batches`).
 
-    Nothing is deleted here — debris this dialog did not create is not its to
-    remove — but everything downstream reads the same single bundle per line.
+    A line can still end up with more than one stamped bundle if an earlier version
+    left debris, so the choice is made deterministically — whichever the row points
+    at, else the oldest — and never by summing them.
     """
-    if not row_names:
+    if not row_names or not _has_bundle_owner_field():
         return {}
 
     rows = frappe.get_all(
@@ -889,24 +999,27 @@ def _row_bundle_names(delivery_note: str, row_names: list) -> dict:
             "voucher_detail_no": ("in", row_names),
             "docstatus": 0,
             "is_cancelled": 0,
+            BUNDLE_OWNER_FIELD: 1,
         },
         fields=["name", "voucher_detail_no"],
         order_by="creation asc",
     )
 
-    out: dict = {}
+    candidates: dict = {}
     for row in rows:
-        out.setdefault(row.voucher_detail_no, []).append(row.name)
-    return out
+        candidates.setdefault(row.voucher_detail_no, []).append(row.name)
+    return candidates
 
 
 def _find_row_bundle(delivery_note: str, row_name: str, linked: str | None = None):
-    """The one draft bundle this dialog treats as a line's own, linked or not.
+    """The one bundle this dialog owns for a line, linked from the row or not.
 
     Reused rather than replaced on every Post: re-allocating by creating a second
-    bundle is what left the orphaned drafts already visible on site.
+    bundle is what left the orphaned drafts already visible on site. Returns None
+    when the dialog has never written one for this line — a bundle it did not write
+    is never adopted.
     """
-    names = _row_bundle_names(delivery_note, [row_name]).get(row_name) or []
+    names = _owned_bundles(delivery_note, [row_name]).get(row_name) or []
     if not names:
         return None
     if linked and linked in names:
@@ -933,7 +1046,10 @@ def _sync_bundle(doc, row, batches: dict, posting: dict) -> str:
         bundle.set("entries", [])
         for entry in entries:
             bundle.append("entries", entry)
+        bundle.item_code = row.item_code
+        bundle.company = doc.company
         bundle.warehouse = row.warehouse
+        bundle.voucher_detail_no = row.name
         bundle.type_of_transaction = "Outward"
         bundle.update(posting["bundle_fields"])
         bundle.flags.ignore_permissions = True
@@ -950,6 +1066,9 @@ def _sync_bundle(doc, row, batches: dict, posting: dict) -> str:
         "voucher_detail_no": row.name,
         "type_of_transaction": "Outward",
         "entries": entries,
+        # Stamps this bundle as the dialog's own; nothing else is ever rewritten
+        # or deleted by it.
+        BUNDLE_OWNER_FIELD: 1,
     }
     payload.update(posting["bundle_fields"])
 
@@ -991,13 +1110,18 @@ def _unlink_bundle_from_row(row) -> None:
 
 
 def _clear_row_bundle(doc, row) -> bool:
-    """Drop this dialog's bundle for a line that now has nothing scanned."""
+    """Drop this dialog's own bundle for a line the storekeeper cleared.
+
+    Only a stamped bundle is ever deleted, and without ``force``: frappe's link
+    checks still run, so a bundle something else has come to reference is refused
+    rather than silently removed.
+    """
     bundle_name = _find_row_bundle(doc.name, row.name, row.get("serial_and_batch_bundle"))
     if not bundle_name:
         return False
     if row.get("serial_and_batch_bundle") == bundle_name:
         frappe.db.set_value("Delivery Note Item", row.name, "serial_and_batch_bundle", None)
-    frappe.delete_doc("Serial and Batch Bundle", bundle_name, force=1, ignore_permissions=True)
+    frappe.delete_doc("Serial and Batch Bundle", bundle_name, ignore_permissions=True)
     return True
 
 

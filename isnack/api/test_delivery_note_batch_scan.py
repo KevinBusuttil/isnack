@@ -20,12 +20,28 @@ Payload parsing itself is covered by ``test_delivery_note_scan.py``; these tests
 stub ``parse_gs1_or_basic`` so a scan reads as the literal label string.
 """
 
+import datetime
+import contextlib
 import unittest
 from unittest.mock import patch
 
 import frappe
 
 from isnack.api import delivery_note_batch_scan as dnbs
+
+
+class _StackedPatch(contextlib.ExitStack):
+    """Apply several patches as one context manager."""
+
+    def __init__(self, *patches):
+        super().__init__()
+        self._patches = patches
+
+    def __enter__(self):
+        super().__enter__()
+        for p in self._patches:
+            self.enter_context(p)
+        return self
 
 
 class _FakeRow:
@@ -59,6 +75,9 @@ class _FakeDoc:
         self.posting_date = "2026-09-22"
         self.posting_time = "09:00:00"
         self.set_warehouse = "Finished Goods - ISN"
+        self.set_posting_time = 0
+        self.is_return = 0
+        self.modified = "2026-09-22 09:00:00.000000"
         self.__dict__.update(values)
 
     @property
@@ -105,11 +124,11 @@ def _fg_items(*codes):
 
 
 def _scan(doc, code, allocations=None, allow_partial=0, stock=None, items=None,
-          batch_item=None, expiry=None):
+          batch_item=None, expiry=None, stock_by_wh=None, state_token=None):
     """Drive scan_label with the document layer stubbed out.
 
-    ``stock`` maps batch_no -> qty available in every warehouse, which is the only
-    shape these scenarios need.
+    ``stock`` maps batch_no -> qty available in every warehouse; ``stock_by_wh``
+    maps (batch_no, warehouse) -> qty for the cases where that matters.
     """
     stock = {"BBB-112": 100.0, "BBB-113": 150.0, "BBB-114": 150.0} if stock is None else stock
     batch_item = BATCH_ITEM if batch_item is None else batch_item
@@ -125,7 +144,11 @@ def _scan(doc, code, allocations=None, allow_partial=0, stock=None, items=None,
     ), patch.object(dnbs, "_item_cache", return_value=items), patch.object(
         dnbs, "parse_gs1_or_basic", side_effect=_fake_parse
     ), patch.object(
-        dnbs, "_available_qty", side_effect=lambda i, b, w, p: float(stock.get(b, 0.0))
+        dnbs,
+        "_available_qty",
+        side_effect=lambda i, b, w, p: float(
+            stock_by_wh.get((b, w), 0.0) if stock_by_wh is not None else stock.get(b, 0.0)
+        ),
     ), patch.object(
         dnbs, "_batch_expiry", return_value=expiry
     ), patch.object(
@@ -145,6 +168,7 @@ def _scan(doc, code, allocations=None, allow_partial=0, stock=None, items=None,
             code,
             allocations=allocations or {},
             allow_partial=allow_partial,
+            state_token=state_token,
         )
 
 
@@ -350,6 +374,52 @@ class TestScanLabel(unittest.TestCase):
         with self.assertRaisesRegex(frappe.ValidationError, "Nothing was scanned"):
             _scan(self.doc, "   ")
 
+    def test_a_second_warehouse_does_not_block_the_first(self):
+        # This site already ships one item from two warehouses on several notes. The
+        # batch lives in one of them; the other line must not veto the scan.
+        doc = _FakeDoc([
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=100,
+                     warehouse="Finished Goods - ISN"),
+            _FakeRow(name="r2", idx=2, item_code="FG10011", qty=50,
+                     warehouse="Stores - ISN"),
+        ])
+        out = _scan(doc, "FG10011|BBB-113|100",
+                    stock_by_wh={("BBB-113", "Finished Goods - ISN"): 500.0,
+                                 ("BBB-113", "Stores - ISN"): 0.0})
+        self.assertEqual(_alloc(out, "r1"), {"BBB-113": 100.0})
+        self.assertNotIn("r2", out["allocations"])
+
+    def test_batch_absent_from_every_open_warehouse_is_refused(self):
+        doc = _FakeDoc([
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=100,
+                     warehouse="Finished Goods - ISN"),
+        ])
+        with self.assertRaisesRegex(frappe.ValidationError, "no stock in"):
+            _scan(doc, "FG10011|BBB-113|100",
+                  stock_by_wh={("BBB-113", "Finished Goods - ISN"): 0.0})
+
+    def test_over_scan_is_measured_against_the_lines_that_can_take_the_batch(self):
+        doc = _FakeDoc([
+            _FakeRow(name="r1", idx=1, item_code="FG10011", qty=100,
+                     warehouse="Finished Goods - ISN"),
+            _FakeRow(name="r2", idx=2, item_code="FG10011", qty=50,
+                     warehouse="Stores - ISN"),
+        ])
+        asked = _scan(doc, "FG10011|BBB-113|150",
+                      stock_by_wh={("BBB-113", "Finished Goods - ISN"): 500.0,
+                                   ("BBB-113", "Stores - ISN"): 0.0})
+        # 100, not 150: the Stores line cannot be filled from this batch.
+        self.assertEqual(asked["over_scan"], 1)
+        self.assertEqual(asked["remaining_qty"], 100.0)
+
+    def test_a_stale_state_token_is_refused(self):
+        with self.assertRaisesRegex(frappe.ValidationError, "changed since you opened it"):
+            _scan(self.doc, "FG10011|BBB-113|150", state_token="2020-01-01 00:00:00.000000")
+
+    def test_a_current_state_token_is_accepted(self):
+        out = _scan(self.doc, "FG10011|BBB-113|150", state_token=self.doc.modified)
+        self.assertEqual(out["state_token"], self.doc.modified)
+
     def test_untracked_line_is_listed_but_never_allocated(self):
         doc = _FakeDoc([
             _FakeRow(name="r1", idx=1, item_code="FG10011", qty=150),
@@ -375,7 +445,8 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         self.doc = _FakeDoc(self.rows)
         self.items = _fg_items("FG10011", "FG10002")
 
-    def _post(self, allocations, previous=None, stock=None):
+    def _post(self, allocations, previous=None, stock=None, cleared_rows=None,
+              state_token=None):
         stock = stock or {"BBB-113": 150.0, "AAA-007": 100.0}
 
         def _db_get_value(doctype, name, field, *args, **kwargs):
@@ -406,7 +477,10 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         ) as set_status, patch(
             "frappe.db.get_value", side_effect=_db_get_value
         ):
-            out = dnbs.post_delivery_note_scan(self.doc.name, allocations)
+            out = dnbs.post_delivery_note_scan(
+                self.doc.name, allocations, cleared_rows=cleared_rows,
+                state_token=state_token,
+            )
             return out, {
                 "sync": sync,
                 "link": link,
@@ -439,6 +513,13 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         self.assertEqual(out["posted"]["status"], dnbs.STATUS_FULL)
         calls["set_status"].assert_called_once_with(self.doc.name, dnbs.STATUS_FULL)
 
+    def test_a_stale_state_token_is_refused_before_anything_is_written(self):
+        # Two dialogs open on one note: the second Post must not silently replace
+        # what the first one committed.
+        with self.assertRaisesRegex(frappe.ValidationError, "changed since you opened it"):
+            self._post({"r1": [{"batch_no": "BBB-113", "qty": 150}]},
+                       state_token="2020-01-01 00:00:00.000000")
+
     def test_allocating_more_than_the_line_needs_is_refused(self):
         with self.assertRaisesRegex(frappe.ValidationError, "only 150.0 is required"):
             self._post({"r1": [{"batch_no": "BBB-113", "qty": 200}]})
@@ -463,31 +544,84 @@ class TestPostDeliveryNoteScan(unittest.TestCase):
         _out, calls = self._post(
             {"r1": [{"batch_no": "BBB-113", "qty": 150}]},
             previous={"r2": {"AAA-007": 40.0}},
+            cleared_rows=["r2"],
         )
         calls["clear"].assert_called_once()
 
+    def test_a_row_missing_from_the_map_is_not_treated_as_cleared(self):
+        # A dialog left open in another tab still holds the pre-scan map. Reading
+        # absence as "delete" would wipe whatever was posted in the meantime.
+        _out, calls = self._post(
+            {"r1": [{"batch_no": "BBB-113", "qty": 150}]},
+            previous={"r2": {"AAA-007": 40.0}},
+        )
+        calls["clear"].assert_not_called()
+
+    def test_cleared_rows_arrive_as_a_json_string_from_the_client(self):
+        _out, calls = self._post(
+            {"r1": [{"batch_no": "BBB-113", "qty": 150}]},
+            previous={"r2": {"AAA-007": 40.0}},
+            cleared_rows='["r2"]',
+        )
+        calls["clear"].assert_called_once()
+
+    def test_a_shortfall_holds_the_note_at_partially_scanned(self):
+        # Fully Scanned is a one-way door, so a note the code has just reported as
+        # unshippable must stay reopenable.
+        out, calls = self._post(
+            {
+                "r1": [{"batch_no": "BBB-113", "qty": 150}],
+                "r2": [{"batch_no": "AAA-007", "qty": 100}],
+            },
+            stock={"BBB-113": 10.0, "AAA-007": 100.0},
+        )
+        self.assertTrue(out["posted"]["warnings"])
+        self.assertEqual(out["posted"]["status"], dnbs.STATUS_PARTIAL)
+        calls["set_status"].assert_called_once_with(self.doc.name, dnbs.STATUS_PARTIAL)
+
 
 class TestRowBundleSelection(unittest.TestCase):
-    """A line can carry more than one draft bundle, so exactly one must be chosen.
+    """Only bundles this dialog stamped are read back, rewritten or deleted.
 
-    The uploaded site database has a Delivery Note Item with two draft bundles
-    sharing a voucher_detail_no — one of them unreferenced debris from an earlier
-    re-allocation. Reading both back would restore the same quantity twice.
+    Every draft Delivery Note on the uploaded site database already carries a draft
+    Serial and Batch Bundle that ERPNext or a Pick List built. Adopting one would
+    mean the first scan silently destroyed a complete allocation nobody asked to
+    change, and reading one back would report an unscanned pallet as verified.
+
+    A line can still hold more than one *stamped* bundle if an earlier version left
+    debris, so the choice is deterministic rather than a sum.
     """
 
     def setUp(self):
         self.rows = [_FakeRow(name="r1", idx=1, item_code="FG10003", qty=132)]
         self.doc = _FakeDoc(self.rows, name="MAT-DN-2026-00016")
 
-    def _patched(self, bundles, entries):
+    def _patched(self, bundles, entries, captured=None):
         # frappe.get_all returns frappe._dict rows, so the stand-ins must too.
         def _get_all(doctype, **kwargs):
             if doctype == "Serial and Batch Bundle":
+                if captured is not None:
+                    captured["filters"] = kwargs.get("filters")
                 return bundles
             if doctype == "Serial and Batch Entry":
                 return entries
             return []
-        return patch("frappe.get_all", side_effect=_get_all)
+        return _StackedPatch(
+            patch.object(dnbs, "_has_bundle_owner_field", return_value=True),
+            patch("frappe.get_all", side_effect=_get_all),
+        )
+
+    def test_only_stamped_bundles_are_considered(self):
+        captured = {}
+        with self._patched([], [], captured):
+            dnbs._find_row_bundle("MAT-DN-2026-00016", "r1")
+        self.assertEqual(captured["filters"].get(dnbs.BUNDLE_OWNER_FIELD), 1)
+
+    def test_nothing_is_owned_before_the_field_is_installed(self):
+        with patch.object(dnbs, "_has_bundle_owner_field", return_value=False), patch(
+            "frappe.get_all", side_effect=AssertionError("must not query bundles")
+        ):
+            self.assertIsNone(dnbs._find_row_bundle("MAT-DN-2026-00016", "r1"))
 
     def test_canonical_is_the_bundle_the_row_points_at(self):
         bundles = [
@@ -529,32 +663,39 @@ class TestRowBundleSelection(unittest.TestCase):
             self.assertEqual(list(kwargs["filters"]["parent"][1]), ["LIVE"])
             return [e for e in entries if e.parent in kwargs["filters"]["parent"][1]]
 
-        with patch.object(dnbs, "_scan_status", return_value=dnbs.STATUS_PARTIAL), patch(
+        with patch.object(dnbs, "_has_bundle_owner_field", return_value=True), patch(
             "frappe.get_all", side_effect=_get_all
         ):
             out = dnbs._stored_allocations(self.doc)
         # 123, not 246.
         self.assertEqual(out, {"r1": {"JBJ-777": 123.0}})
 
-    def test_stored_allocations_ignored_until_the_dialog_has_posted(self):
-        # A Pick List bundle, or one of the legacy drafts on site, is not scanned work.
-        with patch.object(dnbs, "_scan_status", return_value=dnbs.STATUS_NOT_SCANNED), patch(
-            "frappe.get_all", side_effect=AssertionError("must not query bundles")
-        ):
+    def test_unstamped_bundles_are_never_restored_as_scanned_work(self):
+        # A Pick List bundle, or one of the legacy drafts on site, is not scanned
+        # work: the query returns nothing because it filters on the stamp.
+        self.rows[0].serial_and_batch_bundle = "ERPNEXT-BUILT"
+        with self._patched([], []):
             self.assertEqual(dnbs._stored_allocations(self.doc), {})
 
 
 class TestLoadDeliveryNote(unittest.TestCase):
     """Which Delivery Notes are open for scanning."""
 
-    def _load(self, docstatus=0, status=dnbs.STATUS_NOT_SCANNED, exists=True):
+    def _load(self, docstatus=0, status=dnbs.STATUS_NOT_SCANNED, exists=True,
+              is_return=0, fields_installed=True):
         doc = _FakeDoc([_FakeRow(name="r1", idx=1, item_code="FG10011", qty=10)])
         doc.docstatus = docstatus
-        with patch("frappe.db.exists", return_value=exists), patch(
-            "frappe.has_permission", return_value=True
-        ), patch("frappe.get_doc", return_value=doc), patch.object(
-            dnbs, "_scan_status", return_value=status
-        ):
+        doc.is_return = is_return
+
+        class _Meta:
+            def has_field(self, fieldname):
+                return fields_installed
+
+        with patch("frappe.get_meta", return_value=_Meta()), patch(
+            "frappe.db.exists", return_value=exists
+        ), patch("frappe.has_permission", return_value=True), patch(
+            "frappe.get_doc", return_value=doc
+        ), patch.object(dnbs, "_scan_status", return_value=status):
             return dnbs._load_delivery_note("MAT-DN-2026-00011")
 
     def test_draft_not_yet_scanned_loads(self):
@@ -576,8 +717,25 @@ class TestLoadDeliveryNote(unittest.TestCase):
             self._load(exists=False)
 
     def test_blank_name_is_refused(self):
-        with self.assertRaisesRegex(frappe.ValidationError, "Select a Delivery Note"):
-            dnbs._load_delivery_note("")
+        class _Meta:
+            def has_field(self, fieldname):
+                return True
+
+        with patch("frappe.get_meta", return_value=_Meta()):
+            with self.assertRaisesRegex(frappe.ValidationError, "Select a Delivery Note"):
+                dnbs._load_delivery_note("")
+
+    def test_return_delivery_note_is_refused(self):
+        # Every line of a return reads as already covered (negative stock_qty), so
+        # it would post as Fully Scanned with nothing scanned at all.
+        with self.assertRaisesRegex(frappe.ValidationError, "is a return"):
+            self._load(is_return=1)
+
+    def test_missing_custom_fields_fail_loudly(self):
+        # Half-working is worse: without them a Post cannot be remembered and the
+        # dialog cannot tell its own bundles from ERPNext's.
+        with self.assertRaisesRegex(frappe.ValidationError, "bench migrate"):
+            self._load(fields_installed=False)
 
 
 class TestPostingContext(unittest.TestCase):
@@ -588,8 +746,9 @@ class TestPostingContext(unittest.TestCase):
     sites.
     """
 
-    def _context(self, has_posting_datetime):
+    def _context(self, has_posting_datetime, set_posting_time=1):
         doc = _FakeDoc([])
+        doc.set_posting_time = set_posting_time
 
         class _Meta:
             def has_field(self, fieldname):
@@ -609,6 +768,19 @@ class TestPostingContext(unittest.TestCase):
         self.assertEqual(
             out["bundle_fields"], {"posting_date": "2026-09-22", "posting_time": "09:00:00"}
         )
+
+    def test_pinned_posting_time_is_honoured(self):
+        out = self._context(False, set_posting_time=1)
+        self.assertEqual(out["bundle_fields"]["posting_time"], "09:00:00")
+
+    def test_unpinned_posting_time_follows_now_not_the_stale_draft(self):
+        # With set_posting_time off — the ERPNext default, and the state of every
+        # draft on site — TransactionBase.validate_posting_time rewrites the stored
+        # values with now() on every save and at submit. Judging availability at the
+        # stored moment would hide every batch made since the draft was last saved.
+        out = self._context(False, set_posting_time=0)
+        self.assertNotEqual(out["bundle_fields"]["posting_time"], "09:00:00")
+        self.assertEqual(out["posting_date"], datetime.date.today().strftime("%Y-%m-%d"))
 
 
 class TestScannableDeliveryNoteQuery(unittest.TestCase):
@@ -639,6 +811,10 @@ class TestScannableDeliveryNoteQuery(unittest.TestCase):
         self.assertIn("dn.docstatus = 0", out["query"])
         self.assertIn("custom_scan_status", out["query"])
         self.assertEqual(out["params"]["full_status"], dnbs.STATUS_FULL)
+
+    def test_returns_are_excluded(self):
+        out = self._query()
+        self.assertIn("is_return", out["query"])
 
     def test_search_text_matches_name_and_customer(self):
         out = self._query(txt="00011")

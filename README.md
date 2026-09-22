@@ -786,9 +786,14 @@ bundle unlinked until the scan is finished.
 
 **Validated at scan time:** item is on the Delivery Note, batch belongs to the
 item, batch not expired, batch has stock in the line's warehouse as of the
-posting date, and enough left after everything this Delivery Note already
-claims of it. Over-scans and repeated labels ask for confirmation rather than
-being refused.
+moment the note will post, and enough left after everything this Delivery Note
+already claims of it. Over-scans and repeated labels ask for confirmation rather
+than being refused.
+
+**Ownership:** bundles the dialog creates are stamped
+(`Serial and Batch Bundle → custom_isnack_dn_scan`). A bundle ERPNext or a Pick
+List built is shown as *On file* but is never read back as scanned work, never
+rewritten and never deleted.
 
 **Not affected:** the Delivery Note is never submitted, its lines are never
 added to or re-quantified, and nothing about the rest of the Storekeeper Hub

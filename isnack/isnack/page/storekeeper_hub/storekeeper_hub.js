@@ -3072,6 +3072,12 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       // QR payloads, so a repeated payload is ambiguous rather than wrong. Count
       // them and ask, the way the Delivery Note form scanner does.
       seen: {},
+      // Rows the storekeeper explicitly emptied. Post only clears what is named
+      // here — absence from the allocation map never means "delete".
+      cleared: {},
+      // Identifies the version of the Delivery Note this dialog was built from, so
+      // a second dialog left open elsewhere cannot overwrite work posted since.
+      token: '',
       busy: false,
     };
   }
@@ -3243,6 +3249,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
     dn_scan_state.delivery_note = payload.delivery_note;
     dn_scan_state.rows = payload.rows || [];
     dn_scan_state.allocations = payload.allocations || {};
+    dn_scan_state.token = payload.state_token || '';
     dn_scan_render();
   }
 
@@ -3254,6 +3261,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
         code,
         allocations: JSON.stringify(dn_scan_state.allocations || {}),
         allow_partial: allow_partial ? 1 : 0,
+        state_token: dn_scan_state.token || '',
       },
     });
     return r && r.message;
@@ -3346,6 +3354,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       __('Clear every scan allocated to row {0} ({1})?', [row.idx, esc(row.item_code)]),
       () => {
         delete dn_scan_state.allocations[row_name];
+        dn_scan_state.cleared[row_name] = 1;
         // Re-derive the table locally; the server re-checks the map on the next
         // scan and at Post, so no round trip is needed to drop an allocation.
         row.batches = [];
@@ -3385,6 +3394,10 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
       args: {
         delivery_note: dn_scan_state.delivery_note,
         allocations: JSON.stringify(dn_scan_state.allocations || {}),
+        cleared_rows: JSON.stringify(
+          Object.keys(dn_scan_state.cleared || {}).filter((name) => !dn_scan_state.allocations[name])
+        ),
+        state_token: dn_scan_state.token || '',
       },
       freeze: true,
       freeze_message: __('Posting scanned batches...'),
@@ -3417,6 +3430,7 @@ frappe.pages['storekeeper-hub'].on_page_load = function(wrapper) {
           dn_scan_dialog.hide();
           return;
         }
+        dn_scan_state.cleared = {};
         dn_scan_apply(r.message);
         dn_scan_focus_input();
       },
