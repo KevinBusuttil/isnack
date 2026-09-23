@@ -666,7 +666,8 @@ def pool_sources(draw_rows, tick: float) -> dict[str, dict]:
 	between them is not recorded.
 
 	``draw_rows`` are Stock Entry Detail names that took stock out of a
-	warehouse; ``tick`` is the balance that counts as zero (one posting unit).
+	warehouse; ``tick`` is one posting unit. The pool counts as empty when its
+	balance rounds to zero at that unit: one full tick is real stock.
 	Returns ``{row: {item_code, warehouse, emptied, work_orders, other}}``:
 
 	* ``emptied`` -- the pool was at zero before the draw. When ``False`` it never
@@ -740,18 +741,22 @@ def pool_receipts(ledger_rows, start_qty, tick: float) -> list:
 
 
 def _pool_window(draw_sle: str, tick: float) -> tuple[bool, list]:
-	"""``(emptied, receipts)``: what raised the pool since it was last at zero."""
+	"""``(emptied, receipts)``: what raised the pool since it was last at zero.
+
+	"At zero" is a balance below half a tick, i.e. one that rounds to zero at the
+	posting precision; a balance of one tick is the smallest real stock there is.
+	"""
 	anchor = frappe.db.sql(
 		f"""
 		SELECT sle.name, sle.qty_after_transaction
 		FROM `tabStock Ledger Entry` sle
 		JOIN `tabStock Ledger Entry` d ON d.name = %(draw)s
 		WHERE {_EARLIER_IN_POOL}
-			AND sle.qty_after_transaction <= %(tick)s
+			AND sle.qty_after_transaction < %(empty)s
 		ORDER BY sle.posting_date DESC, sle.posting_time DESC, sle.creation DESC
 		LIMIT 1
 		""",
-		{"draw": draw_sle, "tick": tick},
+		{"draw": draw_sle, "empty": tick / 2},
 		as_dict=True,
 	)
 	anchor = anchor[0] if anchor else None

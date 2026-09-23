@@ -971,8 +971,10 @@ class TestPoolSources(unittest.TestCase):
 		self.assertEqual(got["work_orders"], [{"work_order": "WO-A", "qty": 80.0}])
 		self.assertEqual(got["other"], [])
 		self.assertEqual((got["item_code"], got["warehouse"]), ("SFG1", "Semi-finished"))
-		# the anchor is read at or below one posting unit, strictly before the draw
-		self.assertEqual(sql.call_args_list[0].args[1], {"draw": "SLE-DRAW", "tick": 0.001})
+		# empty is a balance that rounds to zero: one full tick is real stock
+		anchor_sql, anchor_args = sql.call_args_list[0].args
+		self.assertIn("qty_after_transaction < %(empty)s", anchor_sql)
+		self.assertEqual(anchor_args, {"draw": "SLE-DRAW", "empty": 0.0005})
 		window_sql, window_args = sql.call_args_list[1].args
 		self.assertIn("a.name = %(anchor)s", window_sql)
 		self.assertEqual(window_args["anchor"], "SLE-ZERO")
