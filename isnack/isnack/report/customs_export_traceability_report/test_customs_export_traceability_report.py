@@ -209,8 +209,8 @@ class TestApportionedRows(GetDataHarness):
 		self.assertAlmostEqual(rows[0].apportioned_cost, 150.0)
 
 	def test_two_manufacture_entries_into_one_batch_do_not_double_count(self):
-		# WO-5 closed twice into the same batch (200 + 100); the report lists its
-		# consumption once per entry, the apportioned figures add up to one share.
+		# WO-5 closed twice into the same batch (200 + 100): its whole consumption
+		# is listed once, apportioned by both entries' output together.
 		rows = self.run_report(
 			si_items=[_si_row(1, "FG10005", 300, bundle="B1")],
 			bundles={"B1": [{"batch_no": "X", "qty": -300}]},
@@ -223,9 +223,26 @@ class TestApportionedRows(GetDataHarness):
 			produced={("FG10005", "X"): 300.0},
 			rm_map={"WO-5": [_rm("RM1", 90, 1.0)]},
 		)
-		self.assertEqual(len(rows), 2)
-		self.assertAlmostEqual(sum(r.apportioned_qty for r in rows), 90.0)
-		self.assertAlmostEqual(sum(r.consumed_qty for r in rows), 180.0)
+		self.assertEqual(len(rows), 1)
+		self.assertAlmostEqual(rows[0].consumed_qty, 90.0)
+		self.assertAlmostEqual(rows[0].apportioned_qty, 90.0)
+		self.assertEqual(rows[0].manufacture_entry, "SE-A")
+
+	def test_semi_finished_route_reaches_the_row(self):
+		rm = dict(_rm("RM20022", 75, 1.0, batch_no="CG1"), via_sfg="SFG1 ← WO-S", sfg_attribution="Single run")
+		rows = self.run_report(
+			si_items=[_si_row(1, "FG10011", 150, batch_no="BBB-113")],
+			bundles={},
+			wo_map={("FG10011", "BBB-113"): [_wo_entry("WO-68", "SE-399", 150)]},
+			produced={("FG10011", "BBB-113"): 150.0},
+			rm_map={"WO-68": [rm, _rm("PM40011", 12, 3.0)]},
+		)
+		by_item = {r.rm_item_code: r for r in rows}
+		self.assertEqual(by_item["RM20022"].via_sfg, "SFG1 ← WO-S")
+		self.assertEqual(by_item["RM20022"].sfg_attribution, "Single run")
+		self.assertAlmostEqual(by_item["RM20022"].apportioned_qty, 75.0)
+		self.assertIsNone(by_item["PM40011"].via_sfg)
+		self.assertIsNone(by_item["PM40011"].sfg_attribution)
 
 	def test_batch_without_a_manufacture_entry_stays_blank(self):
 		rows = self.run_report(
@@ -260,6 +277,172 @@ def _finished_row(sed_name, batch_no, fg_qty, stock_entry="SE-1", work_order="WO
 		is_scrap_item=scrap,
 		fg_qty=fg_qty,
 	)
+
+
+def _cons(item_code, qty, rate=1.0, batch_no=None, row=None):
+	"""A _consumption_rows dict."""
+	return {
+		"item_code": item_code,
+		"item_name": item_code.lower(),
+		"description": item_code,
+		"stock_uom": "Kg",
+		"qty": qty,
+		"consumed_cost": qty * rate,
+		"batch_no": batch_no,
+		"purchase_receipt": None,
+		"row": row or f"row-{item_code}",
+		"via_sfg": None,
+		"sfg_attribution": None,
+	}
+
+
+def _pool(work_orders=(), other=(), emptied=True):
+	return {
+		"item_code": "SFG1",
+		"warehouse": "Semi-finished - ISN",
+		"emptied": emptied,
+		"work_orders": [{"work_order": w, "qty": q} for w, q in work_orders],
+		"other": list(other),
+	}
+
+
+RECO = {"voucher_type": "Stock Reconciliation", "voucher_no": "MAT-RECO-1", "purpose": None, "posting_date": None, "qty": 20.0}
+
+
+class TestSemiFinishedDrillDown(unittest.TestCase):
+	"""_fetch_rm_consumption for FG WO-68, which drew SFG1 (a mix) and PM1 (film)."""
+
+	def _run(self, consumption, pool, output, made=("SFG1",), filters=None):
+		def rows(work_orders):
+			return {wo: [dict(r) for r in consumption.get(wo, [])] for wo in work_orders if wo in consumption}
+
+		with patch.object(report, "_consumption_rows", side_effect=rows), patch.object(
+			report.batch_lineage, "manufactured_items", side_effect=lambda codes: set(made) & set(codes)
+		), patch.object(report.batch_lineage, "pool_sources", side_effect=lambda draws, tick: {
+			d: pool[d] for d in draws if d in pool
+		}) as sources, patch.object(
+			report, "_fetch_wo_finished_qty", side_effect=lambda wos: {w: output[w] for w in wos if w in output}
+		), patch.object(report, "qty_tick", return_value=0.001), patch.object(
+			report, "_lookup_pr_via_batch", side_effect=lambda batch, item: f"PR-{batch}"
+		):
+			result = report._fetch_rm_consumption({"WO-68"}, frappe._dict(filters or {}))
+		self.sources = sources
+		return {(r["item_code"], r.get("batch_no")): r for r in result.get("WO-68", [])}
+
+	FG = {"WO-68": [_cons("SFG1", 80, rate=2.0, row="R-SFG1"), _cons("PM1", 12, batch_no="PM-B")]}
+
+	def test_single_run_replaces_the_mix_by_its_raw_materials(self):
+		consumption = dict(self.FG, **{"WO-S": [_cons("RM-CORN", 150, rate=1.0, batch_no="CG1"), _cons("RM-WATER", 10, rate=0.0)]})
+		got = self._run(consumption, {"R-SFG1": _pool([("WO-S", 160)])}, {"WO-S": 160.0})
+
+		self.assertNotIn(("SFG1", None), got)
+		corn = got[("RM-CORN", "CG1")]
+		self.assertAlmostEqual(corn["qty"], 75.0)  # 150 x 80 drawn / 160 made
+		self.assertAlmostEqual(corn["consumed_cost"], 75.0)
+		self.assertEqual(corn["via_sfg"], "SFG1 ← WO-S")
+		self.assertEqual(corn["sfg_attribution"], "Single run")
+		self.assertEqual(corn["purchase_receipt"], "PR-CG1")  # customs lookup reaches the grits
+		self.assertAlmostEqual(got[("RM-WATER", None)]["qty"], 5.0)  # water is not semi-finished
+		film = got[("PM1", "PM-B")]
+		self.assertIsNone(film["via_sfg"])
+		self.assertEqual(film["qty"], 12)
+		self.sources.assert_called_once_with(["R-SFG1"], 0.001)
+
+	def test_several_sources_are_pro_rata_and_labelled(self):
+		consumption = dict(
+			self.FG,
+			**{"WO-C": [_cons("RM-CORN", 60, batch_no="CG1")], "WO-D": [_cons("RM-CORN", 60, batch_no="CG2")]},
+		)
+		pool = {"R-SFG1": _pool([("WO-C", 60), ("WO-D", 60)], [RECO], emptied=False)}
+		got = self._run(consumption, pool, {"WO-C": 60.0, "WO-D": 60.0})
+
+		# 80 drawn over 140 booked: 60/140 from each run, 20/140 of unknown origin
+		label = "Pro-rata over 3 sources (estimated)"
+		for batch in ("CG1", "CG2"):
+			row = got[("RM-CORN", batch)]
+			self.assertAlmostEqual(row["qty"], 60 * (80 * 60 / 140) / 60)
+			self.assertEqual(row["sfg_attribution"], label)
+		self.assertEqual(got[("RM-CORN", "CG1")]["via_sfg"], "SFG1 ← WO-C")
+		unknown = got[("SFG1", None)]
+		self.assertAlmostEqual(unknown["qty"], 80 * 20 / 140)
+		self.assertAlmostEqual(unknown["consumed_cost"], 160 * 20 / 140)
+		self.assertEqual(unknown["via_sfg"], "SFG1 ← Stock Reconciliation MAT-RECO-1")
+		self.assertEqual(unknown["sfg_attribution"], "Origin not recorded")
+		# the parts of the draw add back up to the draw
+		self.assertAlmostEqual(sum(r["qty"] for k, r in got.items() if k[0] == "RM-CORN") + unknown["qty"], 80.0)
+
+	def test_no_source_keeps_the_mix_and_says_so(self):
+		got = self._run(dict(self.FG), {"R-SFG1": _pool([])}, {})
+		mix = got[("SFG1", None)]
+		self.assertEqual(mix["qty"], 80)
+		self.assertIsNone(mix["via_sfg"])
+		self.assertEqual(mix["sfg_attribution"], "Semi-finished, no source found")
+
+	def test_raw_material_filter_applies_inside_the_mix(self):
+		consumption = dict(self.FG, **{"WO-S": [_cons("RM-CORN", 150, batch_no="CG1"), _cons("RM-WATER", 10)]})
+		got = self._run(
+			consumption, {"R-SFG1": _pool([("WO-S", 160)])}, {"WO-S": 160.0}, filters={"raw_material_item": "RM-CORN"}
+		)
+		self.assertEqual(list(got), [("RM-CORN", "CG1")])
+
+	def test_a_mix_inside_a_mix_chains_the_route_and_keeps_the_weaker_label(self):
+		consumption = dict(
+			self.FG,
+			**{
+				"WO-S": [_cons("SFG2", 40, row="R-SFG2"), _cons("RM-CORN", 120, batch_no="CG1")],
+				"WO-T": [_cons("RM-OIL", 50, batch_no="OIL1")],
+			},
+		)
+		pool = {
+			"R-SFG1": _pool([("WO-S", 160)]),
+			"R-SFG2": _pool([("WO-T", 50)], [RECO]),
+		}
+		got = self._run(consumption, pool, {"WO-S": 160.0, "WO-T": 50.0}, made=("SFG1", "SFG2"))
+
+		oil = got[("RM-OIL", "OIL1")]
+		# FG drew half of WO-S; WO-S drew 40 of SFG2, 50/70 from WO-T (made 50)
+		self.assertAlmostEqual(oil["qty"], 50 * (40 * 50 / 70) / 50 * 0.5)
+		self.assertEqual(oil["via_sfg"], "SFG1 ← WO-S · SFG2 ← WO-T")
+		self.assertEqual(oil["sfg_attribution"], "Pro-rata over 2 sources (estimated)")
+		unknown = got[("SFG2", None)]
+		self.assertEqual(unknown["sfg_attribution"], "Origin not recorded")
+		self.assertEqual(unknown["via_sfg"], "SFG1 ← WO-S · SFG2 ← Stock Reconciliation MAT-RECO-1")
+		self.assertEqual(got[("RM-CORN", "CG1")]["sfg_attribution"], "Single run")
+
+	def test_depth_cap(self):
+		rm_map = {"WO": [_cons("SFG1", 1, row="R")]}
+		with patch.object(report.batch_lineage, "manufactured_items") as made:
+			self.assertIs(report._expand_semi_finished(rm_map, depth=report.MAX_SFG_DEPTH + 1), rm_map)
+		made.assert_not_called()
+
+
+class TestConsumptionRows(unittest.TestCase):
+	def test_quantities_are_in_stock_uom_and_rows_are_named(self):
+		raw = [
+			frappe._dict(
+				work_order="WO-1", sed_name="R1", item_code="RM1", item_name="rm1", description="RM1",
+				stock_uom="Kg", qty=25.0, basic_rate=2.0, batch_no="B1", serial_and_batch_bundle=None,
+				reference_purchase_receipt="PR-9",
+			),
+			frappe._dict(
+				work_order="WO-1", sed_name="R2", item_code="RM2", item_name="rm2", description="RM2",
+				stock_uom="Kg", qty=10.0, basic_rate=1.0, batch_no=None, serial_and_batch_bundle="SBB-1",
+				reference_purchase_receipt=None,
+			),
+		]
+		bundles = {"SBB-1": [{"batch_no": "B2", "qty": -6.0}, {"batch_no": "B3", "qty": -4.0}]}
+		with patch("frappe.db.sql", return_value=raw) as sql, patch.object(
+			report, "_fetch_bundle_entries", return_value=bundles
+		):
+			rows = report._consumption_rows({"WO-1"})["WO-1"]
+
+		# qty is transfer_qty, the unit stock_uom names and basic_rate prices
+		self.assertIn("CASE WHEN IFNULL(sed.transfer_qty, 0) > 0 THEN sed.transfer_qty ELSE sed.qty END AS qty", sql.call_args.args[0])
+		self.assertEqual([(r["batch_no"], r["qty"], r["consumed_cost"], r["row"]) for r in rows], [
+			("B1", 25.0, 50.0, "R1"), ("B2", 6.0, 6.0, "R2"), ("B3", 4.0, 4.0, "R2"),
+		])
+		self.assertEqual(rows[0]["purchase_receipt"], "PR-9")
+		self.assertTrue(all(r["via_sfg"] is None and r["sfg_attribution"] is None for r in rows))
 
 
 class TestFinishedQtyPerDetailRow(unittest.TestCase):
@@ -337,6 +520,13 @@ class TestColumns(unittest.TestCase):
 			["consumed_qty", "consumed_cost", "apportioned_qty", "apportioned_cost", "rm_batch_no"],
 		)
 
+	def test_semi_finished_route_follows_the_raw_material(self):
+		names = [c["fieldname"] for c in report.get_columns()]
+		self.assertEqual(
+			names[names.index("rm_description"):names.index("rm_description") + 3],
+			["rm_description", "via_sfg", "sfg_attribution"],
+		)
+
 	def test_no_existing_column_was_removed(self):
 		names = [c["fieldname"] for c in report.get_columns()]
 		for expected in (
@@ -411,6 +601,24 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 		self.assertEqual(row["apportioned_cost"], "1878.96")
 		self.assertEqual(captured["apportioned_cost_label"], "Apportioned Cost (TND)")
 
+	def test_print_carries_the_semi_finished_route(self):
+		captured = {}
+
+		def render(template, context):
+			captured.update(context)
+			return "<html></html>"
+
+		row = _report_row(via_sfg="SFG1 ← WO-S", sfg_attribution="Single run")
+		with patch.object(report, "get_data", return_value=[row]), patch.object(
+			report, "_fetch_si_header_details", return_value={}
+		), patch("frappe.get_cached_value", return_value="TND"), patch(
+			"frappe.render_template", side_effect=render
+		):
+			report.get_print_html(FILTERS)
+		printed = captured["invoices"][0]["rows"][0]
+		self.assertEqual(printed["via_sfg"], frappe.utils.escape_html("SFG1 ← WO-S"))
+		self.assertEqual(printed["sfg_attribution"], "Single run")
+
 	def test_cost_label_falls_back_without_a_currency(self):
 		with patch("frappe.get_cached_value", side_effect=Exception("no site")):
 			self.assertEqual(report._apportioned_cost_label("Isnack"), "Apportioned Cost")
@@ -426,11 +634,13 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 		for heading in ("Batch Sold Qty", "Batch Produced Qty", "Apportioned Qty", "{{ apportioned_cost_label }}"):
 			self.assertIn(heading, template)
 		self.assertIn('<th colspan="6" class="col-group-rm">', template)
+		self.assertIn('<div class="via-sfg">via {{ row.via_sfg }} &middot; {{ row.sfg_attribution }}</div>', template)
 
 	def test_excel_export_adds_the_columns_without_dropping_any(self):
 		from openpyxl import load_workbook
 
-		with patch.object(report, "get_data", return_value=[_report_row()]), patch.object(
+		row = _report_row(via_sfg="SFG1 ← WO-S", sfg_attribution="Single run")
+		with patch.object(report, "get_data", return_value=[row]), patch.object(
 			report, "_fetch_si_header_details", return_value={}
 		), patch("frappe.get_cached_value", return_value="TND"):
 			out = report.get_export_excel(FILTERS)
@@ -458,6 +668,11 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 		self.assertAlmostEqual(rm_row[3], 144.373)
 		self.assertAlmostEqual(rm_row[4], 1878.958)
 		self.assertEqual(rm_row[5], "512806015")
+		# the semi-finished route follows the customs columns, under its own group
+		self.assertEqual(rm_header[12:14], ["Via Semi-Finished", "SFG Attribution"])
+		self.assertEqual(rm_row[12:14], ["SFG1 ← WO-S", "Single run"])
+		group = next(h for h in headers if h[0] == "Raw Material Consumed")
+		self.assertEqual((group[6], group[12]), ("Purchase / Customs", "Semi-Finished Trace"))
 
 
 if __name__ == "__main__":

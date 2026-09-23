@@ -655,6 +655,27 @@ _EARLIER_IN_POOL = """
 """
 
 
+def manufactured_items(item_codes) -> set[str]:
+	"""The items among ``item_codes`` that some submitted Work Order produces.
+
+	A consumed row without a batch is a semi-finished item when a Work Order
+	makes it (a corn mix, a slurry); otherwise it is a batchless raw material
+	(water), where the trace ends.
+	"""
+	codes = [c for c in dict.fromkeys(item_codes or []) if c]
+	if not codes:
+		return set()
+	return {
+		r.production_item
+		for r in frappe.get_all(
+			"Work Order",
+			filters={"production_item": ["in", codes], "docstatus": 1},
+			fields=["production_item"],
+			distinct=True,
+		)
+	}
+
+
 def pool_sources(draw_rows, tick: float) -> dict[str, dict]:
 	"""Where each draw of non-batch stock came from, read off the stock ledger.
 

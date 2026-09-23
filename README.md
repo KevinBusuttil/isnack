@@ -268,6 +268,17 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 
 Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of the Delivery Note, up to the small difference ERPNext's batch-wise moving average introduces when a batch was partly shipped before a later Manufacture entry added to it. The printed form and the Excel export carry `Batch Sold Qty`, `Batch Produced Qty`, `Apportioned Qty` and `Apportioned Cost` (labelled with the company currency, since the invoice header shows the invoice currency); `Consumed Cost` stays on screen only.
 
+Quantities are in the stock UOM (`transfer_qty`), the unit the `RM UOM` column names and the valuation rate prices. A Work Order that booked the same batch in several Manufacture entries is listed once, apportioned by those entries' output together.
+
+**Semi-finished items:** A consumed semi-finished item (a corn mix, a slurry: no batch, drawn from the shared Semi-finished pool) is replaced by the raw materials of the run that made it, so their lots, Purchase Receipts and customs numbers reach the form. The run is read off the pool's stock ledger, by the same rule as the Batch Explorer: what was booked into the pool since it was last empty. The run's consumption is scaled by what the finished-goods Work Order drew over what the run made, which keeps `Consumed Qty` on the Work Order's basis, and is then apportioned as above. `Via Semi-Finished` shows the route (e.g. `SFG10001 ← MFG-WO-2026-00061`), and `SFG Attribution` how the draw was split:
+
+- `Single run` — one run supplied the draw; plain arithmetic on booked figures.
+- `Pro-rata over N sources (estimated)` — stock from several runs was in the pool when it was drawn. Which run supplied how much is not recorded, so the draw is shared pro rata to what each booked.
+- `Origin not recorded` — part of the pool came from something other than a run (a Stock Reconciliation, a Material Receipt, a transfer in); that share stays on the semi-finished item.
+- `Semi-finished, no source found` — nothing was booked into the pool before the draw; the item stays as it is.
+
+The printed form shows the route under the RM item name; the Excel export carries both columns. A semi-finished item made from another is followed the same way, up to three levels.
+
 ---
 
 ## Data Flow Diagrams
