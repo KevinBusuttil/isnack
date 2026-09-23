@@ -185,6 +185,7 @@
 .be-group-label {
 	font-weight: 600;
 	color: var(--heading-color);
+	white-space: nowrap;
 }
 .be-badge {
 	font-size: var(--text-xs);

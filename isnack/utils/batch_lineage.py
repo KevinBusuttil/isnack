@@ -40,6 +40,10 @@ Design rules
   explicit ``batch_no``; ``abs(Serial and Batch Entry.qty)`` for rows whose
   batches ERPNext auto-picked into a bundle (ERPNext validates that the bundle
   total equals ``transfer_qty``; entry qty is negative for outward bundles).
+* Semi-finished items carry no batch and sit in one shared pool, so nothing on
+  the entry that drew them says which run made them. ``pool_sources`` reads it
+  off the stock ledger instead: whatever was booked into the pool since its
+  balance was last at zero is what the draw came from.
 * The label-facing ``fg_batch*`` resolvers never raise. A print format has no
   way to recover mid-render, so a batch that cannot be read back degrades to
   an empty list / ``None`` and the label prints without one; every other helper
@@ -358,7 +362,9 @@ def consumed_materials(entries, rows_by_entry, bundle_map) -> list[dict]:
 	Returns a list sorted by item code then batch, each item::
 
 	    {item_code, item_name, stock_uom, batch_no, qty,
-	     lines: [{stock_entry, purpose, posting_date, s_warehouse, qty, split}]}
+	     lines: [{stock_entry, row, purpose, posting_date, s_warehouse, qty, split}]}
+
+	``row`` is the Stock Entry Detail name, the key of the row's ledger entry.
 	"""
 	agg: dict[tuple, dict] = {}
 	for entry in entries or []:
@@ -381,6 +387,7 @@ def consumed_materials(entries, rows_by_entry, bundle_map) -> list[dict]:
 				m["lines"].append(
 					{
 						"stock_entry": entry.name,
+						"row": row.get("name"),
 						"purpose": entry.get("purpose"),
 						"posting_date": str(entry.get("posting_date") or "") or None,
 						"s_warehouse": row.get("s_warehouse"),
@@ -631,3 +638,184 @@ def entry_warehouses(entry, rows=None) -> tuple[str | None, str | None]:
 		targets = {r.get("t_warehouse") for r in (rows or []) if r.get("t_warehouse")}
 		dst = next(iter(targets)) if len(targets) == 1 else ("*" if targets else None)
 	return src, dst
+
+
+
+# ---------------------------------------------------------------------------
+# Non-batch pools: where a draw of a semi-finished item came from
+# ---------------------------------------------------------------------------
+
+# The draw's own item and warehouse, strictly before it in ledger order.
+_EARLIER_IN_POOL = """
+	sle.item_code = d.item_code
+	AND sle.warehouse = d.warehouse
+	AND sle.is_cancelled = 0
+	AND (sle.posting_date, sle.posting_time, sle.creation)
+		< (d.posting_date, d.posting_time, d.creation)
+"""
+
+
+def pool_sources(draw_rows, tick: float) -> dict[str, dict]:
+	"""Where each draw of non-batch stock came from, read off the stock ledger.
+
+	Non-batch stock has no identity once it is in a warehouse, and the MES draws
+	semi-finished items from one shared pool without saying which run made them.
+	What the ledger does settle: once the pool's balance fell to zero, nothing
+	booked before that was left. So the draw came from what was booked into the
+	pool after that point. One receipt means one source; several mean the split
+	between them is not recorded.
+
+	``draw_rows`` are Stock Entry Detail names that took stock out of a
+	warehouse; ``tick`` is the balance that counts as zero (one posting unit).
+	Returns ``{row: {item_code, warehouse, emptied, work_orders, other}}``:
+
+	* ``emptied`` -- the pool was at zero before the draw. When ``False`` it never
+	  was, and every earlier receipt is listed.
+	* ``work_orders`` -- ``[{work_order, qty}]`` in booking order: submitted
+	  Manufacture entries whose finished row put the item into the pool.
+	* ``other`` -- ``[{voucher_type, voucher_no, purpose, posting_date, qty}]``:
+	  anything else that raised the pool (a Stock Reconciliation, a Material
+	  Receipt, a transfer in), stock whose origin the ledger does not record.
+
+	``qty`` is what the receipt added to the pool.
+	"""
+	names = [n for n in dict.fromkeys(draw_rows or []) if n]
+	if not names:
+		return {}
+	draws = frappe.get_all(
+		"Stock Ledger Entry",
+		filters={"voucher_detail_no": ["in", names], "is_cancelled": 0, "actual_qty": ["<", 0]},
+		fields=["name", "voucher_detail_no", "item_code", "warehouse"],
+	)
+	windows = {d.voucher_detail_no: (d, *_pool_window(d.name, tick)) for d in draws}
+	receipts = [r for _d, _emptied, rs in windows.values() for r in rs]
+	sources = _receipt_sources(receipts)
+
+	out = {}
+	for row, (draw, emptied, rs) in windows.items():
+		work_orders: dict[str, float] = {}
+		other: dict[str, dict] = {}
+		for r in rs:
+			work_order = sources.get(r.get("voucher_detail_no"))
+			if work_order:
+				work_orders[work_order] = flt(work_orders.get(work_order)) + r["qty"]
+				continue
+			o = other.setdefault(
+				r.voucher_no,
+				{
+					"voucher_type": r.voucher_type,
+					"voucher_no": r.voucher_no,
+					"purpose": r.get("purpose"),
+					"posting_date": str(r.get("posting_date") or "") or None,
+					"qty": 0.0,
+				},
+			)
+			o["qty"] = flt(o["qty"]) + r["qty"]
+		out[row] = {
+			"item_code": draw.item_code,
+			"warehouse": draw.warehouse,
+			"emptied": emptied,
+			"work_orders": [{"work_order": w, "qty": q} for w, q in work_orders.items()],
+			"other": list(other.values()),
+		}
+	return out
+
+
+def pool_receipts(ledger_rows, start_qty, tick: float) -> list:
+	"""The ledger rows that raised the balance, each with ``qty`` = what it added.
+
+	Walks ``qty_after_transaction`` from ``start_qty`` rather than summing
+	``actual_qty``, so a Stock Reconciliation counts by the difference it made.
+	"""
+	out = []
+	before = flt(start_qty)
+	for r in ledger_rows or []:
+		after = flt(r.get("qty_after_transaction"))
+		added = after - before
+		before = after
+		# at least one posting unit; half a tick absorbs float noise
+		if added > tick / 2:
+			out.append(frappe._dict(r, qty=added))
+	return out
+
+
+def _pool_window(draw_sle: str, tick: float) -> tuple[bool, list]:
+	"""``(emptied, receipts)``: what raised the pool since it was last at zero."""
+	anchor = frappe.db.sql(
+		f"""
+		SELECT sle.name, sle.qty_after_transaction
+		FROM `tabStock Ledger Entry` sle
+		JOIN `tabStock Ledger Entry` d ON d.name = %(draw)s
+		WHERE {_EARLIER_IN_POOL}
+			AND sle.qty_after_transaction <= %(tick)s
+		ORDER BY sle.posting_date DESC, sle.posting_time DESC, sle.creation DESC
+		LIMIT 1
+		""",
+		{"draw": draw_sle, "tick": tick},
+		as_dict=True,
+	)
+	anchor = anchor[0] if anchor else None
+	after_anchor = (
+		"""JOIN `tabStock Ledger Entry` a ON a.name = %(anchor)s
+		WHERE (sle.posting_date, sle.posting_time, sle.creation)
+			> (a.posting_date, a.posting_time, a.creation) AND"""
+		if anchor
+		else "WHERE"
+	)
+	rows = frappe.db.sql(
+		f"""
+		SELECT sle.voucher_type, sle.voucher_no, sle.voucher_detail_no,
+			sle.qty_after_transaction, sle.posting_date
+		FROM `tabStock Ledger Entry` sle
+		JOIN `tabStock Ledger Entry` d ON d.name = %(draw)s
+		{after_anchor} {_EARLIER_IN_POOL}
+		ORDER BY sle.posting_date, sle.posting_time, sle.creation
+		""",
+		{"draw": draw_sle, "anchor": anchor.name if anchor else None},
+		as_dict=True,
+	)
+	start = flt(anchor.qty_after_transaction) if anchor else 0.0
+	return bool(anchor), pool_receipts(rows, start, tick)
+
+
+def _receipt_sources(receipts) -> dict[str, str]:
+	"""``{ledger row: Work Order}`` for receipts that are a Work Order's output.
+
+	A receipt is a Work Order's output when its row is the finished item of a
+	Manufacture entry that names the Work Order. Every other receipt's row gets
+	its entry's ``purpose`` written onto the receipt, for display.
+	"""
+	detail_rows = [
+		r.voucher_detail_no for r in receipts if r.voucher_type == "Stock Entry" and r.get("voucher_detail_no")
+	]
+	if not detail_rows:
+		return {}
+	details = {
+		d.name: d
+		for d in frappe.get_all(
+			"Stock Entry Detail",
+			filters={"name": ["in", list(dict.fromkeys(detail_rows))]},
+			fields=["name", "parent", "is_finished_item"],
+			parent_doctype="Stock Entry",
+		)
+	}
+	entries = {
+		e.name: e
+		for e in frappe.get_all(
+			"Stock Entry",
+			filters={"name": ["in", list({d.parent for d in details.values()})]},
+			fields=["name", "work_order", "purpose"],
+		)
+	}
+	out = {}
+	for r in receipts:
+		detail = details.get(r.get("voucher_detail_no"))
+		entry = entries.get(detail.parent) if detail else None
+		if not entry:
+			continue
+		if entry.get("work_order") and entry.purpose == "Manufacture" and cint(detail.is_finished_item):
+			out[r.voucher_detail_no] = entry.work_order
+		else:
+			r["purpose"] = entry.purpose
+	return out
+

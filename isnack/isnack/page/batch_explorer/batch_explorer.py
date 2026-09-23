@@ -23,6 +23,11 @@ Resolution strategy
    that *consumed* the batch get a nested "Produced" group listing the
    finished-goods batches they made. The rules live in
    ``isnack.utils.batch_lineage``.
+5. Semi-finished items. A consumed item without a batch that some Work Order
+   manufactures (a corn mix, a slurry) came out of a shared pool that records
+   no run. Its node gets a "Made by" group: the Work Orders booked into that
+   pool since it was last empty (``batch_lineage.pool_sources``), each with its
+   own materials consumed, recursively up to ``MAX_SFG_DEPTH`` levels.
 
 Quantity semantics
 ------------------
@@ -48,6 +53,7 @@ from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate
 
 from isnack.utils import batch_lineage
+from isnack.utils.qty import qty_tick
 
 # Display metadata per doctype: colour + logical ordering for the tree.
 DOCTYPE_META = {
@@ -70,7 +76,11 @@ NESTED_META = {
 	"entries": {"color": "#607d8b"},
 	"ineffective": {"color": "#9e9e9e"},
 	"produced": {"color": "#66bb6a"},
+	"sources": {"color": "#7c4dff"},
 }
+
+# Semi-finished levels followed below a finished-goods Work Order, at most.
+MAX_SFG_DEPTH = 3
 
 # Producing Work Orders beyond this many get their inputs loaded on demand
 # (``get_work_order_inputs``) instead of eagerly with the page.
@@ -505,14 +515,10 @@ def _work_order_inputs(work_order: str, batch) -> dict:
 		or frappe._dict()
 	)
 
-	entries = batch_lineage.find_work_order_entries([work_order]).get(work_order, [])
-	permitted, hidden = _permitted_names("Stock Entry", [e.name for e in entries])
-	entries = [e for e in entries if e.name in permitted]
-	submitted = [e for e in entries if cint(e.docstatus) == 1]
-	ineffective = [e for e in entries if cint(e.docstatus) != 1]
-
-	rows_by_entry = batch_lineage.fetch_entry_rows([e.name for e in submitted])
-	bundle_map = batch_lineage.fetch_bundle_batches(batch_lineage.bundle_names(rows_by_entry))
+	read = _read_work_order(work_order)
+	hidden, submitted = read["hidden"], read["submitted"]
+	rows_by_entry, bundle_map = read["rows_by_entry"], read["bundle_map"]
+	ineffective = [e for e in read["entries"] if cint(e.docstatus) != 1]
 
 	materials = batch_lineage.consumed_materials(submitted, rows_by_entry, bundle_map)
 	share = batch_lineage.compute_share(
@@ -527,7 +533,9 @@ def _work_order_inputs(work_order: str, batch) -> dict:
 		if share["shared"]
 		else _("Stock UOM · whole Work Order")
 	)
-	children = [_nested_group("materials", _material_nodes(materials, batch_no), hint=materials_hint)]
+	material_nodes = _material_nodes(materials, batch_no)
+	_attach_sfg_sources(material_nodes, materials, batch_no, (work_order,))
+	children = [_nested_group("materials", material_nodes, hint=materials_hint)]
 
 	entry_nodes = _entry_nodes(submitted, rows_by_entry, wip)
 	if entry_nodes or hidden:
@@ -558,6 +566,146 @@ def _work_order_inputs(work_order: str, batch) -> dict:
 		"tags": tags,
 		"children": children,
 	}
+
+
+def _read_work_order(work_order: str) -> dict:
+	"""The Stock Entries of ``work_order`` the user may read, with their rows.
+
+	``{entries, hidden, submitted, rows_by_entry, bundle_map}``; rows and bundles
+	are read for the submitted entries only.
+	"""
+	entries = batch_lineage.find_work_order_entries([work_order]).get(work_order, [])
+	permitted, hidden = _permitted_names("Stock Entry", [e.name for e in entries])
+	entries = [e for e in entries if e.name in permitted]
+	submitted = [e for e in entries if cint(e.docstatus) == 1]
+	rows_by_entry = batch_lineage.fetch_entry_rows([e.name for e in submitted])
+	return {
+		"entries": entries,
+		"hidden": hidden,
+		"submitted": submitted,
+		"rows_by_entry": rows_by_entry,
+		"bundle_map": batch_lineage.fetch_bundle_batches(batch_lineage.bundle_names(rows_by_entry)),
+	}
+
+
+def _attach_sfg_sources(nodes: list[dict], materials: list[dict], batch_no: str, path: tuple) -> None:
+	"""Continue the trace below consumed semi-finished items, in place.
+
+	``nodes`` are ``_material_nodes(materials)``, in the same order. A material
+	without a batch that some Work Order manufactures is semi-finished: its node
+	gets a "Made by" group and the tag ``semi_finished`` in place of
+	``no_batch``. Other batchless materials (water) keep "trace ends here", as
+	does a semi-finished item whose pool shows no receipt at all. ``path`` is
+	the chain of Work Orders above, for the depth cap and the cycle guard.
+	"""
+	if len(path) > MAX_SFG_DEPTH:
+		return
+	pairs = [(n, m) for n, m in zip(nodes, materials) if not m.get("batch_no")]
+	made = _manufactured_items({m["item_code"] for _n, m in pairs})
+	pairs = [(n, m) for n, m in pairs if m["item_code"] in made]
+	if not pairs:
+		return
+
+	sources = batch_lineage.pool_sources([ln.get("row") for _n, m in pairs for ln in m["lines"]], qty_tick())
+	for node, m in pairs:
+		draws = [sources[ln["row"]] for ln in m["lines"] if ln.get("row") in sources]
+		group = _made_by_group(draws, m, batch_no, path)
+		if not group["nodes"]:
+			continue
+		node["tags"] = [t for t in node["tags"] if t != "no_batch"] + ["semi_finished"]
+		runs = [n["name"] for n in group["nodes"] if n["doctype"] == "Work Order"]
+		if len(runs) == 1:
+			node["tag_detail"] = _("made by {0}").format(runs[0])
+		elif runs:
+			node["tag_detail"] = _("made by {0} Work Orders").format(len(runs))
+		else:
+			node["tag_detail"] = _("origin not recorded")
+		node["children"] = [group]
+
+
+def _manufactured_items(item_codes) -> set[str]:
+	"""The items among ``item_codes`` that a submitted Work Order produces."""
+	codes = [c for c in item_codes if c]
+	if not codes:
+		return set()
+	return {
+		r.production_item
+		for r in frappe.get_all(
+			"Work Order",
+			filters={"production_item": ["in", codes], "docstatus": 1},
+			fields=["production_item"],
+			distinct=True,
+		)
+	}
+
+
+def _made_by_group(draws: list[dict], material: dict, batch_no: str, path: tuple) -> dict:
+	"""The "Made by" group of a semi-finished material: runs first, then other stock."""
+	runs: dict[str, None] = {}
+	other: dict[str, dict] = {}
+	for d in draws:
+		for w in d["work_orders"]:
+			runs.setdefault(w["work_order"])
+		for o in d["other"]:
+			other.setdefault(o["voucher_no"], o)
+
+	nodes = _build_nodes("Work Order", {w: {"qty": None, "date": None} for w in runs}) if runs else []
+	made = {
+		r.name: r
+		for r in (
+			frappe.get_all(
+				"Work Order", filters={"name": ["in", list(runs)]}, fields=["name", "produced_qty", "stock_uom"]
+			)
+			if runs
+			else []
+		)
+	}
+	for node in nodes:
+		info = made.get(node["name"]) or {}
+		node["made"] = {"qty": flt(info.get("produced_qty")), "uom": info.get("stock_uom")}
+		if node["name"] not in path:
+			node["children"] = [_run_materials(node["name"], batch_no, path + (node["name"],))]
+
+	for o in other.values():
+		nodes.append(
+			{
+				"doctype": o["voucher_type"],
+				"name": o["voucher_no"],
+				"qty": flt(o["qty"]),
+				"uom": material.get("stock_uom"),
+				"neutral": True,
+				"direction": None,
+				"date": o.get("posting_date"),
+				"owner": None,
+				"owner_name": None,
+				"docstatus": None,
+				"status": "",
+				"party": None,
+				"extra": o.get("purpose") or o["voucher_type"],
+				"tags": ["other_source"],
+			}
+		)
+
+	warehouse = draws[0]["warehouse"] if draws else ""
+	if draws and all(d["emptied"] for d in draws):
+		hint = _("Booked into {0} since it was last empty").format(warehouse)
+	else:
+		hint = _("Booked into {0} before the draw; it was never empty before").format(warehouse)
+	if len(nodes) > 1:
+		hint += " · " + _("the split between them is not recorded")
+	return _nested_group("sources", nodes, hint=hint)
+
+
+def _run_materials(work_order: str, batch_no: str, path: tuple) -> dict:
+	"""The "Materials consumed" group of a Work Order that made a semi-finished item."""
+	read = _read_work_order(work_order)
+	materials = batch_lineage.consumed_materials(read["submitted"], read["rows_by_entry"], read["bundle_map"])
+	nodes = _material_nodes(materials, batch_no)
+	_attach_sfg_sources(nodes, materials, batch_no, path)
+	hint = _("Stock UOM · whole Work Order")
+	if read["hidden"]:
+		hint += " · " + _("{0} hidden by permissions").format(read["hidden"])
+	return _nested_group("materials", nodes, hint=hint)
 
 
 def _work_order_outputs(work_order: str, batch) -> dict:
@@ -724,6 +872,7 @@ def _nested_label(key: str) -> str:
 		"entries": _("Work Order stock entries"),
 		"ineffective": _("Not effective"),
 		"produced": _("Produced"),
+		"sources": _("Made by"),
 	}[key]
 
 
