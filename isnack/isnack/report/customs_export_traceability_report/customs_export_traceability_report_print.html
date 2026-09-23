@@ -362,7 +362,7 @@
 <table>
 <thead>
 <tr class="col-group-header">
-  <th colspan="5" class="col-group-rm">Raw Material Consumed</th>
+  <th colspan="6" class="col-group-rm">Raw Material Consumed</th>
   <th colspan="6" class="col-group-pc">Purchase / Customs</th>
 </tr>
 <tr>
@@ -370,6 +370,7 @@
   <th>RM Item Name</th>
   <th class="num-col">Consumed Qty</th>
   <th class="num-col">Apportioned Qty</th>
+  <th class="num-col">{{ apportioned_cost_label }}</th>
   <th>RM Batch No</th>
   <th>Purchase Receipt</th>
   <th>PR Date</th>
@@ -386,6 +387,7 @@
   <td>{{ row.rm_item_name }}</td>
   <td class="num-col">{{ row.consumed_qty }}</td>
   <td class="num-col">{{ row.apportioned_qty }}</td>
+  <td class="num-col">{{ row.apportioned_cost }}</td>
   <td>{{ row.rm_batch_no }}</td>
   <td>{{ row.purchase_receipt }}</td>
   <td>{{ row.purchase_receipt_date }}</td>
@@ -405,8 +407,9 @@
   Blank fields indicate that traceability could not be established from available ERPNext data.
   Only submitted documents (Sales Invoice, Stock Entry, Purchase Receipt) are included.
   Raw material consumption is based on actual Stock Entry records, not BOM explosion.
-  Consumed Qty is the whole Work Order; Apportioned Qty is the part embodied in the cartons of the
-  FG batch sold on this invoice (Consumed Qty &times; Batch Sold Qty &divide; Batch Produced Qty).
+  Consumed Qty is the whole Work Order; Apportioned Qty and Apportioned Cost are the part embodied in the
+  cartons of the FG batch sold on this invoice (Consumed Qty &times; Batch Sold Qty &divide; Batch Produced Qty).
+  Apportioned Cost is in company currency at the valuation of the consumption entries.
 </div>
 <div class="customs-declaration">Je dis bien que le produit indiqué sur la présente facture ne fait l'objet d'aucune saisie ni jugement</div>
 </body>

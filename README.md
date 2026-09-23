@@ -266,7 +266,7 @@ Both hubs integrate seamlessly with ERPNext's native manufacturing, inventory, a
 - `Batch Produced Qty` — cartons booked into the batch by all submitted Manufacture entries (scrap excluded).
 - `Apportioned Qty` / `Apportioned Cost` — `Consumed Qty` / `Consumed Cost` × `Batch Sold Qty` ÷ `Batch Produced Qty` (a Work Order whose output went into several batches is scaled by its share into this batch first).
 
-Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of the Delivery Note, up to the small difference ERPNext's batch-wise moving average introduces when a batch was partly shipped before a later Manufacture entry added to it. The printed form and the Excel export carry `Batch Sold Qty`, `Batch Produced Qty` and `Apportioned Qty`; cost columns are shown on screen only.
+Summing `Apportioned Cost` per invoice agrees with the cost-of-sales posting of the Delivery Note, up to the small difference ERPNext's batch-wise moving average introduces when a batch was partly shipped before a later Manufacture entry added to it. The printed form and the Excel export carry `Batch Sold Qty`, `Batch Produced Qty`, `Apportioned Qty` and `Apportioned Cost` (labelled with the company currency, since the invoice header shows the invoice currency); `Consumed Cost` stays on screen only.
 
 ---
 

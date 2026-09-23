@@ -977,6 +977,20 @@ def _fetch_batch_balance(batch_item_pairs):
 # Print HTML helpers
 # ---------------------------------------------------------------------------
 
+def _apportioned_cost_label(company):
+	"""Column label for the apportioned cost on the print and the Excel export.
+
+	The cost is in company currency while the invoice header shows the
+	invoice currency, so the label names the currency to keep the two apart.
+	"""
+	currency = ""
+	try:
+		currency = frappe.get_cached_value("Company", company, "default_currency") or ""
+	except Exception:
+		currency = ""
+	return f"Apportioned Cost ({currency})" if currency else "Apportioned Cost"
+
+
 def _fetch_si_header_details(si_names):
 	"""Bulk-fetch additional Sales Invoice fields not present in the report columns."""
 	if not si_names:
@@ -1160,6 +1174,7 @@ def get_print_html(filters):
 				"rm_item_name": _v(row.get("rm_item_name")),
 				"consumed_qty": _num2(row.get("consumed_qty")),
 				"apportioned_qty": _num2(row.get("apportioned_qty")),
+				"apportioned_cost": _num2(row.get("apportioned_cost")),
 				"rm_batch_no": _v(row.get("rm_batch_no")),
 				"purchase_receipt": _v(row.get("purchase_receipt")),
 				"purchase_receipt_date": _v(row.get("purchase_receipt_date")),
@@ -1215,6 +1230,7 @@ def get_print_html(filters):
 		"print_datetime": print_datetime,
 		"printed_by": printed_by,
 		"filter_summary": filter_summary,
+		"apportioned_cost_label": frappe.utils.escape_html(_apportioned_cost_label(filters.get("company"))),
 		"invoices": invoices_list,
 	}
 
@@ -1289,7 +1305,7 @@ def get_export_excel(filters):
 	ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 	ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 
-	# FG table: 15 cols; RM table: 11 cols → use 15 as total width
+	# FG table: 15 cols; RM table: 12 cols → use 15 as total width
 	TOTAL_COLS = 15
 
 	wb = Workbook()
@@ -1366,9 +1382,10 @@ def get_export_excel(filters):
 		"Work Order",
 		"Mfg Date",
 	]
+	APPORTIONED_COST_HEADER = _apportioned_cost_label(company)
 	RM_HEADERS = [
-		"RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", "RM Batch No",
-		"Purchase Receipt", "PR Date", "Supplier Name",
+		"RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", APPORTIONED_COST_HEADER,
+		"RM Batch No", "Purchase Receipt", "PR Date", "Supplier Name",
 		"PR Qty", "Balance Stock", "Customs Doc No",
 	]
 	FG_DATE_COL = FG_HEADERS.index("Mfg Date") + 1
@@ -1377,6 +1394,7 @@ def get_export_excel(filters):
 	RM_QTY_COLS = tuple(
 		RM_HEADERS.index(h) + 1 for h in ("Consumed Qty", "Apportioned Qty", "PR Qty", "Balance Stock")
 	)
+	RM_COST_COL = RM_HEADERS.index(APPORTIONED_COST_HEADER) + 1
 
 	for si_name, rows in invoices_grouped.items():
 		first = rows[0]
@@ -1566,6 +1584,7 @@ def get_export_excel(filters):
 			pr_date = row.get("purchase_receipt_date")
 			consumed_qty = row.get("consumed_qty")
 			apportioned_qty = row.get("apportioned_qty")
+			apportioned_cost = row.get("apportioned_cost")
 			pr_qty = row.get("pr_qty")
 			balance_stock = row.get("balance_stock")
 
@@ -1577,6 +1596,10 @@ def get_export_excel(filters):
 				apportioned_qty = float(apportioned_qty) if apportioned_qty is not None else ""
 			except (TypeError, ValueError):
 				apportioned_qty = str(apportioned_qty) if apportioned_qty is not None else ""
+			try:
+				apportioned_cost = float(apportioned_cost) if apportioned_cost is not None else ""
+			except (TypeError, ValueError):
+				apportioned_cost = str(apportioned_cost) if apportioned_cost is not None else ""
 			try:
 				pr_qty = float(pr_qty) if pr_qty is not None else ""
 			except (TypeError, ValueError):
@@ -1591,6 +1614,7 @@ def get_export_excel(filters):
 				row.get("rm_item_name") or "",
 				consumed_qty,
 				apportioned_qty,
+				apportioned_cost,
 				row.get("rm_batch_no") or "",
 				row.get("purchase_receipt") or "",
 				pr_date if pr_date else "",
@@ -1610,6 +1634,9 @@ def get_export_excel(filters):
 				qty_cell = ws.cell(row=data_row_idx, column=qty_col)
 				if isinstance(qty_cell.value, float):
 					qty_cell.number_format = "0.00"
+			cost_cell = ws.cell(row=data_row_idx, column=RM_COST_COL)
+			if isinstance(cost_cell.value, float):
+				cost_cell.number_format = "#,##0.00"
 
 		_write_blank_row()
 
@@ -1625,8 +1652,9 @@ def get_export_excel(filters):
 		"Blank fields indicate that traceability could not be established from available ERPNext data. "
 		"Only submitted documents (Sales Invoice, Stock Entry, Purchase Receipt) are included. "
 		"Raw material consumption is based on actual Stock Entry records, not BOM explosion. "
-		"Consumed Qty is the whole Work Order; Apportioned Qty is the part embodied in the cartons of the "
-		"FG batch sold on this invoice (Consumed Qty × Batch Sold Qty ÷ Batch Produced Qty).",
+		"Consumed Qty is the whole Work Order; Apportioned Qty and Apportioned Cost are the part embodied in "
+		"the cartons of the FG batch sold on this invoice (Consumed Qty × Batch Sold Qty ÷ Batch Produced Qty). "
+		"Apportioned Cost is in company currency at the valuation of the consumption entries.",
 		font=_normal_font(size=8),
 		align=ALIGN_CENTER,
 	)
