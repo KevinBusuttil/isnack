@@ -220,6 +220,11 @@
     color: #888;
     text-align: center;
   }
+  .via-sfg {
+    margin-top: 1px;
+    font-size: 7px;
+    color: #5b3fa8;
+  }
   .customs-declaration {
     margin-top: 18px;
     text-align: center;
@@ -384,7 +389,7 @@
 {% for row in invoice.rows %}
 <tr>
   <td>{{ row.rm_item_code }}</td>
-  <td>{{ row.rm_item_name }}</td>
+  <td>{{ row.rm_item_name }}{% if row.via_sfg %}<div class="via-sfg">via {{ row.via_sfg }} &middot; {{ row.sfg_attribution }}</div>{% elif row.sfg_attribution %}<div class="via-sfg">{{ row.sfg_attribution }}</div>{% endif %}</td>
   <td class="num-col">{{ row.consumed_qty }}</td>
   <td class="num-col">{{ row.apportioned_qty }}</td>
   <td class="num-col">{{ row.apportioned_cost }}</td>
@@ -410,6 +415,9 @@
   Consumed Qty is the whole Work Order; Apportioned Qty and Apportioned Cost are the part embodied in the
   cartons of the FG batch sold on this invoice (Consumed Qty &times; Batch Sold Qty &divide; Batch Produced Qty).
   Apportioned Cost is in company currency at the valuation of the consumption entries.
+  A semi-finished item is replaced by the raw materials of the run that made it, read off the semi-finished
+  stock ledger (shown as &ldquo;via&rdquo;); where several runs could have supplied it, the quantities are split
+  pro rata to what each run booked and marked estimated.
 </div>
 <div class="customs-declaration">Je dis bien que le produit indiqué sur la présente facture ne fait l'objet d'aucune saisie ni jugement</div>
 </body>

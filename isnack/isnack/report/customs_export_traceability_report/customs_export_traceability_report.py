@@ -13,6 +13,12 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate, now_datetime
 
+from isnack.utils import batch_lineage
+from isnack.utils.qty import qty_tick
+
+# Semi-finished levels followed below a finished-goods Work Order, at most.
+MAX_SFG_DEPTH = 3
+
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
@@ -73,6 +79,8 @@ def get_columns():
 		{"label": _("RM Item Code"), "fieldname": "rm_item_code", "fieldtype": "Link", "options": "Item", "width": 140},
 		{"label": _("RM Item Name"), "fieldname": "rm_item_name", "fieldtype": "Data", "width": 160},
 		{"label": _("RM Description"), "fieldname": "rm_description", "fieldtype": "Data", "width": 180},
+		{"label": _("Via Semi-Finished"), "fieldname": "via_sfg", "fieldtype": "Data", "width": 220},
+		{"label": _("SFG Attribution"), "fieldname": "sfg_attribution", "fieldtype": "Data", "width": 200},
 		{"label": _("RM UOM"), "fieldname": "rm_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
 		{"label": _("Consumed Qty"), "fieldname": "consumed_qty", "fieldtype": "Float", "width": 100},
 		{"label": _("Consumed Cost"), "fieldname": "consumed_cost", "fieldtype": "Currency", "options": "Company:company:default_currency", "width": 110},
@@ -164,7 +172,7 @@ def get_data(filters):
 			batch_produced_qty = (
 				batch_produced_map.get((si_row.fg_item_code, fg_batch_no)) if fg_batch_no else None
 			)
-			wo_entries = wo_map.get((si_row.fg_item_code, fg_batch_no)) or [{}]
+			wo_entries = _one_entry_per_work_order(wo_map.get((si_row.fg_item_code, fg_batch_no)) or [{}])
 			for wo_entry in wo_entries:
 				work_order = wo_entry.get("work_order")
 				rm_list = rm_map.get(work_order) or [{}] if work_order else [{}]
@@ -230,6 +238,8 @@ def get_data(filters):
 						rm_item_code=rm.get("item_code"),
 						rm_item_name=rm.get("item_name"),
 						rm_description=rm.get("description"),
+						via_sfg=rm.get("via_sfg"),
+						sfg_attribution=rm.get("sfg_attribution"),
 						rm_uom=rm.get("stock_uom"),
 						consumed_qty=rm.get("qty"),
 						consumed_cost=rm.get("consumed_cost"),
@@ -327,6 +337,27 @@ def _apportion(value, factor):
 	if value is None or factor is None:
 		return None
 	return flt(value) * factor
+
+
+def _one_entry_per_work_order(entries):
+	"""Merge a Work Order's Manufacture entries into one batch into one entry.
+
+	The rows under an entry carry the Work Order's whole consumption, so a Work
+	Order that booked the batch in two entries would list it twice. Its entries'
+	finished qty is summed for the apportioning; the first entry names the row.
+	"""
+	merged = OrderedDict()
+	for i, e in enumerate(entries):
+		wo = e.get("work_order")
+		if not wo:
+			merged[("no work order", i)] = e
+			continue
+		m = merged.get(wo)
+		if m is None:
+			merged[wo] = dict(e)
+		elif m.get("fg_qty") is not None or e.get("fg_qty") is not None:
+			m["fg_qty"] = flt(m.get("fg_qty")) + flt(e.get("fg_qty"))
+	return list(merged.values())
 
 
 # ---------------------------------------------------------------------------
@@ -726,12 +757,43 @@ def _fetch_rm_consumption(work_orders, filters):
 	Return {work_order: [rm_dict]}
 
 	Each rm_dict has: item_code, item_name, description, stock_uom, qty,
-	                  consumed_cost, batch_no, purchase_receipt
+	                  consumed_cost, batch_no, purchase_receipt, via_sfg,
+	                  sfg_attribution
+
+	A consumed semi-finished item is replaced by the raw materials that went
+	into it (``_expand_semi_finished``), so the raw-material filter applies
+	after that step: filtering on corn grits finds the grits inside a corn mix.
 	"""
 	if not work_orders:
 		return {}
+	result = _expand_semi_finished(_consumption_rows(work_orders))
 
-	wo_list = list(work_orders)
+	# Apply raw_material_item filter
+	if filters.get("raw_material_item"):
+		result = {
+			wo: [rm for rm in rms if rm["item_code"] == filters.raw_material_item]
+			for wo, rms in result.items()
+		}
+
+	# Fallback: if no purchase_receipt from reference_purchase_receipt, try via batch
+	for rms in result.values():
+		for rm in rms:
+			if not rm["purchase_receipt"] and rm.get("batch_no"):
+				rm["purchase_receipt"] = _lookup_pr_via_batch(rm["batch_no"], rm["item_code"])
+	return result
+
+
+def _consumption_rows(work_orders):
+	"""Return {work_order: [rm_dict]}: every consumed row, one dict per batch.
+
+	``qty`` is stock UOM (``transfer_qty``): the unit ``stock_uom`` names and
+	``basic_rate`` prices, so Consumed Qty and Consumed Cost match their label
+	whatever unit the row was entered in. ``row`` is the Stock Entry Detail the
+	dict came from.
+	"""
+	wo_list = list(work_orders or [])
+	if not wo_list:
+		return {}
 	placeholders = ", ".join(["%s"] * len(wo_list))
 
 	# Fetch consumption rows (is_finished_item=0, has a source warehouse)
@@ -739,11 +801,12 @@ def _fetch_rm_consumption(work_orders, filters):
 		f"""
 		SELECT
 			se.work_order,
+			sed.name AS sed_name,
 			sed.item_code,
 			sed.item_name,
 			sed.description,
 			sed.stock_uom,
-			sed.qty,
+			CASE WHEN IFNULL(sed.transfer_qty, 0) > 0 THEN sed.transfer_qty ELSE sed.qty END AS qty,
 			sed.basic_rate,
 			sed.batch_no,
 			sed.serial_and_batch_bundle,
@@ -760,10 +823,6 @@ def _fetch_rm_consumption(work_orders, filters):
 		as_dict=True,
 	)
 
-	# Apply raw_material_item filter early
-	if filters.get("raw_material_item"):
-		raw_rows = [r for r in raw_rows if r.item_code == filters.raw_material_item]
-
 	# Expand rows that use serial_and_batch_bundle (no direct batch_no)
 	bundle_names_rm = [r.serial_and_batch_bundle for r in raw_rows
 					   if r.serial_and_batch_bundle and not r.batch_no]
@@ -771,68 +830,166 @@ def _fetch_rm_consumption(work_orders, filters):
 
 	result = {}
 	for r in raw_rows:
-		# Build one or more rm dicts (one per batch when using bundle)
-		rm_dicts = []
-		if r.batch_no:
-			rm_dicts.append({
-				"item_code": r.item_code,
-				"item_name": r.item_name,
-				"description": r.description,
-				"stock_uom": r.stock_uom,
-				"qty": r.qty,
-				"batch_no": r.batch_no,
-				"purchase_receipt": r.reference_purchase_receipt or None,
-			})
-		elif r.serial_and_batch_bundle:
+		row_qty = flt(r.qty)
+		# One (batch_no, qty) part per batch when the row uses a bundle
+		parts = [(r.batch_no, row_qty)] if r.batch_no else []
+		if not parts and r.serial_and_batch_bundle:
 			entries = rm_bundle_entries.get(r.serial_and_batch_bundle) or []
-			if entries:
-				total_bundle_qty = sum(e["qty"] for e in entries if e["qty"])
-				for be in entries:
-					qty_fraction = (be["qty"] / total_bundle_qty * r.qty) if total_bundle_qty else r.qty
-					rm_dicts.append({
-						"item_code": r.item_code,
-						"item_name": r.item_name,
-						"description": r.description,
-						"stock_uom": r.stock_uom,
-						"qty": qty_fraction,
-						"batch_no": be["batch_no"],
-						"purchase_receipt": r.reference_purchase_receipt or None,
-					})
-			else:
-				rm_dicts.append({
-					"item_code": r.item_code,
-					"item_name": r.item_name,
-					"description": r.description,
-					"stock_uom": r.stock_uom,
-					"qty": r.qty,
-					"batch_no": None,
-					"purchase_receipt": r.reference_purchase_receipt or None,
-				})
-		else:
-			rm_dicts.append({
+			total_bundle_qty = sum(flt(e["qty"]) for e in entries)
+			parts = [
+				(be["batch_no"], (flt(be["qty"]) / total_bundle_qty * row_qty) if total_bundle_qty else row_qty)
+				for be in entries
+			]
+		if not parts:
+			parts = [(None, row_qty)]
+
+		for batch_no, qty in parts:
+			result.setdefault(r.work_order, []).append({
 				"item_code": r.item_code,
 				"item_name": r.item_name,
 				"description": r.description,
 				"stock_uom": r.stock_uom,
-				"qty": r.qty,
-				"batch_no": None,
+				"qty": qty,
+				# consumed cost follows the consumed qty at the entry's valuation
+				# rate, so bundle-split rows carry their proportional share
+				"consumed_cost": flt(qty) * flt(r.basic_rate),
+				"batch_no": batch_no,
 				"purchase_receipt": r.reference_purchase_receipt or None,
+				"row": r.sed_name,
+				"via_sfg": None,
+				"sfg_attribution": None,
 			})
-
-		# Consumed cost follows the consumed qty at the stock entry's valuation
-		# rate, so bundle-split rows carry their proportional share of the cost.
-		for rm in rm_dicts:
-			rm["consumed_cost"] = frappe.utils.flt(rm["qty"]) * frappe.utils.flt(r.basic_rate)
-
-		# Fallback: if no purchase_receipt from reference_purchase_receipt, try via batch
-		for rm in rm_dicts:
-			if not rm["purchase_receipt"] and rm.get("batch_no"):
-				rm["purchase_receipt"] = _lookup_pr_via_batch(rm["batch_no"], rm["item_code"])
-
-		for rm in rm_dicts:
-			result.setdefault(r.work_order, []).append(rm)
-
 	return result
+
+
+# ---------------------------------------------------------------------------
+# Semi-finished items: from a consumed mix to the raw materials inside it
+# ---------------------------------------------------------------------------
+
+# How sure a row reached through a semi-finished item is, weakest last.
+SFG_SINGLE = "single"
+SFG_PRO_RATA = "pro_rata"
+SFG_NOT_RECORDED = "not_recorded"
+SFG_NO_SOURCE = "no_source"
+_SFG_RANK = {SFG_SINGLE: 0, SFG_PRO_RATA: 1, SFG_NOT_RECORDED: 2, SFG_NO_SOURCE: 2}
+
+
+def _sfg_label(basis, sources=0):
+	return {
+		SFG_SINGLE: _("Single run"),
+		SFG_PRO_RATA: _("Pro-rata over {0} sources (estimated)").format(sources),
+		SFG_NOT_RECORDED: _("Origin not recorded"),
+		SFG_NO_SOURCE: _("Semi-finished, no source found"),
+	}[basis]
+
+
+def _expand_semi_finished(rm_map, depth=1):
+	"""Replace each consumed semi-finished row by what went into it.
+
+	A consumed row without a batch whose item some Work Order makes is a
+	semi-finished item drawn from a shared, batchless pool. The runs it came
+	from are read off the pool's stock ledger (``batch_lineage.pool_sources``):
+	what was booked into the pool since it was last empty. The draw is split
+	over those receipts pro rata to what each booked, and a run's share of the
+	draw over the run's whole output scales the run's own consumption.
+
+	* one run: plain arithmetic on booked figures, labelled "Single run";
+	* several receipts: the split is not recorded, so it is pro rata and
+	  labelled estimated;
+	* a receipt that is not a Work Order's output (a Stock Reconciliation, a
+	  Material Receipt, a transfer in) keeps its share as a row of the
+	  semi-finished item itself, labelled "Origin not recorded";
+	* no receipt at all: the row stays, labelled.
+
+	Quantities below keep the finished-goods Work Order's basis (what its draw
+	embodied), so the apportioning downstream applies unchanged.
+	"""
+	if depth > MAX_SFG_DEPTH:
+		return rm_map
+	candidates = [rm for rms in rm_map.values() for rm in rms if not rm.get("batch_no") and rm.get("row")]
+	made = batch_lineage.manufactured_items({rm["item_code"] for rm in candidates})
+	draws = {id(rm): rm for rm in candidates if rm["item_code"] in made}
+	if not draws:
+		return rm_map
+
+	pool = batch_lineage.pool_sources([rm["row"] for rm in draws.values()], qty_tick())
+	runs = sorted(
+		{w["work_order"] for rm in draws.values() for w in (pool.get(rm["row"]) or {}).get("work_orders", [])}
+	)
+	run_rows = _expand_semi_finished(_consumption_rows(runs), depth + 1) if runs else {}
+	run_output = _fetch_wo_finished_qty(runs) if runs else {}
+
+	return {
+		wo: [
+			part
+			for rm in rms
+			for part in (
+				_draw_parts(rm, pool.get(rm["row"]), run_rows, run_output) if id(rm) in draws else [rm]
+			)
+		]
+		for wo, rms in rm_map.items()
+	}
+
+
+def _draw_parts(rm, source, run_rows, run_output):
+	"""The rows that stand for the semi-finished draw ``rm``."""
+	receipts = []
+	if source:
+		receipts = [("run", w["work_order"], flt(w["qty"])) for w in source["work_orders"]]
+		receipts += [("other", o, flt(o["qty"])) for o in source["other"]]
+	total = sum(q for _kind, _src, q in receipts)
+	if total <= 0:
+		return [dict(rm, sfg_attribution=_sfg_label(SFG_NO_SOURCE), _sfg_basis=SFG_NO_SOURCE)]
+
+	basis = SFG_SINGLE if len(receipts) == 1 else SFG_PRO_RATA
+	parts = []
+	for kind, src, booked in receipts:
+		share = booked / total
+		if kind == "other":
+			parts.append(
+				dict(
+					rm,
+					qty=flt(rm["qty"]) * share,
+					consumed_cost=flt(rm["consumed_cost"]) * share,
+					via_sfg=f"{rm['item_code']} ← {src['voucher_type']} {src['voucher_no']}",
+					sfg_attribution=_sfg_label(SFG_NOT_RECORDED),
+					_sfg_basis=SFG_NOT_RECORDED,
+				)
+			)
+			continue
+
+		via = f"{rm['item_code']} ← {src}"
+		output = flt(run_output.get(src))
+		# the run's share of the draw, over everything the run made
+		ratio = flt(rm["qty"]) * share / output if output > 0 else None
+		constituents = run_rows.get(src) or []
+		if not constituents:
+			# the run booked no consumption: its share stays on the mix itself
+			parts.append(
+				dict(
+					rm,
+					qty=flt(rm["qty"]) * share,
+					consumed_cost=flt(rm["consumed_cost"]) * share,
+					via_sfg=via,
+					sfg_attribution=_sfg_label(basis, len(receipts)),
+					_sfg_basis=basis,
+				)
+			)
+			continue
+		for c in constituents:
+			inner = c.get("_sfg_basis")
+			weaker = inner if inner and _SFG_RANK[inner] > _SFG_RANK[basis] else None
+			parts.append(
+				dict(
+					c,
+					qty=flt(c["qty"]) * ratio if ratio is not None else None,
+					consumed_cost=flt(c["consumed_cost"]) * ratio if ratio is not None else None,
+					via_sfg=f"{via} · {c['via_sfg']}" if c.get("via_sfg") else via,
+					sfg_attribution=c["sfg_attribution"] if weaker else _sfg_label(basis, len(receipts)),
+					_sfg_basis=weaker or basis,
+				)
+			)
+	return parts
 
 
 def _lookup_pr_via_batch(batch_no, item_code):
@@ -1172,6 +1329,8 @@ def get_print_html(filters):
 			row_list.append({
 				"rm_item_code": _v(row.get("rm_item_code")),
 				"rm_item_name": _v(row.get("rm_item_name")),
+				"via_sfg": _v(row.get("via_sfg")),
+				"sfg_attribution": _v(row.get("sfg_attribution")),
 				"consumed_qty": _num2(row.get("consumed_qty")),
 				"apportioned_qty": _num2(row.get("apportioned_qty")),
 				"apportioned_cost": _num2(row.get("apportioned_cost")),
@@ -1387,9 +1546,11 @@ def get_export_excel(filters):
 		"RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", APPORTIONED_COST_HEADER,
 		"RM Batch No", "Purchase Receipt", "PR Date", "Supplier Name",
 		"PR Qty", "Balance Stock", "Customs Doc No",
+		"Via Semi-Finished", "SFG Attribution",
 	]
 	FG_DATE_COL = FG_HEADERS.index("Mfg Date") + 1
 	RM_GROUP_END = RM_HEADERS.index("RM Batch No") + 1
+	PR_GROUP_END = RM_HEADERS.index("Customs Doc No") + 1
 	RM_DATE_COL = RM_HEADERS.index("PR Date") + 1
 	RM_QTY_COLS = tuple(
 		RM_HEADERS.index(h) + 1 for h in ("Consumed Qty", "Apportioned Qty", "PR Qty", "Balance Stock")
@@ -1559,7 +1720,7 @@ def get_export_excel(filters):
 		rm_group_cell.fill = FILL_RM_GROUP
 		rm_group_cell.alignment = ALIGN_CENTER
 		ws.merge_cells(start_row=grp_row_idx, start_column=1, end_row=grp_row_idx, end_column=RM_GROUP_END)
-		# "Purchase / Customs" spans the remaining RM columns
+		# "Purchase / Customs" spans the columns up to Customs Doc No
 		pr_group_cell = ws.cell(row=grp_row_idx, column=RM_GROUP_END + 1)
 		pr_group_cell.value = "Purchase / Customs"
 		pr_group_cell.font = WHITE_BOLD
@@ -1567,6 +1728,16 @@ def get_export_excel(filters):
 		pr_group_cell.alignment = ALIGN_CENTER
 		ws.merge_cells(
 			start_row=grp_row_idx, start_column=RM_GROUP_END + 1,
+			end_row=grp_row_idx, end_column=PR_GROUP_END,
+		)
+		# "Semi-Finished Trace" spans the route columns after it
+		sfg_group_cell = ws.cell(row=grp_row_idx, column=PR_GROUP_END + 1)
+		sfg_group_cell.value = "Semi-Finished Trace"
+		sfg_group_cell.font = WHITE_BOLD
+		sfg_group_cell.fill = FILL_RM_GROUP
+		sfg_group_cell.alignment = ALIGN_CENTER
+		ws.merge_cells(
+			start_row=grp_row_idx, start_column=PR_GROUP_END + 1,
 			end_row=grp_row_idx, end_column=len(RM_HEADERS),
 		)
 
@@ -1622,6 +1793,8 @@ def get_export_excel(filters):
 				pr_qty,
 				balance_stock,
 				row.get("customs_document_no") or "",
+				row.get("via_sfg") or "",
+				row.get("sfg_attribution") or "",
 			]
 			data_row_idx = ws.max_row + 1
 			ws.append(rm_row)
@@ -1654,7 +1827,10 @@ def get_export_excel(filters):
 		"Raw material consumption is based on actual Stock Entry records, not BOM explosion. "
 		"Consumed Qty is the whole Work Order; Apportioned Qty and Apportioned Cost are the part embodied in "
 		"the cartons of the FG batch sold on this invoice (Consumed Qty × Batch Sold Qty ÷ Batch Produced Qty). "
-		"Apportioned Cost is in company currency at the valuation of the consumption entries.",
+		"Apportioned Cost is in company currency at the valuation of the consumption entries. "
+		"A semi-finished item is replaced by the raw materials of the run that made it, read off the "
+		"semi-finished stock ledger (Via Semi-Finished); where several runs could have supplied it, the "
+		"quantities are split pro rata to what each run booked and marked estimated (SFG Attribution).",
 		font=_normal_font(size=8),
 		align=ALIGN_CENTER,
 	)

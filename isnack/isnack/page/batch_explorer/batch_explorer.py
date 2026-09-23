@@ -625,18 +625,7 @@ def _attach_sfg_sources(nodes: list[dict], materials: list[dict], batch_no: str,
 
 def _manufactured_items(item_codes) -> set[str]:
 	"""The items among ``item_codes`` that a submitted Work Order produces."""
-	codes = [c for c in item_codes if c]
-	if not codes:
-		return set()
-	return {
-		r.production_item
-		for r in frappe.get_all(
-			"Work Order",
-			filters={"production_item": ["in", codes], "docstatus": 1},
-			fields=["production_item"],
-			distinct=True,
-		)
-	}
+	return batch_lineage.manufactured_items(item_codes)
 
 
 def _made_by_group(draws: list[dict], material: dict, batch_no: str, path: tuple) -> dict:
