@@ -397,7 +397,9 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 
 		with patch.object(report, "get_data", return_value=[_report_row()]), patch.object(
 			report, "_fetch_si_header_details", return_value={}
-		), patch("frappe.render_template", side_effect=render):
+		), patch("frappe.get_cached_value", return_value="TND"), patch(
+			"frappe.render_template", side_effect=render
+		):
 			report.get_print_html(FILTERS)
 
 		fg = captured["invoices"][0]["fg_items"][0]
@@ -406,6 +408,14 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 		row = captured["invoices"][0]["rows"][0]
 		self.assertEqual(row["consumed_qty"], "147.91")
 		self.assertEqual(row["apportioned_qty"], "144.37")
+		self.assertEqual(row["apportioned_cost"], "1878.96")
+		self.assertEqual(captured["apportioned_cost_label"], "Apportioned Cost (TND)")
+
+	def test_cost_label_falls_back_without_a_currency(self):
+		with patch("frappe.get_cached_value", side_effect=Exception("no site")):
+			self.assertEqual(report._apportioned_cost_label("Isnack"), "Apportioned Cost")
+		with patch("frappe.get_cached_value", return_value="TND"):
+			self.assertEqual(report._apportioned_cost_label("Isnack"), "Apportioned Cost (TND)")
 
 	def test_print_template_lists_the_new_headings(self):
 		import os
@@ -413,16 +423,16 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 		path = os.path.join(os.path.dirname(report.__file__), "customs_export_traceability_report_print.html")
 		with open(path) as f:
 			template = f.read()
-		for heading in ("Batch Sold Qty", "Batch Produced Qty", "Apportioned Qty"):
+		for heading in ("Batch Sold Qty", "Batch Produced Qty", "Apportioned Qty", "{{ apportioned_cost_label }}"):
 			self.assertIn(heading, template)
-		self.assertIn('<th colspan="5" class="col-group-rm">', template)
+		self.assertIn('<th colspan="6" class="col-group-rm">', template)
 
 	def test_excel_export_adds_the_columns_without_dropping_any(self):
 		from openpyxl import load_workbook
 
 		with patch.object(report, "get_data", return_value=[_report_row()]), patch.object(
 			report, "_fetch_si_header_details", return_value={}
-		):
+		), patch("frappe.get_cached_value", return_value="TND"):
 			out = report.get_export_excel(FILTERS)
 
 		ws = load_workbook(BytesIO(base64.b64decode(out["file_content"]))).active
@@ -436,16 +446,18 @@ class TestPrintAndExcelCarryTheColumns(unittest.TestCase):
 			 "Batch Produced Qty", "Work Order", "Mfg Date"],
 		)
 		self.assertEqual(
-			rm_header[:11],
-			["RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", "RM Batch No",
-			 "Purchase Receipt", "PR Date", "Supplier Name", "PR Qty", "Balance Stock", "Customs Doc No"],
+			rm_header[:12],
+			["RM Item Code", "RM Item Name", "Consumed Qty", "Apportioned Qty", "Apportioned Cost (TND)",
+			 "RM Batch No", "Purchase Receipt", "PR Date", "Supplier Name", "PR Qty", "Balance Stock",
+			 "Customs Doc No"],
 		)
 		fg_row = next(h for h in headers if h[0] == 1)
 		self.assertEqual(fg_row[10:13], ["AAO-007", 449.0, 460.0])
 		rm_row = next(h for h in headers if h[0] == "RM20003")
 		self.assertEqual(rm_row[2], 147.91)
 		self.assertAlmostEqual(rm_row[3], 144.373)
-		self.assertEqual(rm_row[4], "512806015")
+		self.assertAlmostEqual(rm_row[4], 1878.958)
+		self.assertEqual(rm_row[5], "512806015")
 
 
 if __name__ == "__main__":
