@@ -309,6 +309,33 @@ class TestWorkOrderInputs(unittest.TestCase):
 		self.assertEqual(sfg["route"], ["Form", "Item", "SFG1"])
 		self.assertEqual(sfg["tags"], ["consumed", "no_batch"])
 
+	def test_semi_finished_material_is_traced_to_its_run(self):
+		self.rows["SE-MFG"][3]["name"] = "R-SFG1"
+		pool = {
+			"R-SFG1": {
+				"item_code": "SFG1",
+				"warehouse": "Semi-finished",
+				"emptied": True,
+				"work_orders": [{"work_order": "WO-S", "qty": 180.0}],
+				"other": [],
+			}
+		}
+		with patch.object(be, "_manufactured_items", return_value={"SFG1"}) as made, patch.object(
+			bl, "pool_sources", return_value=pool
+		) as sources, patch.object(be, "_run_materials", return_value={"key": "materials"}) as run, patch.object(
+			be, "qty_tick", return_value=0.001
+		):
+			result = self._run()
+
+		sfg = next(n for n in result["children"][0]["nodes"] if n["name"] == "SFG1")
+		self.assertEqual(sfg["tags"], ["consumed", "semi_finished"])
+		self.assertEqual(sfg["tag_detail"], "made by WO-S")
+		self.assertEqual([n["name"] for n in sfg["children"][0]["nodes"]], ["WO-S"])
+		# only batchless rows are candidates; batch rows keep their own trace
+		made.assert_called_once_with({"SFG1"})
+		sources.assert_called_once_with(["R-SFG1"], 0.001)
+		run.assert_called_once_with("WO-S", "AAO-007", ("WO-A", "WO-S"))
+
 	def test_entry_leaves_are_tagged_and_qty_less(self):
 		result = self._run()
 		entries = result["children"][1]
@@ -345,6 +372,140 @@ class TestWorkOrderInputs(unittest.TestCase):
 		# every candidate is checked, never just the first page
 		for c in self.get_list.call_args_list:
 			self.assertEqual(c.kwargs.get("limit_page_length"), 0, c.args[0])
+
+
+def _material(item_code, row, batch_no=None):
+	return {
+		"item_code": item_code,
+		"item_name": item_code.lower(),
+		"stock_uom": "Kg",
+		"batch_no": batch_no,
+		"qty": 80.0,
+		"lines": [{"stock_entry": "SE-MCFM", "row": row, "qty": 80.0}],
+	}
+
+
+def _pool(work_orders=(), other=(), emptied=True):
+	return {
+		"item_code": "SFG1",
+		"warehouse": "Semi-finished - ISN",
+		"emptied": emptied,
+		"work_orders": [{"work_order": w, "qty": 80.0} for w in work_orders],
+		"other": list(other),
+	}
+
+
+RECO = {
+	"voucher_type": "Stock Reconciliation",
+	"voucher_no": "MAT-RECO-1",
+	"purpose": None,
+	"posting_date": "2026-09-15",
+	"qty": 20.0,
+}
+
+
+class TestSemiFinishedSources(unittest.TestCase):
+	"""_attach_sfg_sources: SFG1 is made by Work Orders, RM9 (water) is not."""
+
+	def setUp(self):
+		self.materials = [_material("SFG1", "R1"), _material("RM9", "R2"), _material("RM1", "R3", batch_no="RB1")]
+		self.nodes = [
+			{"name": "SFG1", "tags": ["consumed", "no_batch"]},
+			{"name": "RM9", "tags": ["consumed", "no_batch"]},
+			{"name": "RB1", "tags": ["consumed"]},
+		]
+
+	def _attach(self, pool, path=("WO-FG",)):
+		produced = [frappe._dict(name=w, produced_qty=80.0, stock_uom="Kg") for w in ("WO-A", "WO-C", "WO-D")]
+		with patch.object(be, "_manufactured_items", return_value={"SFG1"}) as made, patch.object(
+			bl, "pool_sources", return_value=pool
+		) as sources, patch.object(be, "_build_nodes", side_effect=_plain_nodes), patch(
+			"frappe.get_all", return_value=produced
+		), patch.object(be, "_run_materials", return_value={"key": "materials"}) as run, patch.object(
+			be, "qty_tick", return_value=0.001
+		):
+			be._attach_sfg_sources(self.nodes, self.materials, "AAO-007", path)
+		self.made, self.sources, self.run = made, sources, run
+		return self.nodes[0]
+
+	def test_single_run(self):
+		sfg = self._attach({"R1": _pool(["WO-A"])})
+
+		self.assertEqual(sfg["tags"], ["consumed", "semi_finished"])
+		self.assertEqual(sfg["tag_detail"], "made by WO-A")
+		group = sfg["children"][0]
+		self.assertEqual((group["key"], group["label"], group["count"]), ("sources", "Made by", 1))
+		self.assertEqual(group["hint"], "Booked into Semi-finished - ISN since it was last empty")
+		run = group["nodes"][0]
+		self.assertEqual(run["name"], "WO-A")
+		self.assertEqual(run["made"], {"qty": 80.0, "uom": "Kg"})
+		self.assertEqual(run["children"], [{"key": "materials"}])
+		self.run.assert_called_once_with("WO-A", "AAO-007", ("WO-FG", "WO-A"))
+
+		# water is a batchless raw material: its trace still ends at the item
+		self.assertEqual(self.nodes[1], {"name": "RM9", "tags": ["consumed", "no_batch"]})
+		self.assertEqual(self.nodes[2], {"name": "RB1", "tags": ["consumed"]})
+		self.made.assert_called_once_with({"SFG1", "RM9"})
+		self.sources.assert_called_once_with(["R1"], 0.001)
+
+	def test_several_runs_and_stock_of_unrecorded_origin(self):
+		sfg = self._attach({"R1": _pool(["WO-C", "WO-D"], [RECO], emptied=False)})
+
+		self.assertEqual(sfg["tag_detail"], "made by 2 Work Orders")
+		group = sfg["children"][0]
+		self.assertEqual([n["name"] for n in group["nodes"]], ["WO-C", "WO-D", "MAT-RECO-1"])
+		self.assertEqual(
+			group["hint"],
+			"Booked into Semi-finished - ISN before the draw; it was never empty before"
+			" · the split between them is not recorded",
+		)
+		reco = group["nodes"][2]
+		self.assertEqual(reco["doctype"], "Stock Reconciliation")
+		self.assertEqual(reco["tags"], ["other_source"])
+		self.assertEqual((reco["qty"], reco["uom"], reco["neutral"]), (20.0, "Kg", True))
+		self.assertEqual(reco["extra"], "Stock Reconciliation")
+
+	def test_only_stock_of_unrecorded_origin(self):
+		sfg = self._attach({"R1": _pool([], [RECO])})
+		self.assertEqual(sfg["tags"], ["consumed", "semi_finished"])
+		self.assertEqual(sfg["tag_detail"], "origin not recorded")
+		self.assertEqual([n["name"] for n in sfg["children"][0]["nodes"]], ["MAT-RECO-1"])
+		self.run.assert_not_called()
+
+	def test_no_receipt_found_keeps_the_dead_end(self):
+		sfg = self._attach({"R1": _pool([])})
+		self.assertEqual(sfg, {"name": "SFG1", "tags": ["consumed", "no_batch"]})
+
+	def test_a_run_already_on_the_path_is_not_expanded_again(self):
+		sfg = self._attach({"R1": _pool(["WO-A"])}, path=("WO-FG", "WO-A"))
+		self.assertNotIn("children", sfg["children"][0]["nodes"][0])
+		self.run.assert_not_called()
+
+	def test_depth_cap(self):
+		path = tuple(f"WO-{i}" for i in range(be.MAX_SFG_DEPTH + 1))
+		with patch.object(be, "_manufactured_items") as made:
+			be._attach_sfg_sources(self.nodes, self.materials, "AAO-007", path)
+		made.assert_not_called()
+		self.assertNotIn("children", self.nodes[0])
+
+
+class TestRunMaterials(unittest.TestCase):
+	def test_whole_work_order_materials_recurse_and_count_hidden(self):
+		read = {"entries": [], "hidden": 2, "submitted": ["SE"], "rows_by_entry": {"SE": []}, "bundle_map": {}}
+		materials = [_material("SFG2", "R9")]
+		nodes = [{"name": "SFG2", "tags": ["consumed", "no_batch"]}]
+		with patch.object(be, "_read_work_order", return_value=read) as rd, patch.object(
+			bl, "consumed_materials", return_value=materials
+		), patch.object(be, "_material_nodes", return_value=nodes), patch.object(
+			be, "_attach_sfg_sources"
+		) as attach:
+			group = be._run_materials("WO-S", "AAO-007", ("WO-FG", "WO-S"))
+
+		rd.assert_called_once_with("WO-S")
+		attach.assert_called_once_with(nodes, materials, "AAO-007", ("WO-FG", "WO-S"))
+		self.assertEqual(group["key"], "materials")
+		self.assertEqual(group["nodes"], nodes)
+		self.assertEqual(group["hint"], "Stock UOM · whole Work Order · 2 hidden by permissions")
 
 
 class TestSharedOutput(unittest.TestCase):

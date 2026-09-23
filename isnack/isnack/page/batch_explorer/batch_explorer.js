@@ -266,7 +266,8 @@ isnack.BatchExplorer = class BatchExplorer {
 		const tags = (node.tags || []).length
 			? `<span class="be-leaf-tags">${node.tags.map((t) => this.tag_chip(t)).join("")}</span>`
 			: "";
-		const note = node.lineage ? `<div class="be-leaf-note">${this.lineage_note(node.lineage)}</div>` : "";
+		const note_html = node.lineage ? this.lineage_note(node.lineage) : node.made ? this.made_note(node.made) : "";
+		const note = note_html ? `<div class="be-leaf-note">${note_html}</div>` : "";
 		const lines = (node.lines || []).length ? this.lines_html(node.lines) : "";
 		const user = node.owner
 			? `<span class="be-leaf-user" title="${__("Created by")} ${esc(node.owner_name || "")}">
@@ -388,6 +389,8 @@ isnack.BatchExplorer = class BatchExplorer {
 			produced: __("Produced"),
 			this_batch: __("This batch"),
 			no_batch: __("No batch · trace ends here"),
+			semi_finished: __("Semi-finished"),
+			other_source: __("Origin not recorded"),
 			expired: __("Expired"),
 			disabled: __("Disabled"),
 			shared_output: __("Shared output"),
@@ -407,7 +410,7 @@ isnack.BatchExplorer = class BatchExplorer {
 	}
 
 	tag_chip(key) {
-		const warn = ["shared_output", "expired", "disabled", "no_batch"].includes(key);
+		const warn = ["shared_output", "expired", "disabled", "no_batch", "other_source"].includes(key);
 		return `<span class="be-chip muted be-leaf-tag ${warn ? "be-tag-warn" : ""}">${frappe.utils.escape_html(this.tag_label(key))}</span>`;
 	}
 
@@ -419,6 +422,11 @@ isnack.BatchExplorer = class BatchExplorer {
 		if (l.share != null) parts.push(Math.round(l.share * 1000) / 10 + " %");
 		if (l.hidden_entries) parts.push(__("{0} entries hidden by permissions", [l.hidden_entries]));
 		return parts.join(" · ");
+	}
+
+	made_note(made) {
+		const uom = made.uom ? " " + frappe.utils.escape_html(made.uom) : "";
+		return __("Made {0}", [format_number(made.qty) + uom]);
 	}
 
 	lines_html(lines) {
@@ -615,11 +623,17 @@ isnack.BatchExplorer = class BatchExplorer {
 			// a Work Order's nested inputs follow their leaf
 			$(this).next(".be-sub, .be-load-inputs").toggle(show);
 		});
-		// hide groups with no visible leaves while filtering
+		// while filtering, show and open every group that holds a match, however
+		// deep; a collapsed group hides its leaves, so count what the filter kept
+		// rather than what is on screen
 		this.$tree.find(".be-group").each(function () {
-			const visible = $(this).find(".be-leaf:visible").length;
-			$(this).toggle(!q || visible > 0);
-			if (q && visible > 0) $(this).removeClass("be-collapsed");
+			const kept = $(this)
+				.find(".be-leaf")
+				.filter(function () {
+					return this.style.display !== "none";
+				}).length;
+			$(this).toggle(!q || kept > 0);
+			if (q && kept > 0) $(this).removeClass("be-collapsed");
 		});
 	}
 };

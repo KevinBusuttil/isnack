@@ -263,6 +263,8 @@ class TestConsumption(unittest.TestCase):
 		self.assertEqual(rm1["lines"][0]["s_warehouse"], "WIP")
 		self.assertEqual(materials[1]["lines"][0]["split"], (1, 2))
 		self.assertEqual(materials[3]["qty"], 180.0)
+		# each line names its row, the key of the row's stock ledger entry
+		self.assertEqual(materials[3]["lines"][0]["row"], "row-SFG1-nb")
 
 
 class TestFinishedGoodsAndShare(unittest.TestCase):
@@ -896,6 +898,110 @@ class TestClassification(unittest.TestCase):
 		self.assertEqual(bl.entry_warehouses(_entry("x"), rows), ("WIP", "*"))
 		self.assertEqual(bl.entry_warehouses(_entry("x"), []), (None, None))
 
+
+
+def _sle(voucher_no, qty_after, voucher_type="Stock Entry", row=None):
+	return frappe._dict(
+		voucher_type=voucher_type,
+		voucher_no=voucher_no,
+		voucher_detail_no=row or f"{voucher_no}-r1",
+		qty_after_transaction=qty_after,
+		posting_date="2026-09-16",
+	)
+
+
+class TestPoolReceipts(unittest.TestCase):
+	def test_only_rises_count_by_what_they_added(self):
+		rows = [_sle("MFG-A", 80), _sle("DRAW-X", 40), _sle("MFG-B", 100)]
+		got = bl.pool_receipts(rows, 0, 0.001)
+		self.assertEqual([(r.voucher_no, r.qty) for r in got], [("MFG-A", 80.0), ("MFG-B", 60.0)])
+
+	def test_stock_reconciliation_counts_by_its_delta(self):
+		rows = [
+			_sle("MFG-A", 60),
+			_sle("RECO-1", 80, voucher_type="Stock Reconciliation"),
+			_sle("RECO-2", 70, voucher_type="Stock Reconciliation"),
+		]
+		got = bl.pool_receipts(rows, 0, 0.001)
+		self.assertEqual([(r.voucher_no, r.qty) for r in got], [("MFG-A", 60.0), ("RECO-1", 20.0)])
+
+	def test_walks_from_the_anchor_residue_and_needs_a_posting_unit(self):
+		got = bl.pool_receipts([_sle("NOISE", 0.0006), _sle("TICK", 0.0016)], 0.0002, 0.001)
+		self.assertEqual([r.voucher_no for r in got], ["TICK"])
+
+
+class TestPoolSources(unittest.TestCase):
+	"""A draw of SFG1 from the Semi-finished pool, traced back through its ledger."""
+
+	DETAIL = {
+		"MFG-A-r1": frappe._dict(name="MFG-A-r1", parent="MFG-A", is_finished_item=1),
+		"MFG-C-r1": frappe._dict(name="MFG-C-r1", parent="MFG-C", is_finished_item=1),
+		"MFG-D-r1": frappe._dict(name="MFG-D-r1", parent="MFG-D", is_finished_item=1),
+		"TRF-r1": frappe._dict(name="TRF-r1", parent="TRF", is_finished_item=0),
+	}
+	ENTRIES = {
+		"MFG-A": frappe._dict(name="MFG-A", work_order="WO-A", purpose="Manufacture"),
+		"MFG-C": frappe._dict(name="MFG-C", work_order="WO-C", purpose="Manufacture"),
+		"MFG-D": frappe._dict(name="MFG-D", work_order="WO-D", purpose="Manufacture"),
+		"TRF": frappe._dict(name="TRF", work_order=None, purpose="Material Transfer"),
+	}
+
+	def _get_all(self, doctype, filters=None, fields=None, **kw):
+		if doctype == "Stock Ledger Entry":
+			self.assertEqual(filters["voucher_detail_no"], ["in", ["R-DRAW"]])
+			return [frappe._dict(name="SLE-DRAW", voucher_detail_no="R-DRAW", item_code="SFG1", warehouse="Semi-finished")]
+		if doctype == "Stock Entry Detail":
+			return [self.DETAIL[n] for n in filters["name"][1] if n in self.DETAIL]
+		if doctype == "Stock Entry":
+			return [self.ENTRIES[n] for n in filters["name"][1] if n in self.ENTRIES]
+		raise AssertionError(doctype)
+
+	def _run(self, anchor, window):
+		with patch("frappe.get_all", side_effect=self._get_all), patch(
+			"frappe.db.sql", side_effect=[anchor, window]
+		) as sql:
+			result = bl.pool_sources(["R-DRAW", None, "R-DRAW"], 0.001)
+		return result["R-DRAW"], sql
+
+	def test_single_run_since_the_pool_was_last_empty(self):
+		anchor = [frappe._dict(name="SLE-ZERO", qty_after_transaction=0)]
+		got, sql = self._run(anchor, [_sle("MFG-A", 80)])
+
+		self.assertTrue(got["emptied"])
+		self.assertEqual(got["work_orders"], [{"work_order": "WO-A", "qty": 80.0}])
+		self.assertEqual(got["other"], [])
+		self.assertEqual((got["item_code"], got["warehouse"]), ("SFG1", "Semi-finished"))
+		# the anchor is read at or below one posting unit, strictly before the draw
+		self.assertEqual(sql.call_args_list[0].args[1], {"draw": "SLE-DRAW", "tick": 0.001})
+		window_sql, window_args = sql.call_args_list[1].args
+		self.assertIn("a.name = %(anchor)s", window_sql)
+		self.assertEqual(window_args["anchor"], "SLE-ZERO")
+
+	def test_carry_over_and_stock_of_unrecorded_origin(self):
+		window = [
+			_sle("MFG-C", 60),
+			_sle("DRAW-Y", 20),  # another finished-goods draw
+			_sle("RECO-1", 40, voucher_type="Stock Reconciliation"),
+			_sle("TRF", 50, row="TRF-r1"),
+			_sle("MFG-D", 110),
+		]
+		got, sql = self._run([], window)
+
+		self.assertFalse(got["emptied"])
+		self.assertEqual(
+			got["work_orders"], [{"work_order": "WO-C", "qty": 60.0}, {"work_order": "WO-D", "qty": 60.0}]
+		)
+		self.assertEqual(
+			[(o["voucher_type"], o["voucher_no"], o["purpose"], o["qty"]) for o in got["other"]],
+			[("Stock Reconciliation", "RECO-1", None, 20.0), ("Stock Entry", "TRF", "Material Transfer", 10.0)],
+		)
+		# no zero before the draw: the whole earlier ledger is the window
+		self.assertNotIn("%(anchor)s", sql.call_args_list[1].args[0])
+
+	def test_nothing_to_trace(self):
+		with patch("frappe.get_all") as get_all:
+			self.assertEqual(bl.pool_sources([None], 0.001), {})
+		get_all.assert_not_called()
 
 if __name__ == "__main__":
 	unittest.main()
