@@ -284,12 +284,14 @@ isnack.BatchExplorer = class BatchExplorer {
 		const name_html = has_link
 			? `<a class="be-leaf-name" href="${href}">${esc(node.name)}</a>`
 			: `<span class="be-leaf-name be-leaf-name-static">${esc(node.name)}</span>`;
+		const kind = this.kind_label(node);
+		const kind_html = kind ? `<span class="be-leaf-kind">${esc(kind)}</span>` : "";
 
 		const $leaf = $(`
 			<div class="be-leaf" style="--be-color:${group.color}">
 				<span class="be-leaf-dot"></span>
 				<div class="be-leaf-main">
-					<div>${name_html}${tags}</div>
+					<div>${kind_html}${name_html}${tags}</div>
 					${note}
 					<div class="be-leaf-meta">${meta_bits.join(" · ")}</div>
 					${lines}
@@ -369,6 +371,13 @@ isnack.BatchExplorer = class BatchExplorer {
 			return `/app/${frappe.router.slug(route[1])}/${encodeURIComponent(route[2])}`;
 		}
 		return "/app/" + route.map((p) => encodeURIComponent(p)).join("/");
+	}
+
+	/** What the row's ID is, shown in front of it: the document type, with
+	 *  "Batch No" for a lot. A material without a batch is an "Item". */
+	kind_label(node) {
+		if (node.doctype === "Batch") return __("Batch No");
+		return node.doctype ? __(node.doctype) : "";
 	}
 
 	qty_chip(node) {
