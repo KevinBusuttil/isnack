@@ -245,6 +245,14 @@
 	flex: 1;
 	min-width: 0;
 }
+/* what the ID is ("Work Order", "Batch No"): a caption, so the ID stays the
+   thing the eye lands on */
+.be-leaf-kind {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	margin-right: 6px;
+	white-space: nowrap;
+}
 .be-leaf-name {
 	font-weight: 600;
 	color: var(--text-color);
