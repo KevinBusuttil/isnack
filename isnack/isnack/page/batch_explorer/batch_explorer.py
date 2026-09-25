@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, getdate, nowdate
+from frappe.utils import cint, flt, formatdate, getdate, nowdate
 
 from isnack.utils import batch_lineage
 from isnack.utils.qty import qty_tick
@@ -81,6 +81,9 @@ NESTED_META = {
 
 # Semi-finished levels followed below a finished-goods Work Order, at most.
 MAX_SFG_DEPTH = 3
+
+# Words of a Batch picker search that are matched; any further words are ignored.
+MAX_SEARCH_TERMS = 5
 
 # Producing Work Orders beyond this many get their inputs loaded on demand
 # (``get_work_order_inputs``) instead of eagerly with the page.
@@ -180,6 +183,83 @@ def get_work_order_inputs(work_order: str | None = None, batch_no: str | None = 
 
 	batch = _load_batch(batch_no)
 	return _work_order_inputs(work_order, batch)
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def search_batches(doctype, txt, searchfield, start, page_len, filters):
+	"""Link-field query for the page's Batch picker.
+
+	Every word typed must appear in the batch ID, the item code or the item name,
+	so "crisps 50" finds the batches of "Salted Crisps 50g". An exact batch ID
+	comes first, then batch IDs starting with the text, then the newest batches.
+	``filters`` may carry ``item`` (the page's Item filter) to list that item's
+	batches only. Disabled and expired batches are listed too: tracing an old
+	batch is what the page is for.
+
+	Gated on Batch read like ``get_batch_usage``; ``get_match_cond`` applies the
+	caller's User Permissions. The table is not aliased because
+	``get_match_cond`` qualifies its columns with the full table name.
+	"""
+	from frappe.desk.reportview import get_match_cond
+
+	# Frappe answers a PermissionError from a link query with a "Method not
+	# found" page, so a caller who may not read batches just gets no options.
+	if not frappe.has_permission("Batch", "read"):
+		return []
+
+	txt = (txt or "").strip()
+	params = {"txt": txt, "prefix": f"{txt}%", "start": cint(start), "page_len": cint(page_len)}
+	conditions = []
+
+	for i, term in enumerate(txt.split()[:MAX_SEARCH_TERMS]):
+		params[f"term{i}"] = f"%{term}%"
+		conditions.append(
+			f"(`tabBatch`.name like %(term{i})s"
+			f" or `tabBatch`.item like %(term{i})s"
+			f" or `tabItem`.item_name like %(term{i})s"
+			f" or `tabBatch`.item_name like %(term{i})s)"
+		)
+
+	if isinstance(filters, str):
+		filters = frappe.parse_json(filters)
+	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
+	if item:
+		conditions.append("`tabBatch`.item = %(item)s")
+		params["item"] = item
+
+	where = " and ".join(conditions) or "1=1"
+	rows = frappe.db.sql(
+		f"""
+		select
+			`tabBatch`.name,
+			`tabBatch`.item,
+			ifnull(`tabItem`.item_name, `tabBatch`.item_name) as item_name,
+			`tabBatch`.manufacturing_date,
+			`tabBatch`.disabled
+		from `tabBatch`
+		left join `tabItem` on `tabItem`.name = `tabBatch`.item
+		where {where} {get_match_cond("Batch")}
+		order by
+			case
+				when `tabBatch`.name = %(txt)s then 0
+				when `tabBatch`.name like %(prefix)s then 1
+				else 2
+			end,
+			`tabBatch`.manufacturing_date desc,
+			`tabBatch`.creation desc
+		limit %(start)s, %(page_len)s
+		""",
+		params,
+		as_dict=True,
+	)
+	return [_batch_option(r) for r in rows]
+
+
+def _batch_option(row) -> tuple:
+	"""One picker row: the batch ID, then what the dropdown shows under it."""
+	made = _("Mfg {0}").format(formatdate(row.manufacturing_date)) if row.manufacturing_date else None
+	return (row.name, row.item, row.item_name, made, _("Disabled") if row.disabled else None)
 
 
 def _load_batch(batch_no: str):

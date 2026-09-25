@@ -35,16 +35,32 @@ isnack.BatchExplorer = class BatchExplorer {
 	}
 
 	controls() {
+		// Optional: narrows the Batch picker to one item's batches, newest first.
+		this.item_field = this.page.add_field({
+			fieldname: "item",
+			label: __("Item"),
+			fieldtype: "Link",
+			options: "Item",
+			get_query: () => ({ filters: { has_batch_no: 1 } }),
+			change: () => this.on_item_change(),
+		});
+
 		this.batch_field = this.page.add_field({
 			fieldname: "batch",
 			label: __("Batch"),
 			fieldtype: "Link",
 			options: "Batch",
+			get_query: () => {
+				const item = this.item_field.get_value();
+				return { query: BE_METHOD + ".search_batches", filters: item ? { item } : {} };
+			},
 			change: () => {
 				const v = this.batch_field.get_value();
 				if (v) this.explore(v);
 			},
 		});
+		// add_field puts the label in the placeholder; say what the picker matches
+		this.batch_field.$input.attr("placeholder", __("Batch, item code or item name"));
 
 		this.page.set_primary_action(
 			__("Explore"),
@@ -73,6 +89,27 @@ isnack.BatchExplorer = class BatchExplorer {
 		this.$summary = $('<div class="be-summary"></div>').appendTo(this.body);
 		this.$toolbar = $('<div class="be-toolbar"></div>').appendTo(this.body);
 		this.$tree = $('<div class="be-tree"></div>').appendTo(this.body);
+	}
+
+	on_item_change() {
+		const item = this.item_field.get_value();
+		if (!item) return;
+		// A batch of another item falls outside the new filter: empty the picker
+		// so it opens on this item's batches. The explored tree stays on screen.
+		const batch = this.batch_field.get_value();
+		const shown = this.data && this.data.batch;
+		if (batch && shown && shown.name === batch && shown.item === item) return;
+		if (batch) this.batch_field.set_value("");
+	}
+
+	/** Drop an Item filter that the explored batch does not belong to (a deep
+	 *  link, say). Not once the picker moved on: an item picked while the batch
+	 *  was loading is the user's newer choice. */
+	sync_item_filter(batch) {
+		const item = this.item_field.get_value();
+		if (item && item !== batch.item && this.batch_field.get_value() === batch.name) {
+			this.item_field.set_value("");
+		}
 	}
 
 	load_from_route(batch) {
@@ -121,6 +158,7 @@ isnack.BatchExplorer = class BatchExplorer {
 
 	render() {
 		const { batch, groups, summary } = this.data;
+		this.sync_item_filter(batch);
 		this.render_summary(batch, summary);
 		this.render_toolbar();
 		this.render_tree(batch, groups);
