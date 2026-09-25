@@ -200,6 +200,12 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 	Gated on Batch read like ``get_batch_usage``; ``get_match_cond`` applies the
 	caller's User Permissions. The table is not aliased because
 	``get_match_cond`` qualifies its columns with the full table name.
+
+	Every condition is on ``tabBatch`` and there is no join: the item name is
+	matched and read through subqueries. A joined ``tabItem`` column in the
+	WHERE clause keeps MariaDB from filtering batches before its sort, which
+	made a search with few hits sort and join every batch (seconds on a site
+	with a few hundred thousand batches).
 	"""
 	from frappe.desk.reportview import get_match_cond
 
@@ -212,21 +218,23 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 	params = {"txt": txt, "prefix": f"{txt}%", "start": cint(start), "page_len": cint(page_len)}
 	conditions = []
 
+	if isinstance(filters, str):
+		filters = frappe.parse_json(filters)
+	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
+	# first: MariaDB checks the conditions in the order written, and this one is cheap
+	if item:
+		conditions.append("`tabBatch`.item = %(item)s")
+		params["item"] = item
+
 	for i, term in enumerate(txt.split()[:MAX_SEARCH_TERMS]):
 		params[f"term{i}"] = f"%{term}%"
 		conditions.append(
 			f"(`tabBatch`.name like %(term{i})s"
 			f" or `tabBatch`.item like %(term{i})s"
-			f" or `tabItem`.item_name like %(term{i})s"
-			f" or `tabBatch`.item_name like %(term{i})s)"
+			f" or `tabBatch`.item_name like %(term{i})s"
+			f" or `tabBatch`.item in (select `tabItem`.name from `tabItem`"
+			f" where `tabItem`.item_name like %(term{i})s))"
 		)
-
-	if isinstance(filters, str):
-		filters = frappe.parse_json(filters)
-	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
-	if item:
-		conditions.append("`tabBatch`.item = %(item)s")
-		params["item"] = item
 
 	where = " and ".join(conditions) or "1=1"
 	rows = frappe.db.sql(
@@ -234,11 +242,13 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 		select
 			`tabBatch`.name,
 			`tabBatch`.item,
-			ifnull(`tabItem`.item_name, `tabBatch`.item_name) as item_name,
+			ifnull(
+				(select `tabItem`.item_name from `tabItem` where `tabItem`.name = `tabBatch`.item),
+				`tabBatch`.item_name
+			) as item_name,
 			`tabBatch`.manufacturing_date,
 			`tabBatch`.disabled
 		from `tabBatch`
-		left join `tabItem` on `tabItem`.name = `tabBatch`.item
 		where {where} {get_match_cond("Batch")}
 		order by
 			case
@@ -257,9 +267,14 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 
 
 def _batch_option(row) -> tuple:
-	"""One picker row: the batch ID, then what the dropdown shows under it."""
+	"""One picker row: the batch ID, then what the dropdown shows under it.
+
+	Empty parts are left out: the dropdown skips them, but Advanced Search joins
+	every part with a comma.
+	"""
 	made = _("Mfg {0}").format(formatdate(row.manufacturing_date)) if row.manufacturing_date else None
-	return (row.name, row.item, row.item_name, made, _("Disabled") if row.disabled else None)
+	parts = (row.item, row.item_name, made, _("Disabled") if row.disabled else None)
+	return (row.name, *(p for p in parts if p))
 
 
 def _load_batch(batch_no: str):
