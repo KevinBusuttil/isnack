@@ -35,16 +35,36 @@ isnack.BatchExplorer = class BatchExplorer {
 	}
 
 	controls() {
+		// Optional: narrows the Batch picker to one item's batches, newest first.
+		this.item_field = this.page.add_field({
+			fieldname: "item",
+			label: __("Item"),
+			fieldtype: "Link",
+			options: "Item",
+			get_query: () => ({ filters: { has_batch_no: 1 } }),
+			change: () => this.on_item_change(),
+		});
+
 		this.batch_field = this.page.add_field({
 			fieldname: "batch",
 			label: __("Batch"),
 			fieldtype: "Link",
 			options: "Batch",
+			get_query: () => {
+				const item = this.item_field.get_value();
+				const q = { query: BE_METHOD + ".search_batches" };
+				// no empty object: the dropdown would show a blank "Filters applied for" row
+				if (item) q.filters = { item };
+				return q;
+			},
 			change: () => {
 				const v = this.batch_field.get_value();
 				if (v) this.explore(v);
 			},
 		});
+		// add_field puts the label in the placeholder; say what the picker matches
+		this.batch_field.$input.attr("placeholder", __("Batch, item code or item name"));
+		this.match_every_word();
 
 		this.page.set_primary_action(
 			__("Explore"),
@@ -62,6 +82,22 @@ isnack.BatchExplorer = class BatchExplorer {
 		this.set_tree_buttons(false);
 	}
 
+	/** Enter/Tab only pick an option the typed text is part of (Frappe releases
+	 *  that have ``input_matches_item``). search_batches matches each word on its
+	 *  own, so "FG10005 crisps" lists batches whose text never holds that phrase:
+	 *  accept an option holding every word too. */
+	match_every_word() {
+		const field = this.batch_field;
+		if (typeof field.input_matches_item !== "function") return;
+		const frappe_match = field.input_matches_item.bind(field);
+		field.input_matches_item = (input, item) => {
+			if (frappe_match(input, item)) return true;
+			if (!item.value || String(item.value).includes("__link_option")) return false;
+			const text = `${item.value} ${item.description || ""}`.toLowerCase();
+			return input.split(/\s+/).filter(Boolean).every((w) => text.includes(w));
+		};
+	}
+
 	set_tree_buttons(enabled) {
 		[this.expand_btn, this.collapse_btn, this.pdf_btn].forEach(
 			(b) => b && b.prop("disabled", !enabled)
@@ -73,6 +109,35 @@ isnack.BatchExplorer = class BatchExplorer {
 		this.$summary = $('<div class="be-summary"></div>').appendTo(this.body);
 		this.$toolbar = $('<div class="be-toolbar"></div>').appendTo(this.body);
 		this.$tree = $('<div class="be-tree"></div>').appendTo(this.body);
+	}
+
+	on_item_change() {
+		const item = this.item_field.get_value();
+		const batch = this.batch_field.get_value();
+		if (!item || !batch) return;
+		// A batch of another item falls outside the new filter: empty the picker
+		// so it opens on this item's batches. The explored tree stays on screen.
+		const shown = this.data && this.data.batch;
+		if (shown && shown.name === batch) {
+			if (shown.item !== item) this.batch_field.set_value("");
+			return;
+		}
+		// The picked batch has not rendered yet (still tracing): look up its item.
+		frappe.db.get_value("Batch", batch, "item").then((r) => {
+			const batch_item = r && r.message && r.message.item;
+			const unchanged = this.batch_field.get_value() === batch && this.item_field.get_value() === item;
+			if (unchanged && batch_item !== item) this.batch_field.set_value("");
+		});
+	}
+
+	/** Drop an Item filter that the explored batch does not belong to (a deep
+	 *  link, say). Not once the picker moved on: an item picked while the batch
+	 *  was loading is the user's newer choice. */
+	sync_item_filter(batch) {
+		const item = this.item_field.get_value();
+		if (item && item !== batch.item && this.batch_field.get_value() === batch.name) {
+			this.item_field.set_value("");
+		}
 	}
 
 	load_from_route(batch) {
@@ -121,6 +186,7 @@ isnack.BatchExplorer = class BatchExplorer {
 
 	render() {
 		const { batch, groups, summary } = this.data;
+		this.sync_item_filter(batch);
 		this.render_summary(batch, summary);
 		this.render_toolbar();
 		this.render_tree(batch, groups);

@@ -1,12 +1,15 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
-"""Unit tests for the Batch Explorer production-inputs level (pure mocks)."""
+"""Unit tests for the Batch Explorer production-inputs level and Batch picker (pure mocks)."""
 
+import re
+import sqlite3
 import unittest
 from unittest.mock import patch
 
 import frappe
+from frappe.utils import getdate
 from isnack.isnack.page.batch_explorer import batch_explorer as be
 from isnack.utils import batch_lineage as bl
 
@@ -619,6 +622,191 @@ class TestDerivedVouchersUnchanged(unittest.TestCase):
 			"SE-2": frappe._dict(name="SE-2", work_order=None, purpose="Material Transfer"),
 		}
 		self.assertEqual(be._derived_vouchers(direct, se_info), {"Work Order": {"WO-1"}})
+
+
+MATCH_COND = " and (`tabBatch`.`item` in ('FG10005'))"
+
+
+class TestSearchBatches(unittest.TestCase):
+	"""The Batch picker matches the batch ID, the item code or the item name."""
+
+	def _search(self, txt="", filters=None, rows=(), start=0, page_len=10):
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.db.exists", return_value=True),
+			patch("frappe.desk.reportview.get_match_cond", return_value=MATCH_COND) as match_cond,
+			patch.object(be, "formatdate", side_effect=lambda d: d.strftime("%d-%m-%Y")),
+			patch("frappe.db.sql", return_value=list(rows)) as sql,
+		):
+			out = be.search_batches("Batch", txt, "name", start, page_len, filters)
+		# without it the picker lists batches outside the caller's User Permissions
+		match_cond.assert_called_once_with("Batch")
+		query, params = sql.call_args.args
+		return out, " ".join(query.split()), params
+
+	def test_every_word_matches_batch_item_code_or_item_name(self):
+		_out, query, params = self._search("  crisps 50 ")
+		self.assertEqual((params["term0"], params["term1"]), ("%crisps%", "%50%"))
+		for i in (0, 1):
+			self.assertIn(
+				f"(`tabBatch`.name like %(term{i})s or `tabBatch`.item like %(term{i})s"
+				f" or `tabBatch`.item_name like %(term{i})s"
+				f" or `tabBatch`.item in (select `tabItem`.name from `tabItem`"
+				f" where `tabItem`.item_name like %(term{i})s))",
+				query,
+			)
+		self.assertIn("%(term0)s)) and (`tabBatch`.name like %(term1)s", query)
+		self.assertIn(MATCH_COND.strip(), query)
+
+	def test_no_join_keeps_every_condition_on_the_batch_table(self):
+		# A joined tabItem column in the WHERE clause stops MariaDB filtering the
+		# batches before its sort: a search with few hits then sorts and joins them all.
+		_out, query, _params = self._search("crisps")
+		self.assertNotIn(" join ", query)
+
+	def test_exact_then_prefix_batch_id_then_newest(self):
+		_out, query, params = self._search("C1252")
+		self.assertEqual((params["txt"], params["prefix"]), ("C1252", "C1252%"))
+		self.assertIn(
+			"order by case when `tabBatch`.name = %(txt)s then 0"
+			" when `tabBatch`.name like %(prefix)s then 1 else 2 end,"
+			" `tabBatch`.manufacturing_date desc, `tabBatch`.creation desc",
+			query,
+		)
+
+	def test_no_text_lists_every_batch(self):
+		_out, query, params = self._search("", start="20", page_len="10")
+		self.assertNotIn("%(term", query)
+		self.assertIn("where 1=1 " + MATCH_COND.strip(), query)
+		self.assertEqual((params["start"], params["page_len"]), (20, 10))
+
+	def test_item_filter_lists_that_items_batches_only(self):
+		for filters in ({"item": "FG10005"}, '{"item": " FG10005 "}'):
+			_out, query, params = self._search("", filters=filters)
+			self.assertIn("where `tabBatch`.item = %(item)s", query)
+			self.assertEqual(params["item"], "FG10005")
+
+		for filters in (None, {}, {"item": ""}, [["Batch", "item", "=", "FG10005"]]):
+			_out, query, params = self._search("", filters=filters)
+			self.assertNotIn("%(item)s", query)
+			self.assertNotIn("item", params)
+
+	def test_item_filter_is_checked_before_the_words(self):
+		# MariaDB checks the conditions in the order written; the item is the cheap one
+		_out, query, _params = self._search("crisps", filters={"item": "FG10005"})
+		self.assertIn("where `tabBatch`.item = %(item)s and (`tabBatch`.name like %(term0)s", query)
+
+	def test_words_past_the_limit_are_ignored(self):
+		_out, _query, params = self._search("a b c d e f g")
+		terms = sorted(k for k in params if k.startswith("term"))
+		self.assertEqual(terms, [f"term{i}" for i in range(be.MAX_SEARCH_TERMS)])
+
+	def test_options_show_item_and_manufacturing_date(self):
+		rows = [
+			frappe._dict(
+				name="C125212364", item="FG10005", item_name="Salted Crisps 50g",
+				manufacturing_date=getdate("2026-09-12"), disabled=0,
+			),
+			frappe._dict(name="AV-423", item="FG10005", item_name="Salted Crisps 50g", manufacturing_date=None, disabled=1),
+		]
+		out, _query, _params = self._search("crisps", rows=rows)
+		# no empty parts: Advanced Search joins every part with a comma
+		self.assertEqual(
+			out,
+			[
+				("C125212364", "FG10005", "Salted Crisps 50g", "Mfg 12-09-2026"),
+				("AV-423", "FG10005", "Salted Crisps 50g", "Disabled"),
+			],
+		)
+
+	@patch("frappe.db.sql")
+	@patch("frappe.db.exists", return_value=True)
+	@patch("frappe.has_permission", return_value=False)
+	def test_no_batch_read_no_options(self, has_permission, _exists, sql):
+		self.assertEqual(be.search_batches("Batch", "crisps", "name", 0, 10, None), [])
+		has_permission.assert_called_once_with("Batch", "read")
+		sql.assert_not_called()
+
+
+class TestSearchBatchesQueryExecutes(unittest.TestCase):
+	"""The picker's SQL is run, not just read back as a string.
+
+	As in ``TestPickerQueryExecutes`` (isnack/api/test_delivery_note_batch_scan.py),
+	the statement runs against an in-memory SQLite database with MariaDB's
+	backticks and pyformat parameters translated. SQLite reads ``limit a, b`` as
+	offset, count like MariaDB, so paging is checked too. It is a shape check,
+	not a dialect check.
+	"""
+
+	#: What frappe emits for an Item User Permission on the Batch's item link.
+	MATCH_COND = " and ((ifnull(`tabBatch`.`item`, '')='' or `tabBatch`.`item` in ('FG10005', 'RM1')))"
+
+	BATCHES = [
+		# name, item, item_name (stored on the batch), manufacturing_date, disabled, creation
+		("C125212363", "FG10005", "Salted Crisps 50g", "2026-09-10", 0, "2026-09-10 08:00"),
+		("C125212364", "FG10005", "Old Name", "2026-09-12", 0, "2026-09-12 08:00"),
+		("C125212363-R", "FG10005", "Salted Crisps 50g", "2026-09-15", 0, "2026-09-15 08:00"),
+		("299/26", "RM1", "Corn Grits", None, 1, "2026-01-01 08:00"),
+		("AV-423", "FG20001", "Paprika Puffs 30g", "2026-09-20", 0, "2026-09-20 08:00"),
+	]
+
+	def _run(self, txt="", filters=None, start=0, page_len=10):
+		con = sqlite3.connect(":memory:")
+		con.execute('create table "tabItem" (name text, item_name text)')
+		con.execute(
+			'create table "tabBatch" (name text, item text, item_name text,'
+			" manufacturing_date text, disabled int, creation text)"
+		)
+		# RM1 has no Item row: the name stored on the batch is shown instead
+		con.executemany(
+			'insert into "tabItem" values (?, ?)',
+			[("FG10005", "Salted Crisps 50g"), ("FG20001", "Paprika Puffs 30g")],
+		)
+		con.executemany('insert into "tabBatch" values (?, ?, ?, ?, ?, ?)', self.BATCHES)
+
+		def _sql(query, params, as_dict=False):
+			sql = re.sub(r"%\((\w+)\)s", r":\1", query.replace("`", '"'))
+			cur = con.execute(sql, params)
+			cols = [c[0] for c in cur.description]
+			return [frappe._dict(zip(cols, r)) for r in cur.fetchall()]
+
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.db.exists", return_value=True),
+			patch("frappe.desk.reportview.get_match_cond", return_value=self.MATCH_COND),
+			patch.object(be, "formatdate", side_effect=str),
+			patch("frappe.db.sql", side_effect=_sql),
+		):
+			return be.search_batches("Batch", txt, "name", start, page_len, filters)
+
+	def test_newest_first_within_the_user_permissions(self):
+		self.assertEqual(
+			self._run(),
+			[
+				("C125212363-R", "FG10005", "Salted Crisps 50g", "Mfg 2026-09-15"),
+				("C125212364", "FG10005", "Salted Crisps 50g", "Mfg 2026-09-12"),
+				("C125212363", "FG10005", "Salted Crisps 50g", "Mfg 2026-09-10"),
+				("299/26", "RM1", "Corn Grits", "Disabled"),
+			],
+		)
+
+	def test_the_current_item_name_is_matched(self):
+		# C125212364 still carries the item's old name
+		self.assertEqual(
+			[r[0] for r in self._run("salted crisps")], ["C125212363-R", "C125212364", "C125212363"]
+		)
+		self.assertEqual([r[0] for r in self._run("corn")], ["299/26"])
+
+	def test_an_exact_batch_id_comes_first(self):
+		self.assertEqual([r[0] for r in self._run("C125212363")], ["C125212363", "C125212363-R"])
+
+	def test_pages(self):
+		self.assertEqual([r[0] for r in self._run(page_len=2)], ["C125212363-R", "C125212364"])
+		self.assertEqual([r[0] for r in self._run(start=2, page_len=2)], ["C125212363", "299/26"])
+
+	def test_item_filter(self):
+		self.assertEqual([r[0] for r in self._run(filters={"item": "RM1"})], ["299/26"])
+		self.assertEqual([r[0] for r in self._run("C125", filters={"item": "RM1"})], [])
 
 
 if __name__ == "__main__":
