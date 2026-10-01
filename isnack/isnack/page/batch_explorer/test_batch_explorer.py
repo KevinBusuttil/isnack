@@ -220,6 +220,180 @@ class TestGetBatchUsageEagerInputs(unittest.TestCase):
 		self.assertIs(attach.call_args.kwargs["eager_all"], True)
 
 
+class TestGetBatchUsageHeader(unittest.TestCase):
+	@patch.object(be, "_manufactured_qty", return_value=303.0)
+	@patch.object(be, "_attach_production_inputs")
+	@patch.object(be, "_derived_vouchers", return_value={})
+	@patch.object(be, "_stock_entry_info")
+	@patch.object(be, "_direct_vouchers", return_value={})
+	@patch.object(be, "_load_batch")
+	@patch("frappe.has_permission", return_value=True)
+	def test_manufactured_qty_rides_on_the_batch(self, _perm, load, _direct, se_info, _derived, _attach, made):
+		# the batch's stored name, not the text typed into the picker
+		load.return_value = frappe._dict(name="CCC-111", item="FG10019", stock_uom="Carton", batch_qty=0)
+		se_info.return_value = {"SE-M": frappe._dict(name="SE-M", work_order="WO-1", purpose="Manufacture")}
+
+		out = be.get_batch_usage(" ccc-111 ")
+
+		made.assert_called_once_with("CCC-111", se_info.return_value)
+		self.assertEqual(out["batch"]["manufactured_qty"], 303.0)
+		self.assertEqual(out["batch"]["batch_qty"], 0)
+
+
+def _sqlite_sql(con):
+	"""A ``frappe.db.sql`` stand-in running on SQLite: MariaDB backticks and
+	pyformat parameters translated, a tuple parameter spread for ``IN``."""
+
+	def _sql(query, params, as_dict=False):
+		args = {}
+
+		def bind(m):
+			value = params[m.group(1)]
+			if not isinstance(value, tuple):
+				args[m.group(1)] = value
+				return ":" + m.group(1)
+			names = [f"{m.group(1)}_{i}" for i in range(len(value))]
+			args.update(zip(names, value))
+			return "(" + ", ".join(":" + n for n in names) + ")"
+
+		cur = con.execute(re.sub(r"%\((\w+)\)s", bind, query.replace("`", '"')), args)
+		cols = [c[0] for c in cur.description]
+		return [frappe._dict(zip(cols, r)) for r in cur.fetchall()]
+
+	return _sql
+
+
+class TestDirectVouchersQueryExecutes(unittest.TestCase):
+	"""The ledger query is run on SQLite, as in ``TestSearchBatchesQueryExecutes``."""
+
+	SLE = [
+		# voucher_type, voucher_no, actual_qty, posting_date, is_cancelled, batch_no, bundle
+		("Stock Entry", "SE-M", 303, "2026-09-28", 0, None, "SBB-M"),
+		# one Delivery Note line picked from two batches: one ledger entry for both
+		("Delivery Note", "DN-1", -873, "2026-09-30", 0, None, "SBB-DN"),
+		# a transfer moves the batch out of one warehouse and into another
+		("Stock Entry", "SE-T", -100, "2026-09-29", 0, None, "SBB-T1"),
+		("Stock Entry", "SE-T", 100, "2026-09-29", 0, None, "SBB-T2"),
+		# legacy entry: the batch on the ledger entry itself, no bundle
+		("Stock Reconciliation", "RECO-1", -5, "2026-09-29", 0, "B1", None),
+		# cancelled, and another batch only: neither belongs to B1
+		("Delivery Note", "DN-X", -50, "2026-09-29", 1, None, "SBB-X"),
+		("Delivery Note", "DN-2", -40, "2026-09-30", 0, None, "SBB-B2"),
+	]
+	SBE = [
+		# parent, batch_no, qty (negative for outward bundles)
+		("SBB-M", "B1", 303),
+		("SBB-DN", "B1", -21),
+		("SBB-DN", "B2", -852),
+		("SBB-T1", "B1", -100),
+		("SBB-T2", "B1", 100),
+		("SBB-X", "B1", -50),
+		("SBB-B2", "B2", -40),
+	]
+
+	def _run(self, batch_no):
+		con = sqlite3.connect(":memory:")
+		con.execute(
+			'create table "tabStock Ledger Entry" (voucher_type text, voucher_no text, actual_qty real,'
+			" posting_date text, is_cancelled int, batch_no text, serial_and_batch_bundle text)"
+		)
+		con.execute('create table "tabSerial and Batch Entry" (parent text, batch_no text, qty real)')
+		con.executemany('insert into "tabStock Ledger Entry" values (?, ?, ?, ?, ?, ?, ?)', self.SLE)
+		con.executemany('insert into "tabSerial and Batch Entry" values (?, ?, ?)', self.SBE)
+		with patch("frappe.db.sql", side_effect=_sqlite_sql(con)):
+			return be._direct_vouchers(batch_no)
+
+	def test_a_bundle_counts_only_the_batch_own_lines(self):
+		direct = self._run("B1")
+		self.assertEqual(
+			{dt: {n: v["qty"] for n, v in vouchers.items()} for dt, vouchers in direct.items()},
+			{
+				"Stock Entry": {"SE-M": 303, "SE-T": 0},
+				"Delivery Note": {"DN-1": -21},
+				"Stock Reconciliation": {"RECO-1": -5},
+			},
+		)
+		self.assertEqual(direct["Delivery Note"]["DN-1"]["date"], "2026-09-30")
+
+	def test_the_other_batch_of_the_bundle_gets_its_own_share(self):
+		self.assertEqual(
+			self._run("B2"),
+			{
+				"Delivery Note": {
+					"DN-1": {"qty": -852, "date": "2026-09-30"},
+					"DN-2": {"qty": -40, "date": "2026-09-30"},
+				}
+			},
+		)
+
+
+class TestManufacturedQty(unittest.TestCase):
+	"""Finished-item rows of the batch's Manufacture entries, run on SQLite."""
+
+	SED = [
+		# parent, batch_no, bundle, transfer_qty, qty, is_finished_item, is_scrap_item
+		("SE-M1", "B1", "SBB-M1", 200, 200, 1, 0),
+		# a second shift booked into the same batch, ERPNext kept it in the bundle only
+		("SE-M2", None, "SBB-M2", 103, 103, 1, 0),
+		# scrap carries the finished-goods batch but is not what was made
+		("SE-M2", "B1", "SBB-S", 7, 7, 0, 1),
+		("SE-M2", "B1", "SBB-S2", 4, 4, 1, 1),
+		# the raw material the run consumed
+		("SE-M2", "RB9", None, 50, 50, 0, 0),
+		# another batch's run
+		("SE-M3", "B2", None, 80, 80, 1, 0),
+	]
+	SBE = [("SBB-M1", "B1", 200), ("SBB-M2", "B1", 103), ("SBB-S", "B1", 7), ("SBB-S2", "B1", 4)]
+
+	def _run(self, batch_no, se_info):
+		con = sqlite3.connect(":memory:")
+		con.execute(
+			'create table "tabStock Entry Detail" (parent text, batch_no text, serial_and_batch_bundle text,'
+			" transfer_qty real, qty real, is_finished_item int, is_scrap_item int)"
+		)
+		con.execute('create table "tabSerial and Batch Entry" (parent text, batch_no text, qty real)')
+		con.executemany('insert into "tabStock Entry Detail" values (?, ?, ?, ?, ?, ?, ?)', self.SED)
+		con.executemany('insert into "tabSerial and Batch Entry" values (?, ?, ?)', self.SBE)
+
+		def bundles(names):
+			out = {}
+			for parent, batch, qty in self.SBE:
+				if parent in names:
+					out.setdefault(parent, []).append((batch, abs(qty)))
+			return out
+
+		with (
+			patch("frappe.db.sql", side_effect=_sqlite_sql(con)) as sql,
+			patch.object(bl, "fetch_bundle_batches", side_effect=bundles),
+		):
+			return be._manufactured_qty(batch_no, se_info), sql
+
+	@staticmethod
+	def _info(*entries):
+		return {name: frappe._dict(name=name, work_order=wo, purpose=purpose) for name, wo, purpose in entries}
+
+	def test_every_manufacture_entry_counts_scrap_does_not(self):
+		se_info = self._info(
+			("SE-M1", "WO-1", "Manufacture"),
+			("SE-M2", "WO-2", "Manufacture"),
+			# a transfer of the batch is not production
+			("SE-T", "WO-2", "Material Transfer"),
+		)
+		made, sql = self._run("B1", se_info)
+		self.assertEqual(made, 303)
+		self.assertEqual(sql.call_args.args[1]["parents"], ("SE-M1", "SE-M2"))
+
+	def test_a_batch_only_consumed_was_not_manufactured(self):
+		made, _sql = self._run("RB9", self._info(("SE-M2", "WO-2", "Manufacture")))
+		self.assertIsNone(made)
+
+	def test_no_manufacture_entry_no_query(self):
+		made, sql = self._run("B1", self._info(("SE-T", None, "Material Transfer")))
+		self.assertIsNone(made)
+		sql.assert_not_called()
+		self.assertIsNone(self._run("B1", {})[0])
+
+
 class TestWorkOrderInputs(unittest.TestCase):
 	"""Synthetic AAO-007: one Work Order, the full MES entry chain, one hidden and
 	one cancelled entry."""

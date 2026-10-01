@@ -200,6 +200,9 @@ isnack.BatchExplorer = class BatchExplorer {
 
 	summary_html(batch, summary) {
 		const fmt_date = (d) => (d ? frappe.datetime.str_to_user(d) : "—");
+		const esc = frappe.utils.escape_html;
+		const uom = esc(batch.stock_uom || "");
+		const fmt_qty = (q) => (q != null ? `${format_number(flt(q))} <small>${uom}</small>` : "—");
 		const expiry_lbl = batch.expired ? __("Expired") : __("Expiry");
 
 		return `
@@ -218,9 +221,13 @@ isnack.BatchExplorer = class BatchExplorer {
 					${batch.disabled ? '<span class="be-chip muted">' + __("Disabled") + "</span>" : ""}
 				</div>
 				<div class="be-card-stats">
-					<div class="be-stat">
-						<div class="be-stat-val">${format_number(flt(batch.batch_qty))} <small>${frappe.utils.escape_html(batch.stock_uom || "")}</small></div>
-						<div class="be-stat-lbl">${__("Batch Qty")}</div>
+					<div class="be-stat" title="${esc(__("Made so far by this batch's Manufacture entries, scrap excluded"))}">
+						<div class="be-stat-val">${fmt_qty(batch.manufactured_qty)}</div>
+						<div class="be-stat-lbl">${__("Manufactured Qty")}</div>
+					</div>
+					<div class="be-stat" title="${esc(__("On hand now, across all warehouses"))}">
+						<div class="be-stat-val">${fmt_qty(batch.batch_qty || 0)}</div>
+						<div class="be-stat-lbl">${__("Qty in Stock")}</div>
 					</div>
 					<div class="be-stat">
 						<div class="be-stat-val">${fmt_date(batch.manufacturing_date)}</div>

@@ -31,8 +31,14 @@ Resolution strategy
 
 Quantity semantics
 ------------------
+Header: ``batch_qty`` is ERPNext's stock of the batch on hand now, across all
+warehouses (the page calls it "Qty in Stock"), so a batch made and shipped
+in full reads 0. ``manufactured_qty`` is what its Manufacture entries made so
+far (``_manufactured_qty``).
+
 Top-level nodes: ``qty`` is the signed movement of *this* batch in that voucher
-(``SUM(sle.actual_qty)``), group totals and the transaction count derive from
+(``SUM(sle.actual_qty)``, or the batch's own lines when the ledger entry has a
+Serial and Batch Bundle), group totals and the transaction count derive from
 those nodes only. Nested material nodes: ``qty`` is the positive consumed
 quantity in the material's stock UOM for the *whole* Work Order; it is never
 apportioned to the batch, and a Work Order that produced more than this batch is
@@ -121,6 +127,7 @@ def get_batch_usage(batch_no: str | None = None, eager_inputs=0):
 	# 2) derive related Work Orders / Sales Orders / Purchase Orders
 	se_info = _stock_entry_info(direct)
 	derived = _derived_vouchers(direct, se_info)
+	batch.manufactured_qty = _manufactured_qty(batch.name, se_info)
 
 	# 3) build the grouped node tree
 	groups = []
@@ -302,24 +309,29 @@ def _load_batch(batch_no: str):
 # ---------------------------------------------------------------------------
 
 def _direct_vouchers(batch_no: str) -> dict[str, dict]:
-	"""Return {doctype: {voucher_no: {qty, date}}} from the Stock Ledger."""
+	"""Return {doctype: {voucher_no: {qty, date}}} from the Stock Ledger.
+
+	A ledger entry with a Serial and Batch Bundle counts the batch's own lines in
+	the bundle, not the entry's ``actual_qty``: a Delivery Note line picked from
+	several batches books one entry for all of them. The bundle lines are signed
+	like ``actual_qty`` (negative for outward bundles).
+	"""
 	rows = frappe.db.sql(
 		"""
 		SELECT
-			sle.voucher_type            AS voucher_type,
-			sle.voucher_no              AS voucher_no,
-			SUM(sle.actual_qty)         AS qty,
-			MIN(sle.posting_date)       AS posting_date
+			sle.voucher_type                        AS voucher_type,
+			sle.voucher_no                          AS voucher_no,
+			SUM(IFNULL(bundle.qty, sle.actual_qty)) AS qty,
+			MIN(sle.posting_date)                   AS posting_date
 		FROM `tabStock Ledger Entry` sle
+		LEFT JOIN (
+			SELECT sbe.parent, SUM(sbe.qty) AS qty
+			FROM `tabSerial and Batch Entry` sbe
+			WHERE sbe.batch_no = %(b)s
+			GROUP BY sbe.parent
+		) bundle ON bundle.parent = sle.serial_and_batch_bundle
 		WHERE sle.is_cancelled = 0
-		  AND (
-			sle.batch_no = %(b)s
-			OR EXISTS (
-				SELECT 1 FROM `tabSerial and Batch Entry` sbe
-				WHERE sbe.parent = sle.serial_and_batch_bundle
-				  AND sbe.batch_no = %(b)s
-			)
-		  )
+		  AND (sle.batch_no = %(b)s OR bundle.parent IS NOT NULL)
 		GROUP BY sle.voucher_type, sle.voucher_no
 		ORDER BY MIN(sle.posting_date), sle.voucher_no
 		""",
@@ -355,6 +367,55 @@ def _stock_entry_info(direct: dict[str, dict]) -> dict[str, dict]:
 			fields=["name", "work_order", "purpose"],
 		)
 	}
+
+
+def _manufactured_qty(batch_no: str, se_info: dict[str, dict]) -> float | None:
+	"""Stock-UOM quantity the batch's Manufacture entries have made so far.
+
+	Sums the finished-item rows that carry the batch, over every submitted
+	Manufacture entry of the batch (``se_info`` holds only entries with a live
+	ledger entry), whichever Work Order booked them: the rows a Work Order's
+	"This batch" note counts. Scrap is left out; it carries the finished-goods
+	batch, so the batch's ledger inflow alone would overstate what was made.
+	``None`` when no Manufacture entry made the batch (a purchased lot).
+	"""
+	entries = sorted(se for se, info in se_info.items() if info.get("purpose") == "Manufacture")
+	if not entries:
+		return None
+
+	rows = frappe.db.sql(
+		"""
+		SELECT sed.batch_no, sed.serial_and_batch_bundle, sed.transfer_qty, sed.qty, sed.is_scrap_item
+		FROM `tabStock Entry Detail` sed
+		WHERE sed.parent IN %(parents)s
+		  AND sed.is_finished_item = 1
+		  AND (
+			sed.batch_no = %(b)s
+			OR EXISTS (
+				SELECT 1 FROM `tabSerial and Batch Entry` sbe
+				WHERE sbe.parent = sed.serial_and_batch_bundle
+				  AND sbe.batch_no = %(b)s
+			)
+		  )
+		""",
+		{"parents": tuple(entries), "b": batch_no},
+		as_dict=True,
+	)
+	# dropped here rather than in the query, as in
+	# batch_lineage.fg_batch_quantities_by_work_order
+	rows = [r for r in rows if not cint(r.get("is_scrap_item"))]
+	if not rows:
+		return None
+
+	bundle_map = batch_lineage.fetch_bundle_batches(
+		[r.serial_and_batch_bundle for r in rows if not r.get("batch_no")]
+	)
+	return sum(
+		flt(part["qty"])
+		for r in rows
+		for part in batch_lineage.expand_row_batches(r, bundle_map)
+		if part["batch_no"] == batch_no
+	)
 
 
 def _derived_vouchers(direct: dict[str, dict], se_info: dict[str, dict] | None = None) -> dict[str, set]:
