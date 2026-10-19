@@ -1259,6 +1259,9 @@ body[data-route="operator-hub"].op-kiosk #kiosk-exit:hover{ opacity:1; }
   border: 1px solid transparent;
   border-left-width: 4px;
 }
+.close-production-dialog .cp-coverage + .cp-coverage{
+  margin-top: 8px;
+}
 .close-production-dialog .cp-coverage-head{
   font-weight: 600;
   margin-bottom: 4px;
