@@ -62,6 +62,10 @@ ITEMS = {
     "PM40011": ("Packaging Materials", "Kg", 1),
     "CR30003": ("Cartons", "Carton", 1),
     "FG10011": ("Finished Goods", "Carton", 1),
+    "SFG10004": ("Semi-Finished Goods", "Kg", 0),
+    "PM40008": ("Packaging Materials", "Kg", 1),
+    "CR30001": ("Cartons", "Carton", 1),
+    "FG10019": ("Finished Goods", "Carton", 1),
 }
 PACKAGING_GROUPS = {"packaging materials", "cartons"}
 
@@ -74,8 +78,12 @@ BOMS = {
     "BOM-FG10011-002": (300.0, "FG10011",
                         [("SFG10001", 160.0, "Kg"), ("SFG10002", 120.0, "Kg"),
                          ("PM40011", 21.0, "Kg"), ("CR30003", 300.0, "Carton")]),
+    "BOM-FG10019-002": (300.0, "FG10019",
+                        [("SFG10001", 80.0, "Kg"), ("PM40008", 20.0, "Kg"),
+                         ("CR30001", 300.0, "Carton"), ("SFG10004", 60.0, "Kg")]),
 }
-SFG_CODES = {"SFG10001", "SFG10002"}       # the components with a BOM of their own
+# the components with a BOM of their own
+SFG_CODES = {"SFG10001", "SFG10002", "SFG10004"}
 
 
 class InsufficientStock(frappe.ValidationError):
@@ -329,10 +337,12 @@ def production_day():
 class Factory:
     """Binds the ledger and the fixture documents into mes_ops."""
 
-    def __init__(self, ledger=None, work_orders=None, metered=()):
+    def __init__(self, ledger=None, work_orders=None, metered=(), surplus=None):
         self.ledger = ledger or production_day()
         self.work_orders = work_orders or _fresh_work_orders()
         self.metered = set(metered)
+        # Staged surplus not yet swept, as _surplus_due_into_wip reports it.
+        self.surplus = dict(surplus or {})
         self.logged = []
 
     # -- the things mes_ops asks the framework for ------------------------
@@ -423,6 +433,10 @@ class Factory:
                          side_effect=lambda item, wh: led.balance(item, wh)),
             patch.object(mes_ops, "_consumed_qty_by_batch",
                          side_effect=lambda wos, item: led.consumed_by_batch(wos[0], item)),
+            patch.object(mes_ops, "_packaging_on_hand",
+                         side_effect=lambda item, _batch, wh: led.balance(item, wh)),
+            patch.object(mes_ops, "_surplus_due_into_wip",
+                         side_effect=lambda _wos: dict(self.surplus)),
             patch.object(mes_ops.frappe, "get_all", side_effect=self.get_all),
         ]
 
@@ -499,12 +513,12 @@ def finished(entry):
     return sum(row["qty"] for row in entry.items if row.get("is_finished_item"))
 
 
-def coverage(factory, work_orders, good, reject=0.0):
+def coverage(factory, work_orders, good, reject=0.0, packaging=None):
     with ExitStack() as stack:
         for p in factory.patches():
             stack.enter_context(p)
         return mes_ops.get_close_production_coverage(
-            work_orders, good, reject
+            work_orders, good, reject, packaging
         )
 
 
@@ -919,6 +933,258 @@ class TestWhenTheOutputDidNotExceedThePlan(unittest.TestCase):
 
         self.assertEqual(finished(entry), 80.0)
         self.assertEqual(materials(entry)["RM20022"], 60.0)
+
+
+# ---------------------------------------------------------------------------
+# 13 October: MFG-WO-2026-00077, 52 cartons of PUFFS - Organic Strawberry off a
+# Work Order for 50. Nothing refused the close; the dialog's amber "Recipe asks
+# for more than is available" box read as an error, for a 4% over-run that
+# Manufacturing Settings sanctions (10%) and the storekeeper had staged
+# packaging for.
+# ---------------------------------------------------------------------------
+
+STRAWBERRY_WO = "MFG-WO-2026-00077"
+
+
+def october_thirteenth():
+    """MFG-WO-2026-00077 up to Close Production, from the site's own entries:
+    the two semi-finished orders (-00078/-00079, MAT-STE-2026-00445/-00449),
+    packaging staged with surplus (-00450/-00451), Start (-00452, then the
+    surplus swept into WIP, which names no Work Order) and End WO (-00454)."""
+    led = Ledger()
+    led.seed(STORES, CR30001=1000.0, PM40008=100.0)
+    led.post("Manufacture", "MFG-WO-2026-00078", [
+        {"item_code": "SFG10001", "qty": 13.333, "s_warehouse": None,
+         "t_warehouse": SEMI, "is_finished_item": 1},
+    ], fg_qty=13.333)
+    led.post("Manufacture", "MFG-WO-2026-00079", [
+        {"item_code": "SFG10004", "qty": 10.0, "s_warehouse": None,
+         "t_warehouse": SEMI, "is_finished_item": 1},
+    ], fg_qty=10.0)
+    led.post("Material Transfer", STRAWBERRY_WO, [
+        {"item_code": "CR30001", "qty": 50.0, "s_warehouse": STORES,
+         "t_warehouse": SEMI, "batch_no": "frit0907"},
+        {"item_code": "PM40008", "qty": 3.334, "s_warehouse": STORES,
+         "t_warehouse": SEMI, "batch_no": "297/26"},
+    ])
+    led.post("Material Transfer", None, [
+        {"item_code": "CR30001", "qty": 5.0, "s_warehouse": STORES,
+         "t_warehouse": SEMI, "batch_no": "frit0907"},
+        {"item_code": "PM40008", "qty": 1.667, "s_warehouse": STORES,
+         "t_warehouse": SEMI, "batch_no": "297/26"},
+    ])
+    led.post("Material Transfer for Manufacture", STRAWBERRY_WO, [
+        {"item_code": "CR30001", "qty": 50.0, "s_warehouse": SEMI,
+         "t_warehouse": WIP, "batch_no": "frit0907"},
+        {"item_code": "PM40008", "qty": 3.334, "s_warehouse": SEMI,
+         "t_warehouse": WIP, "batch_no": "297/26"},
+    ], fg_qty=50.0)
+    led.post("Material Transfer", None, [
+        {"item_code": "CR30001", "qty": 5.0, "s_warehouse": SEMI,
+         "t_warehouse": WIP, "batch_no": "frit0907"},
+        {"item_code": "PM40008", "qty": 1.667, "s_warehouse": SEMI,
+         "t_warehouse": WIP, "batch_no": "297/26"},
+    ])
+    led.post("Material Consumption for Manufacture", STRAWBERRY_WO, [
+        {"item_code": "SFG10001", "qty": 13.333, "s_warehouse": SEMI, "t_warehouse": None},
+        {"item_code": "SFG10004", "qty": 10.0, "s_warehouse": SEMI, "t_warehouse": None},
+    ], fg_qty=50.0)
+    return led
+
+
+def strawberry_factory(ledger=None, **kw):
+    work_orders = _fresh_work_orders()
+    work_orders[STRAWBERRY_WO] = WorkOrder(
+        STRAWBERRY_WO, "FG10019", "BOM-FG10019-002", 50.0, FG_WH,
+        {"SFG10001": 13.333333333, "SFG10004": 10.0,
+         "PM40008": 3.333333333, "CR30001": 50.0},
+    )
+    return Factory(ledger=ledger or october_thirteenth(), work_orders=work_orders, **kw)
+
+
+STRAWBERRY_PACKAGING = [
+    {"item_code": "CR30001", "qty": 52.0, "batch_no": "frit0907"},
+    {"item_code": "PM40008", "qty": 3.467, "batch_no": "297/26"},
+]
+
+
+class TestTheThirteenthOctoberOverRun(unittest.TestCase):
+    """52 off a Work Order for 50 is an ordinary over-run, and says so."""
+
+    def test_the_fixture_is_the_day_the_dialog_was_opened(self):
+        led = october_thirteenth()
+
+        self.assertEqual(led.balance("SFG10001", SEMI), 0.0)
+        self.assertEqual(led.balance("SFG10004", SEMI), 0.0)
+        # 50 issued to the order plus the 5 staged as surplus for it.
+        self.assertEqual(led.balance("CR30001", WIP), 55.0)
+        self.assertEqual(led.balance("PM40008", WIP), 5.001)
+
+    def test_the_whole_shortfall_is_the_over_runs_yield_gain(self):
+        """The two figures from the screenshot, 0.533 and 0.4, are exactly the
+        recipe's 2/52 share of each semi-finished — nothing is missing."""
+        data = coverage(strawberry_factory(), [STRAWBERRY_WO], 52.0,
+                        packaging=STRAWBERRY_PACKAGING)
+
+        self.assertEqual(data["over_qty"], 2.0)
+        self.assertEqual(data["allowance_pct"], 10.0)
+        self.assertEqual(data["refused"], [])
+        split = {r["item_code"]: (r["short_qty"], r["yield_gain_qty"], r["gap_qty"])
+                 for r in data["short"]}
+        self.assertEqual(split, {"SFG10001": (0.533, 0.533, 0.0),
+                                 "SFG10004": (0.4, 0.4, 0.0)})
+        self.assertEqual(data["packaging_short"], [])
+
+    def test_it_closes_at_52(self):
+        factory = strawberry_factory()
+        entry = close_at(factory, 52.0, packaging=STRAWBERRY_PACKAGING,
+                         wo_name=STRAWBERRY_WO, batch="CCC-112")
+
+        self.assertEqual(finished(entry), 52.0)
+        self.assertEqual(factory.ledger.balance("FG10019", FG_WH), 52.0)
+        self.assertEqual(materials(entry), {"CR30001": 52.0, "PM40008": 3.467})
+        notes = [c for c in factory.work_orders[STRAWBERRY_WO].comments if ": recipe " in c]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(all("yield gain" in c and "worth checking" not in c for c in notes))
+
+    def test_packaging_beyond_what_the_line_holds_is_named_before_the_close(self):
+        """The one way this over-run could still be refused: 57 cartons
+        entered against the 55 in WIP. ERPNext would answer "Batch No frit0907
+        … has negative stock"; the dialog names the figure instead."""
+        packaging = [dict(STRAWBERRY_PACKAGING[0], qty=57.0), STRAWBERRY_PACKAGING[1]]
+        data = coverage(strawberry_factory(), [STRAWBERRY_WO], 52.0, packaging=packaging)
+
+        self.assertEqual(len(data["packaging_short"]), 1)
+        row = data["packaging_short"][0]
+        self.assertEqual((row["item_code"], row["batch_no"], row["warehouse"]),
+                         ("CR30001", "frit0907", WIP))
+        self.assertEqual((row["entered_qty"], row["available_qty"], row["short_qty"]),
+                         (57.0, 55.0, 2.0))
+
+        with self.assertRaises(InsufficientStock):
+            close_at(strawberry_factory(), 52.0, packaging=packaging,
+                     wo_name=STRAWBERRY_WO, batch="CCC-112")
+
+    def test_surplus_the_close_will_sweep_in_counts_as_held(self):
+        """Surplus staged after Start is swept into WIP before the close posts,
+        so a figure it covers is not short."""
+        packaging = [dict(STRAWBERRY_PACKAGING[0], qty=57.0), STRAWBERRY_PACKAGING[1]]
+        factory = strawberry_factory(surplus={("CR30001", "frit0907", WIP): 2.0})
+
+        data = coverage(factory, [STRAWBERRY_WO], 52.0, packaging=packaging)
+        self.assertEqual(data["packaging_short"], [])
+
+    def test_packaging_already_loaded_comes_off_the_figure(self):
+        """The figure is the total used; LOAD's share of it already left WIP."""
+        led = october_thirteenth()
+        led.post("Material Consumption for Manufacture", STRAWBERRY_WO, [
+            {"item_code": "CR30001", "qty": 10.0, "s_warehouse": WIP,
+             "t_warehouse": None, "batch_no": "frit0907"},
+        ], fg_qty=50.0)
+        self.assertEqual(led.balance("CR30001", WIP), 45.0)
+
+        data = coverage(strawberry_factory(ledger=led), [STRAWBERRY_WO], 52.0,
+                        packaging=STRAWBERRY_PACKAGING)
+        self.assertEqual(data["packaging_short"], [])
+
+
+class TestAGapThatCoincidesWithAnOverRun(unittest.TestCase):
+    """An over-run explains only its own share of the recipe. Material missing
+    for the planned output as well is still a gap, and is still flagged."""
+
+    def _end_wo_drew_only_seventy(self):
+        led = production_day()
+        # End WO consumed 80 Kg of corn mix; give 10 Kg back to Semi-finished
+        # and take it away again, so the order has consumed only 70.
+        led.entries[-1]["rows"][0]["qty"] = 70.0
+        led.post("Material Issue", None, [
+            {"item_code": "SFG10001", "qty": 10.0, "s_warehouse": SEMI, "t_warehouse": None},
+        ])
+        return led
+
+    def test_the_preview_separates_the_yield_gain_from_the_gap(self):
+        data = coverage(Factory(ledger=self._end_wo_drew_only_seventy()), [FG_WO], 153.0)
+
+        corn = next(r for r in data["short"] if r["item_code"] == "SFG10001")
+        # 81.6 asked, 70 used: 11.6 short, of which 3/153 of the recipe (1.6)
+        # is the over-run's — the rest was missing for the planned 150 too.
+        self.assertEqual(corn["short_qty"], 11.599)
+        self.assertEqual(corn["yield_gain_qty"], 1.599)
+        self.assertEqual(corn["gap_qty"], 10.0)
+        slurry = next(r for r in data["short"] if r["item_code"] == "SFG10002")
+        self.assertEqual((slurry["yield_gain_qty"], slurry["gap_qty"]), (1.2, 0.0))
+
+    def test_the_work_order_note_says_the_same(self):
+        factory = Factory(ledger=self._end_wo_drew_only_seventy())
+        close_at(factory, 153.0)
+
+        corn = next(c for c in factory.work_orders[FG_WO].comments
+                    if c.startswith("SFG10001"))
+        self.assertIn("accounts for 1.599 of it as a yield gain", corn)
+        self.assertIn("The other 10 was missing", corn)
+        self.assertIn("worth checking", corn)
+        slurry = next(c for c in factory.work_orders[FG_WO].comments
+                      if c.startswith("SFG10002"))
+        self.assertIn("recorded as a yield gain", slurry)
+        self.assertNotIn("worth checking", slurry)
+
+
+class TestShortfallSplit(unittest.TestCase):
+    def split(self, required, short, output, planned):
+        with patch.object(mes_ops.frappe, "get_precision", return_value=3):
+            return mes_ops._shortfall_split(
+                {"required_qty": required, "short_qty": short}, output, planned
+            )
+
+    def test_no_over_run_means_no_yield_gain(self):
+        self.assertEqual(self.split(80.0, 20.0, 80.0, 80.0), (0.0, 20.0))
+
+    def test_a_truncated_shortfall_within_a_tick_of_the_share_is_all_yield_gain(self):
+        # 13.333333333 x 52/50 asks 13.8667; 13.333 consumed leaves 0.5337,
+        # truncated to 0.533, against a share of 0.53333.
+        self.assertEqual(self.split(13.86666666632, 0.533, 52.0, 50.0), (0.533, 0.0))
+
+    def test_the_parts_sum_to_the_shortfall(self):
+        gain, gap = self.split(13.86666666632, 3.867, 52.0, 50.0)
+        self.assertEqual((gain, gap), (0.533, 3.334))
+
+    def test_nothing_short_splits_to_nothing(self):
+        self.assertEqual(self.split(80.0, 0.0, 82.0, 80.0), (0.0, 0.0))
+
+
+class TestSurplusDueIntoWip(unittest.TestCase):
+    """_surplus_due_into_wip mirrors what _sweep_surplus_to_wip will move."""
+
+    def test_counts_staged_rows_once_into_the_first_orders_wip(self):
+        rows = [
+            frappe._dict(parent="MAT-STE-S1", item_code="CR30001", batch_no="frit0907",
+                         t_warehouse=SEMI, qty=5.0),
+            # Not landed in staging: _create_surplus_wip_transfer skips it.
+            frappe._dict(parent="MAT-STE-S1", item_code="PM40008", batch_no="297/26",
+                         t_warehouse=STORES, qty=1.0),
+            frappe._dict(parent="MAT-STE-S2", item_code="PM40008", batch_no="",
+                         t_warehouse=SEMI, qty=1.667),
+        ]
+        eligible = {"WO-A": ["MAT-STE-S1"], "WO-B": ["MAT-STE-S1", "MAT-STE-S2"]}
+        with patch.object(mes_ops, "_default_line_staging", return_value=SEMI), \
+                patch.object(mes_ops.frappe.db, "get_value",
+                             side_effect=lambda _dt, name, _f: {"WO-A": WIP, "WO-B": "WIP-B"}[name]), \
+                patch.object(mes_ops, "_find_eligible_surplus_ses",
+                             side_effect=lambda wo, _wh: eligible[wo]), \
+                patch.object(mes_ops.frappe.db, "sql", return_value=rows) as sql:
+            due = mes_ops._surplus_due_into_wip(["WO-A", "WO-B"])
+
+        self.assertEqual(due, {("CR30001", "frit0907", WIP): 5.0,
+                               ("PM40008", "", "WIP-B"): 1.667})
+        self.assertEqual(set(sql.call_args[0][1]["names"]), {"MAT-STE-S1", "MAT-STE-S2"})
+
+    def test_nothing_eligible_reads_nothing(self):
+        with patch.object(mes_ops, "_default_line_staging", return_value=SEMI), \
+                patch.object(mes_ops.frappe.db, "get_value", return_value=WIP), \
+                patch.object(mes_ops, "_find_eligible_surplus_ses", return_value=[]), \
+                patch.object(mes_ops.frappe.db, "sql") as sql:
+            self.assertEqual(mes_ops._surplus_due_into_wip(["WO-A"]), {})
+        sql.assert_not_called()
 
 
 if __name__ == "__main__":

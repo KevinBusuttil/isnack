@@ -2952,6 +2952,20 @@ function init_operator_hub($root) {
         .get();
     }
 
+    // The packaging figures as typed, in the shape close_production takes.
+    // The coverage preview checks the same list, so it warns about exactly
+    // what the button would post.
+    function packagingUsage(gIdx) {
+      const usage = [];
+      productGroups[gIdx].packaging_items.forEach((item, idx) => {
+        const qty = parseFloat(d.get_value(`g${gIdx}_pkg_${idx}`) || 0);
+        if (qty > 0) {
+          usage.push({ item_code: item.item_code, qty, batch_no: item.batch_no || null });
+        }
+      });
+      return usage;
+    }
+
     const d = opDialog({
       title:'Close Production',
       fields,
@@ -3017,20 +3031,12 @@ function init_operator_hub($root) {
             batchSeen.set(batchNo, g.production_item);
           }
 
-          const packagingUsage = [];
-          g.packaging_items.forEach((item, idx) => {
-            const qty = parseFloat(v[`g${gIdx}_pkg_${idx}`] || 0);
-            if (qty > 0) {
-              packagingUsage.push({ item_code: item.item_code, qty, batch_no: item.batch_no || null });
-            }
-          });
-
           payload.push({
             production_item: g.production_item,
             good_qty: goodQty,
             reject_qty: rejectQty,
             batch_no: batchNo,
-            packaging_usage: packagingUsage,
+            packaging_usage: packagingUsage(gIdx),
             work_orders: chosenWOs,
           });
         }
@@ -3088,22 +3094,42 @@ function init_operator_hub($root) {
     // button is pressed. The recipe scales with output, so a batch that yielded
     // more than planned asks for input that was never made or staged — which
     // used to surface only afterwards, as ERPNext's "1.599 units of CORN MIX 1
-    // needed" and a close that would not go through. Advisory only: the server
-    // consumes what is there and records the difference either way.
+    // needed" and a close that would not go through. The server consumes what
+    // is there and records the difference either way, so an over-run within
+    // the allowance is reported as the normal outcome it is, not as a warning;
+    // only a gap the over-run does not explain, or packaging the line does not
+    // hold, is flagged.
     productGroups.forEach((g, gIdx) => {
       const panel = d.fields_dict[`g${gIdx}_coverage`];
       if (!panel) return;
 
       const fmt = (n) => (Math.round((parseFloat(n) || 0) * 1000) / 1000).toLocaleString();
+      const esc = (s) => frappe.utils.escape_html(s || '');
       let latest = 0;
       let timer = null;
 
-      function shortLine(row) {
-        return `<li><strong>${frappe.utils.escape_html(row.item_name || row.item_code)}</strong>`
-          + ` — recipe ${fmt(row.required_qty)} ${frappe.utils.escape_html(row.uom || '')},`
+      function gainLine(row) {
+        return `<li><strong>${esc(row.item_name || row.item_code)}</strong>`
+          + ` — ${fmt(row.yield_gain_qty)} ${esc(row.uom)}</li>`;
+      }
+
+      function gapLine(row) {
+        const gain = parseFloat(row.yield_gain_qty) || 0;
+        return `<li><strong>${esc(row.item_name || row.item_code)}</strong>`
+          + ` — recipe ${fmt(row.required_qty)} ${esc(row.uom)},`
           + ` ${fmt(row.already_consumed)} already used,`
-          + ` <strong>${fmt(row.short_qty)} short</strong>`
-          + ` in ${frappe.utils.escape_html(row.source_warehouse || '')}</li>`;
+          + ` <strong>${fmt(row.gap_qty)} short</strong>`
+          + ` in ${esc(row.source_warehouse)}`
+          + (gain > 0 ? `, plus the ${fmt(gain)} the over-run accounts for` : '')
+          + `</li>`;
+      }
+
+      function packagingLine(row) {
+        const batch = row.batch_no ? ` (batch ${esc(row.batch_no)})` : '';
+        return `<li><strong>${esc(row.item_name || row.item_code)}</strong>${batch}`
+          + ` — ${fmt(row.entered_qty)} ${esc(row.uom)} entered,`
+          + ` ${fmt(row.available_qty)} in ${esc(row.warehouse)},`
+          + ` <strong>${fmt(row.short_qty)} short</strong></li>`;
       }
 
       function html(data) {
@@ -3111,41 +3137,62 @@ function init_operator_hub($root) {
         if (refused.length) {
           return `<div class="cp-coverage cp-coverage-bad">`
             + `<div class="cp-coverage-head">Output above what the Work Order allows</div>`
-            + `<div>${frappe.utils.escape_html(refused.join(', '))} cannot receive this quantity. `
+            + `<div>${esc(refused.join(', '))} cannot receive this quantity. `
             + `Raise Manufacturing Settings → Overproduction Percentage For Work Order, or lower the figure.</div>`
             + `</div>`;
         }
 
         const short = data.short || [];
+        const gains = short.filter(r => (parseFloat(r.yield_gain_qty) || 0) > 0);
+        const gaps = short.filter(r => (parseFloat(r.gap_qty) || 0) > 0);
+        const packaging = data.packaging_short || [];
         const over = parseFloat(data.over_qty) || 0;
         const planned = parseFloat(data.planned_qty) || 0;
         const overPct = planned > 0 ? (over / planned * 100) : 0;
+        const allowance = parseFloat(data.allowance_pct) || 0;
+        const panels = [];
 
-        if (!short.length) {
-          if (over <= 0) return '';
-          return `<div class="cp-coverage cp-coverage-ok">`
-            + `<div class="cp-coverage-head">+${fmt(over)} over the planned ${fmt(planned)}`
-            + ` (+${overPct.toFixed(1)}%)</div>`
-            + `<div>The material for it is there, so this closes as a normal over-run.</div>`
-            + `</div>`;
+        // The one thing here that does stop a close: an over-run uses more
+        // packaging than the order was issued, and the stock ledger refuses a
+        // figure the line does not hold.
+        if (packaging.length) {
+          panels.push(`<div class="cp-coverage cp-coverage-bad">`
+            + `<div class="cp-coverage-head">More packaging entered than the line holds</div>`
+            + `<ul class="cp-coverage-list">${packaging.map(packagingLine).join('')}</ul>`
+            + `<div class="cp-coverage-foot">The stock ledger will refuse the close as entered. `
+            + `Have the extra moved to the line (or staged as surplus for this order) first, or correct the figure.</div>`
+            + `</div>`);
         }
 
-        const why = over > 0
-          ? `This batch yielded ${fmt(over)} more than the ${fmt(planned)} planned (+${overPct.toFixed(1)}%). `
-            + `The recipe scales with output, so it now asks for material that was never made or staged — `
-            + `the extra output came out of the same input.`
-          : `The recipe asks for more than the warehouse holds. Output did not exceed the plan, `
-            + `so this is worth checking against the stock records.`;
-        const outcome = over > 0
-          ? `Closing consumes what is actually there and records the difference on the Work Order as a yield gain.`
-          : `Closing consumes what is actually there and records the shortfall on the Work Order.`;
+        if (gaps.length) {
+          const why = over > 0
+            ? `The over-run does not account for all of this: the warehouse holds less than even the planned `
+              + `${fmt(planned)} needed, which is worth checking against the stock records.`
+            : `The recipe asks for more than the warehouse holds. Output did not exceed the plan, `
+              + `so this is worth checking against the stock records.`;
+          panels.push(`<div class="cp-coverage cp-coverage-warn">`
+            + `<div class="cp-coverage-head">Recipe asks for more than is available</div>`
+            + `<div>${why}</div>`
+            + `<ul class="cp-coverage-list">${gaps.map(gapLine).join('')}</ul>`
+            + `<div class="cp-coverage-foot">Closing consumes what is actually there and records the shortfall on the Work Order.</div>`
+            + `</div>`);
+        }
 
-        return `<div class="cp-coverage cp-coverage-warn">`
-          + `<div class="cp-coverage-head">Recipe asks for more than is available</div>`
-          + `<div>${why}</div>`
-          + `<ul class="cp-coverage-list">${short.map(shortLine).join('')}</ul>`
-          + `<div class="cp-coverage-foot">${outcome}</div>`
-          + `</div>`;
+        if (over > 0) {
+          const within = allowance > 0 ? ` — within the ${fmt(allowance)}% over-production allowance` : '';
+          const body = gains.length
+            ? `A normal over-run: the extra came out of the same input. The recipe's share for it was never `
+              + `made, so it is not consumed — it is recorded on the Work Order as a yield gain:`
+            : `The recipe's materials cover it.`;
+          panels.push(`<div class="cp-coverage cp-coverage-ok">`
+            + `<div class="cp-coverage-head">+${fmt(over)} over the planned ${fmt(planned)}`
+            + ` (+${overPct.toFixed(1)}%)${within}</div>`
+            + `<div>${body}</div>`
+            + (gains.length ? `<ul class="cp-coverage-list">${gains.map(gainLine).join('')}</ul>` : '')
+            + `</div>`);
+        }
+
+        return panels.join('');
       }
 
       async function refresh() {
@@ -3160,6 +3207,7 @@ function init_operator_hub($root) {
             work_orders: JSON.stringify(picked),
             good_qty: good,
             reject_qty: reject,
+            packaging: JSON.stringify(packagingUsage(gIdx)),
           });
           if (mine !== latest) return;   // a later keystroke already answered
           panel.$wrapper.html(html(r.message || {}));
@@ -3177,7 +3225,7 @@ function init_operator_hub($root) {
         timer = setTimeout(refresh, 400);
       }
 
-      ['good_qty', 'reject_qty'].forEach(suffix => {
+      ['good_qty', 'reject_qty', ...g.packaging_items.map((_item, idx) => `pkg_${idx}`)].forEach(suffix => {
         const field = d.fields_dict[`g${gIdx}_${suffix}`];
         if (field && field.$input) field.$input.on('input change', schedule);
       });

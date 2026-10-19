@@ -1115,6 +1115,42 @@ def _bom_consumption_plan(wo, output_qty: float, committed: dict = None) -> list
     return plan
 
 
+def _shortfall_split(row: dict, output_qty: float, planned_qty: float) -> tuple[float, float]:
+    """Split a row's shortfall into the yield gain an over-run explains and the rest.
+
+    The recipe scales with output, so an order that made more than planned asks
+    for ``required x over / output`` more than its planned charge: material that
+    was never made or staged, because the extra output came out of the same
+    input. That much of a shortfall is a yield gain and nothing is wrong — 52
+    cartons off a charge planned for 50 leaves CORN MIX 1 short by exactly 2/52
+    of its recipe.
+
+    Anything beyond that share was missing even for the planned output, which no
+    yield explains: a gap between the recipe and the ledger. Telling the two
+    apart is what lets the dialog call an ordinary over-run fine without going
+    quiet on a real gap that happens to coincide with one.
+
+    Returns ``(yield_gain_qty, gap_qty)`` at the posting precision, summing to
+    ``short_qty``.
+    """
+    short = flt(row.get("short_qty"))
+    output = flt(output_qty)
+    over = output - flt(planned_qty)
+    if short <= 0:
+        return 0.0, 0.0
+    if over <= QTY_EPSILON or flt(planned_qty) <= QTY_EPSILON or output <= 0:
+        return 0.0, short
+    over_share = flt(row.get("required_qty")) * over / output
+    # short_qty is truncated to the posting precision and the share is not, so a
+    # shortfall the over-run fully explains can sit a tick either side of it.
+    if short <= over_share + qty_tick():
+        return short, 0.0
+    yield_gain = truncate_qty(over_share)
+    # Both operands are already at the posting precision; rounding to nearest
+    # keeps float noise (3.867 - 0.533 == 3.3339999999999996) from costing a tick.
+    return yield_gain, postable_qty(short - yield_gain)
+
+
 def _record_material_shortfall(wo, row: dict, output_qty: float) -> None:
     """Record a BOM requirement the Work Order could not draw, and say why.
 
@@ -1127,21 +1163,30 @@ def _record_material_shortfall(wo, row: dict, output_qty: float) -> None:
     ``output_qty`` is everything the run produced, rejects included, because
     that is what the recipe was scaled by and what the material had to cover.
 
-    Anything else is a genuine gap between the recipe and the ledger. It is
-    worth a look, but not worth stranding a finished batch on the line for, so
-    it is reported rather than thrown. Both go to the Work Order's own comments
-    as well as the Error Log, because the Error Log is not where a production
-    manager looks.
+    Anything the over-run does not account for (see :func:`_shortfall_split`)
+    is a genuine gap between the recipe and the ledger. It is worth a look, but
+    not worth stranding a finished batch on the line for, so it is reported
+    rather than thrown. Both go to the Work Order's own comments as well as the
+    Error Log, because the Error Log is not where a production manager looks.
     """
     planned_qty = flt(wo.qty)
     over = flt(output_qty) - planned_qty
-    if over > QTY_EPSILON and planned_qty > QTY_EPSILON:
+    yield_gain, gap = _shortfall_split(row, output_qty, planned_qty)
+    if yield_gain and not gap:
         reason = _(
             "Output of {0:g} exceeded the planned {1:g} by {2:g} ({3:.1f}%), so "
             "the recipe asks for more {4} than was ever made or staged. The "
             "extra came out of the same input — recorded as a yield gain."
         ).format(flt(output_qty), planned_qty, over,
                  over / planned_qty * 100, row["item_code"])
+    elif over > QTY_EPSILON and planned_qty > QTY_EPSILON:
+        reason = _(
+            "Output of {0:g} exceeded the planned {1:g} by {2:g} ({3:.1f}%), which "
+            "accounts for {4:g} of it as a yield gain. The other {5:g} was missing "
+            "even for the planned output — a gap between the recipe and what {6} "
+            "holds, worth checking."
+        ).format(flt(output_qty), planned_qty, over, over / planned_qty * 100,
+                 yield_gain, gap, row["source_warehouse"])
     else:
         reason = _(
             "The recipe asks for more {0} than {1} holds. Output did not exceed "
@@ -4215,6 +4260,114 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
     
     return result
 
+
+def _packaging_remainder(wo_name: str, item_code: str, qty: float,
+                         batch_no: Optional[str]) -> tuple[float, float]:
+    """What a close posts for one packaging figure: ``(already_consumed, remainder)``.
+
+    The operator enters the total used; whatever LOAD already consumed for the
+    order — of this batch, when the row names one — comes off it. Close
+    Production posts from this and the dialog's packaging check previews from
+    it, so the two cannot disagree on what a figure takes out of WIP.
+    """
+    consumed_by_batch = _consumed_qty_by_batch([wo_name], item_code)
+    if batch_no:
+        already = flt(consumed_by_batch.get(batch_no, 0))
+    else:
+        already = flt(sum(consumed_by_batch.values()))
+    return already, flt(qty) - already
+
+
+def _packaging_on_hand(item_code: str, batch_no: Optional[str], warehouse: str) -> Optional[float]:
+    """The balance ERPNext refuses a packaging row against: the batch's in
+    ``warehouse`` when the row names one, the item's otherwise.
+
+    None when it cannot be read — the caller only advises, and must not warn on
+    a guess.
+    """
+    if not batch_no:
+        return _warehouse_qty(item_code, warehouse)
+    try:
+        from erpnext.stock.doctype.batch.batch import get_batch_qty as erpnext_get_batch_qty
+
+        return flt(erpnext_get_batch_qty(batch_no=batch_no, warehouse=warehouse, item_code=item_code))
+    except Exception:
+        return None
+
+
+def _surplus_due_into_wip(work_orders: list[str]) -> dict[tuple, float]:
+    """Staged surplus a close will sweep into WIP before it posts, per
+    ``(item_code, batch_no, wip_warehouse)``.
+
+    The storekeeper stages surplus packaging for exactly the over-run a close
+    then consumes, and :func:`_close_single_wo` sweeps whatever has not been
+    swept yet before it posts. A preview that ignored it would call a close
+    short that goes through. Mirrors :func:`_create_surplus_wip_transfer` row
+    for row; a surplus entry several of these orders share is counted once, for
+    the first of them, which is the one that sweeps it.
+    """
+    claimed: dict[str, tuple] = {}
+    for wo_name in work_orders:
+        staging_wh = _default_line_staging(wo_name)
+        wip_wh = frappe.db.get_value("Work Order", wo_name, "wip_warehouse") or _default_line_wip(wo_name)
+        if not staging_wh or not wip_wh:
+            continue
+        for se_name in _find_eligible_surplus_ses(wo_name, staging_wh):
+            claimed.setdefault(se_name, (staging_wh, wip_wh))
+    if not claimed:
+        return {}
+
+    rows = frappe.db.sql("""
+        select parent, item_code, coalesce(batch_no, '') as batch_no, t_warehouse, qty
+        from `tabStock Entry Detail`
+        where parent in %(names)s
+          and qty > 0
+    """, {"names": tuple(claimed)}, as_dict=True)
+    due: dict[tuple, float] = {}
+    for r in rows:
+        staging_wh, wip_wh = claimed[r.parent]
+        if r.t_warehouse != staging_wh:
+            continue
+        key = (r.item_code, r.batch_no, wip_wh)
+        due[key] = due.get(key, 0.0) + flt(r.qty)
+    return due
+
+
+def _packaging_shortfalls(wanted: dict[tuple, float], work_orders: list[str]) -> list[dict]:
+    """Packaging figures the line does not hold, which ERPNext will refuse.
+
+    ``wanted`` maps ``(item_code, batch_no, wip_warehouse)`` to what the close
+    would post across ``work_orders``. An over-run uses more packaging than the
+    order was issued — a carton per carton — and unlike a recipe material there
+    is nothing to scale back: the operator counted what was used. So the extra
+    has to be in WIP, or staged as surplus the close sweeps in, or the stock
+    ledger refuses the close. Saying so in the dialog is the difference between
+    a figure to fix and ERPNext's "Batch No … has negative stock".
+    """
+    if not wanted:
+        return []
+    surplus = _surplus_due_into_wip(work_orders)
+    out = []
+    for (item_code, batch_no, wip_wh), qty in wanted.items():
+        on_hand = _packaging_on_hand(item_code, batch_no or None, wip_wh)
+        if on_hand is None:
+            continue
+        available = on_hand + surplus.get((item_code, batch_no, wip_wh), 0.0)
+        short = postable_qty(qty - available)
+        if short > 0:
+            out.append({
+                "item_code": item_code,
+                "item_name": frappe.db.get_value("Item", item_code, "item_name") or item_code,
+                "uom": frappe.db.get_value("Item", item_code, "stock_uom") or "",
+                "batch_no": batch_no or None,
+                "warehouse": wip_wh,
+                "entered_qty": qty,
+                "available_qty": available,
+                "short_qty": short,
+            })
+    return out
+
+
 def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
     """Close one Work Order: book Manufacture Stock Entry, mark Completed."""
     wo_name = wo_data["name"]
@@ -4367,12 +4520,9 @@ def _close_single_wo(wo_data: dict, split: dict, batch_no: str) -> None:
                 if qty <= 0:
                     continue
 
-                consumed_by_batch = _consumed_qty_by_batch([wo_name], item_code)
-                if pkg_batch_no:
-                    already_consumed_pkg_qty = flt(consumed_by_batch.get(pkg_batch_no, 0))
-                else:
-                    already_consumed_pkg_qty = flt(sum(consumed_by_batch.values()))
-                remaining_pkg_qty = qty - already_consumed_pkg_qty
+                already_consumed_pkg_qty, remaining_pkg_qty = _packaging_remainder(
+                    wo_name, item_code, qty, pkg_batch_no
+                )
                 # Same quantisation as the BOM loop above: only a remainder that
                 # survives at the posting precision can become a row.
                 postable_pkg_qty = truncate_qty(remaining_pkg_qty)
@@ -4698,7 +4848,7 @@ def close_production(groups: str = None, lines: str = None,
 
 
 @frappe.whitelist()
-def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
+def get_close_production_coverage(work_orders, good_qty, reject_qty=0, packaging=None):
     """What this close will draw off the BOM, and anything that is not there.
 
     The Close Production dialog calls this as the operator types, so an output
@@ -4716,12 +4866,18 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
             the ones ticked in the dialog, since unticking one changes both the
             split and the material.
         good_qty / reject_qty: the totals as typed, across those orders.
+        packaging: JSON array of the packaging figures as typed
+            (``[{"item_code", "qty", "batch_no"}]``), checked against what the
+            line holds.
 
     Returns:
-        dict with ``rows`` (one per BOM material, aggregated across the orders),
-        ``short`` (the subset that cannot be covered), ``planned_qty``,
-        ``output_qty``, ``over_qty`` and ``refused`` (orders whose output the
-        allowance would refuse outright).
+        dict with ``rows`` (one per BOM material, aggregated across the orders,
+        each carrying ``yield_gain_qty`` and ``gap_qty`` — see
+        :func:`_shortfall_split`), ``short`` (the subset that cannot be
+        covered), ``planned_qty``, ``output_qty``, ``over_qty``,
+        ``allowance_pct``, ``refused`` (orders whose output the allowance would
+        refuse outright) and ``packaging_short`` (figures the line does not
+        hold — see :func:`_packaging_shortfalls`).
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -4733,10 +4889,26 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
             names = []
     names = [str(n).strip() for n in (names or []) if str(n or "").strip()]
 
+    pkg_rows = packaging
+    if isinstance(pkg_rows, str):
+        try:
+            pkg_rows = json.loads(pkg_rows)
+        except Exception:
+            pkg_rows = []
+    pkg_rows = [
+        {"item_code": p["item_code"], "qty": flt(p.get("qty")), "batch_no": p.get("batch_no") or None}
+        for p in (pkg_rows or [])
+        if isinstance(p, dict) and p.get("item_code") and flt(p.get("qty")) > 0
+    ]
+
     good = flt(good_qty)
     reject = flt(reject_qty)
+    allowance_pct = flt(frappe.db.get_single_value(
+        "Manufacturing Settings", "overproduction_percentage_for_work_order"
+    ))
     empty = {"rows": [], "short": [], "planned_qty": 0.0, "output_qty": 0.0,
-             "over_qty": 0.0, "refused": []}
+             "over_qty": 0.0, "allowance_pct": allowance_pct, "refused": [],
+             "packaging_short": []}
     if not names or good <= 0:
         return empty
 
@@ -4749,11 +4921,14 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
     if not wos:
         return empty
 
-    splits = _calculate_proportional_split(wos, good, reject, [])
+    splits = _calculate_proportional_split(wos, good, reject, pkg_rows)
     planned_qty = sum(flt(w["qty"]) for w in wos)
 
     totals: dict[str, dict] = {}
     refused: list[str] = []
+    # What the packaging figures would post, per (item, batch, WIP) — the same
+    # remainder _close_single_wo posts, summed over the orders it closes.
+    pkg_wanted: dict[tuple, float] = {}
     # Close Production works through the orders one at a time and each posts
     # before the next is planned, so the ledger rations shared stock for it. A
     # preview sees one snapshot, so it has to keep that running total itself —
@@ -4787,11 +4962,30 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
                 "already_consumed": 0.0,
                 "post_qty": 0.0,
                 "short_qty": 0.0,
+                "yield_gain_qty": 0.0,
+                "gap_qty": 0.0,
             })
+            # Split per order, against that order's own plan: the close records
+            # each order's shortfall separately, and so must the preview.
+            yield_gain, gap = _shortfall_split(row, output, w["qty"])
             agg["required_qty"] += row["required_qty"]
             agg["already_consumed"] += row["already_consumed"]
             agg["post_qty"] += row["post_qty"]
             agg["short_qty"] += row["short_qty"]
+            agg["yield_gain_qty"] += yield_gain
+            agg["gap_qty"] += gap
+
+        wip_wh = wo.wip_warehouse or _default_line_wip(w["name"])
+        for pkg in split["packaging"]:
+            if pkg["qty"] <= 0 or not wip_wh:
+                continue
+            _already, remaining = _packaging_remainder(
+                w["name"], pkg["item_code"], pkg["qty"], pkg.get("batch_no")
+            )
+            post = truncate_qty(remaining)
+            if post > 0:
+                pkg_key = (pkg["item_code"], pkg.get("batch_no") or "", wip_wh)
+                pkg_wanted[pkg_key] = pkg_wanted.get(pkg_key, 0.0) + post
 
     rows = list(totals.values())
     return {
@@ -4800,7 +4994,11 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0):
         "planned_qty": planned_qty,
         "output_qty": good + reject,
         "over_qty": max(good + reject - planned_qty, 0.0),
+        "allowance_pct": allowance_pct,
         "refused": refused,
+        "packaging_short": _packaging_shortfalls(
+            pkg_wanted, [w["name"] for w in wos if w["name"] not in refused]
+        ),
     }
 
 @frappe.whitelist()
