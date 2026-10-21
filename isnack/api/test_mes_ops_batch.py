@@ -184,86 +184,47 @@ class TestBatchCodeValidation(unittest.TestCase):
 
 
 class TestGetPackagingBomItemsSLEBatchLookup(unittest.TestCase):
-    """Tests for the SLE-based batch lookup in get_packaging_bom_items_for_ended_wos."""
+    """Batch rows offered by get_packaging_bom_items_for_ended_wos.
 
-    def _make_sql_side_effect(self, direct_batches, bundle_batches, net_qty_rows):
-        """
-        Return a side_effect function that returns the right mock data for each SQL call.
+    A packaging item's batches come from three places: what the orders moved
+    into WIP (directly on the ledger row, or through a Serial and Batch Bundle),
+    and what was staged for them — the order's own staging transfers and the
+    surplus staged for it, which reach WIP by a sweep that names no order, or
+    not at all when an order was ended before Start. Each row carries what LOAD
+    already consumed of that batch.
+    """
 
-        Call order:
-          1. Strategy-1 DISTINCT batch_no from SLE (direct)
-          2. Strategy-2 DISTINCT batch_no via serial_and_batch_bundle
-          3. Net qty aggregation per batch
-        """
-        call_count = [0]
-        responses = [direct_batches, bundle_batches, net_qty_rows]
+    def _sql_router(self, direct=(), bundle=(), staged=(), consumed=()):
+        """Answer each query by what it asks for, not by call order."""
 
         def side_effect(sql, params=None, as_dict=False):
-            idx = call_count[0]
-            call_count[0] += 1
-            if idx < len(responses):
-                return responses[idx]
+            if "consumed_qty" in sql:
+                return list(consumed)
+            if "nullif(sed.batch_no, '')" in sql:
+                return list(staged)
+            if "sbe.parent = sle.serial_and_batch_bundle" in sql:
+                return list(bundle)
+            if "SELECT DISTINCT sle.batch_no" in sql:
+                return list(direct)
             return []
 
         return side_effect
 
-    @patch("isnack.api.mes_ops._require_roles")
-    @patch("isnack.api.mes_ops._packaging_groups_global")
-    @patch("isnack.api.mes_ops._line_for_work_order")
-    @patch("isnack.api.mes_ops._warehouses_for_line")
-    @patch("frappe.db.get_all")
-    @patch("frappe.db.sql")
-    def test_consumed_batch_returned_with_zero_available(
-        self,
-        mock_sql,
-        mock_get_all,
-        mock_warehouses_for_line,
-        mock_line_for_wo,
-        mock_packaging_groups,
-        mock_require_roles,
-    ):
-        """Batches consumed from WIP should still appear with available_qty=0."""
-        mock_require_roles.return_value = None
+    def _run(self, item, mock_sql, mock_get_all, mock_warehouses_for_line,
+             mock_line_for_wo, mock_packaging_groups, **sql):
         mock_packaging_groups.return_value = {"packaging"}
         mock_line_for_wo.return_value = "LINE1"
         mock_warehouses_for_line.return_value = (None, "FRY1-WIP - ISN", None, None)
-
-        # frappe.db.get_all side effects: work orders, BOMs, BOM items, item data
         mock_get_all.side_effect = [
-            # Work Order BOM lookup
             [{"name": "WO-001", "bom_no": "BOM-001"}],
-            # BOM items
-            [{"item_code": "CR30002"}],
-            # Item details (has_batch_no=1, packaging group)
-            [
-                {
-                    "name": "CR30002",
-                    "item_group": "Packaging",
-                    "item_name": "General Carton",
-                    "stock_uom": "Carton",
-                    "has_batch_no": 1,
-                }
-            ],
+            [{"item_code": item["name"]}],
+            [dict(item, item_group="Packaging", has_batch_no=1)],
         ]
+        mock_sql.side_effect = self._sql_router(**sql)
+        return get_packaging_bom_items_for_ended_wos(work_orders=json.dumps(["WO-001"]))["items"]
 
-        # SQL calls: direct find → bundle find → net qty
-        mock_sql.side_effect = self._make_sql_side_effect(
-            direct_batches=[MagicMock(batch_no="BCR30002")],
-            bundle_batches=[],
-            net_qty_rows=[MagicMock(batch_no="BCR30002", net_qty=0)],
-        )
-
-        result = get_packaging_bom_items_for_ended_wos(
-            work_orders=json.dumps(["WO-001"])
-        )
-
-        items = result["items"]
-        self.assertEqual(len(items), 1)
-        item = items[0]
-        self.assertEqual(item["item_code"], "CR30002")
-        self.assertEqual(item["batch_no"], "BCR30002")
-        self.assertEqual(item["available_qty"], 0)
-        self.assertEqual(item["has_batch_no"], 1)
+    CARTON = {"name": "CR30002", "item_name": "General Carton", "stock_uom": "Carton"}
+    FILM = {"name": "PM40005", "item_name": "Film", "stock_uom": "Kg"}
 
     @patch("isnack.api.mes_ops._require_roles")
     @patch("isnack.api.mes_ops._packaging_groups_global")
@@ -271,156 +232,100 @@ class TestGetPackagingBomItemsSLEBatchLookup(unittest.TestCase):
     @patch("isnack.api.mes_ops._warehouses_for_line")
     @patch("frappe.db.get_all")
     @patch("frappe.db.sql")
-    def test_batch_found_via_bundle_when_direct_sle_empty(
-        self,
-        mock_sql,
-        mock_get_all,
-        mock_warehouses_for_line,
-        mock_line_for_wo,
-        mock_packaging_groups,
-        mock_require_roles,
-    ):
-        """Batches tracked only via serial_and_batch_bundle should also be returned."""
-        mock_require_roles.return_value = None
-        mock_packaging_groups.return_value = {"packaging"}
-        mock_line_for_wo.return_value = "LINE1"
-        mock_warehouses_for_line.return_value = (None, "FRY1-WIP - ISN", None, None)
-
-        mock_get_all.side_effect = [
-            [{"name": "WO-001", "bom_no": "BOM-001"}],
-            [{"item_code": "PM40005"}],
-            [
-                {
-                    "name": "PM40005",
-                    "item_group": "Packaging",
-                    "item_name": "Film",
-                    "stock_uom": "Kg",
-                    "has_batch_no": 1,
-                }
-            ],
-        ]
-
-        # Direct SLE has no batch; bundle lookup finds BPM40005
-        mock_sql.side_effect = self._make_sql_side_effect(
-            direct_batches=[],
-            bundle_batches=[MagicMock(batch_no="BPM40005")],
-            net_qty_rows=[MagicMock(batch_no="BPM40005", net_qty=5.0)],
+    def test_batch_moved_into_wip_comes_with_what_load_consumed(self, *mocks):
+        items = self._run(
+            self.CARTON, *mocks[:5],
+            direct=[MagicMock(batch_no="BCR30002")],
+            consumed=[MagicMock(batch_no="BCR30002", consumed_qty=12.5)],
         )
 
-        result = get_packaging_bom_items_for_ended_wos(
-            work_orders=json.dumps(["WO-001"])
-        )
-
-        items = result["items"]
         self.assertEqual(len(items), 1)
-        item = items[0]
-        self.assertEqual(item["item_code"], "PM40005")
-        self.assertEqual(item["batch_no"], "BPM40005")
-        self.assertEqual(item["available_qty"], 5.0)
-
-    @patch("isnack.api.mes_ops._require_roles")
-    @patch("isnack.api.mes_ops._packaging_groups_global")
-    @patch("isnack.api.mes_ops._line_for_work_order")
-    @patch("isnack.api.mes_ops._warehouses_for_line")
-    @patch("frappe.db.get_all")
-    @patch("frappe.db.sql")
-    def test_no_sle_activity_returns_none_batch(
-        self,
-        mock_sql,
-        mock_get_all,
-        mock_warehouses_for_line,
-        mock_line_for_wo,
-        mock_packaging_groups,
-        mock_require_roles,
-    ):
-        """When no SLE activity exists for a batch-tracked item, batch_no and available_qty are None."""
-        mock_require_roles.return_value = None
-        mock_packaging_groups.return_value = {"packaging"}
-        mock_line_for_wo.return_value = "LINE1"
-        mock_warehouses_for_line.return_value = (None, "FRY1-WIP - ISN", None, None)
-
-        mock_get_all.side_effect = [
-            [{"name": "WO-001", "bom_no": "BOM-001"}],
-            [{"item_code": "CR30002"}],
-            [
-                {
-                    "name": "CR30002",
-                    "item_group": "Packaging",
-                    "item_name": "General Carton",
-                    "stock_uom": "Carton",
-                    "has_batch_no": 1,
-                }
-            ],
-        ]
-
-        # Both SLE strategies return nothing
-        mock_sql.side_effect = self._make_sql_side_effect(
-            direct_batches=[],
-            bundle_batches=[],
-            net_qty_rows=[],
-        )
-
-        result = get_packaging_bom_items_for_ended_wos(
-            work_orders=json.dumps(["WO-001"])
-        )
-
-        items = result["items"]
-        self.assertEqual(len(items), 1)
-        item = items[0]
-        self.assertEqual(item["item_code"], "CR30002")
-        self.assertIsNone(item["batch_no"])
-        self.assertIsNone(item["available_qty"])
-        self.assertEqual(item["has_batch_no"], 1)
-
-    @patch("isnack.api.mes_ops._require_roles")
-    @patch("isnack.api.mes_ops._packaging_groups_global")
-    @patch("isnack.api.mes_ops._line_for_work_order")
-    @patch("isnack.api.mes_ops._warehouses_for_line")
-    @patch("frappe.db.get_all")
-    @patch("frappe.db.sql")
-    def test_positive_available_qty_returned_correctly(
-        self,
-        mock_sql,
-        mock_get_all,
-        mock_warehouses_for_line,
-        mock_line_for_wo,
-        mock_packaging_groups,
-        mock_require_roles,
-    ):
-        """Batches with positive net qty are returned with the correct available_qty."""
-        mock_require_roles.return_value = None
-        mock_packaging_groups.return_value = {"packaging"}
-        mock_line_for_wo.return_value = "LINE1"
-        mock_warehouses_for_line.return_value = (None, "FRY1-WIP - ISN", None, None)
-
-        mock_get_all.side_effect = [
-            [{"name": "WO-001", "bom_no": "BOM-001"}],
-            [{"item_code": "CR30002"}],
-            [
-                {
-                    "name": "CR30002",
-                    "item_group": "Packaging",
-                    "item_name": "General Carton",
-                    "stock_uom": "Carton",
-                    "has_batch_no": 1,
-                }
-            ],
-        ]
-
-        mock_sql.side_effect = self._make_sql_side_effect(
-            direct_batches=[MagicMock(batch_no="BCR30002")],
-            bundle_batches=[],
-            net_qty_rows=[MagicMock(batch_no="BCR30002", net_qty=12.5)],
-        )
-
-        result = get_packaging_bom_items_for_ended_wos(
-            work_orders=json.dumps(["WO-001"])
-        )
-
-        items = result["items"]
-        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["item_code"], "CR30002")
         self.assertEqual(items[0]["batch_no"], "BCR30002")
-        self.assertEqual(items[0]["available_qty"], 12.5)
+        self.assertEqual(items[0]["consumed_qty"], 12.5)
+        self.assertEqual(items[0]["has_batch_no"], 1)
+
+    @patch("isnack.api.mes_ops._require_roles")
+    @patch("isnack.api.mes_ops._packaging_groups_global")
+    @patch("isnack.api.mes_ops._line_for_work_order")
+    @patch("isnack.api.mes_ops._warehouses_for_line")
+    @patch("frappe.db.get_all")
+    @patch("frappe.db.sql")
+    def test_batch_found_via_bundle_when_direct_sle_empty(self, *mocks):
+        """Batches tracked only via serial_and_batch_bundle should also be returned."""
+        items = self._run(self.FILM, *mocks[:5], bundle=[MagicMock(batch_no="BPM40005")])
+
+        self.assertEqual([(i["batch_no"], i["consumed_qty"]) for i in items], [("BPM40005", 0)])
+
+    @patch("isnack.api.mes_ops._require_roles")
+    @patch("isnack.api.mes_ops._packaging_groups_global")
+    @patch("isnack.api.mes_ops._line_for_work_order")
+    @patch("isnack.api.mes_ops._warehouses_for_line")
+    @patch("frappe.db.get_all")
+    @patch("frappe.db.sql")
+    def test_no_activity_anywhere_returns_none_batch(self, *mocks):
+        """Nothing moved and nothing staged: one row with no batch, still offered."""
+        items = self._run(self.CARTON, *mocks[:5])
+
+        self.assertEqual(len(items), 1)
+        self.assertIsNone(items[0]["batch_no"])
+        self.assertIsNone(items[0]["consumed_qty"])
+        self.assertEqual(items[0]["has_batch_no"], 1)
+
+    @patch("isnack.api.mes_ops._require_roles")
+    @patch("isnack.api.mes_ops._packaging_groups_global")
+    @patch("isnack.api.mes_ops._line_for_work_order")
+    @patch("isnack.api.mes_ops._warehouses_for_line")
+    @patch("frappe.db.get_all")
+    @patch("frappe.db.sql")
+    def test_batch_staged_but_never_moved_into_wip_is_offered(self, *mocks):
+        """MFG-WO-2026-00086: ended before Start, so nothing reached WIP and the
+        dialog offered a row with no batch. The staging transfer names the
+        batch."""
+        items = self._run(self.CARTON, *mocks[:5], staged=[MagicMock(batch_no="jimm0709")])
+
+        self.assertEqual([(i["batch_no"], i["consumed_qty"]) for i in items], [("jimm0709", 0)])
+
+    @patch("isnack.api.mes_ops._require_roles")
+    @patch("isnack.api.mes_ops._packaging_groups_global")
+    @patch("isnack.api.mes_ops._line_for_work_order")
+    @patch("isnack.api.mes_ops._warehouses_for_line")
+    @patch("frappe.db.get_all")
+    @patch("frappe.db.sql")
+    def test_surplus_of_another_batch_gets_its_own_row(self, *mocks):
+        """The sweep that moves surplus into WIP names no order, so a surplus
+        batch other than the one Start moved used to have no row to enter
+        against."""
+        items = self._run(
+            self.CARTON, *mocks[:5],
+            direct=[MagicMock(batch_no="B-MAIN")],
+            staged=[MagicMock(batch_no="B-MAIN"), MagicMock(batch_no="B-SURPLUS")],
+        )
+
+        self.assertEqual([i["batch_no"] for i in items], ["B-MAIN", "B-SURPLUS"])
+
+
+class TestPackagingBatchesStagedFor(unittest.TestCase):
+    @patch("frappe.db.sql")
+    def test_reads_staging_and_surplus_transfers_for_the_orders(self, mock_sql):
+        mock_sql.return_value = [MagicMock(batch_no="jimm0709"), MagicMock(batch_no=None)]
+
+        from isnack.api.mes_ops import _packaging_batches_staged_for
+        got = _packaging_batches_staged_for(["WO-86", "WO-87"], "CR30002")
+
+        self.assertEqual(got, {"jimm0709"})
+        query, params = mock_sql.call_args[0][0], mock_sql.call_args[0][1]
+        self.assertEqual(params, {"item": "CR30002", "wos": ("WO-86", "WO-87")})
+        self.assertIn("se.purpose = 'Material Transfer'", query)
+        self.assertIn("custom_originating_work_order", query)
+        self.assertIn("tabSurplus Originating Work Order", query)
+
+    @patch("frappe.db.sql")
+    def test_nothing_to_look_up_reads_nothing(self, mock_sql):
+        from isnack.api.mes_ops import _packaging_batches_staged_for
+        self.assertEqual(_packaging_batches_staged_for([], "CR30002"), set())
+        self.assertEqual(_packaging_batches_staged_for(["WO-86"], ""), set())
+        mock_sql.assert_not_called()
 
 
 if __name__ == "__main__":

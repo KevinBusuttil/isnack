@@ -736,41 +736,54 @@ def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> fl
 # (b) sum the *submitted* Stock Entries as the source of truth.
 # ============================================================
 
-def _lock_work_order_for_update(work_order: str) -> None:
+def _lock_work_order_for_update(work_order: str):
     """Row-lock a single Work Order until the current transaction commits.
 
     A concurrent request touching the same Work Order blocks here until we
     commit, so it then reads our committed Stock Entries rather than the stale
     pre-transfer state. This is what makes the MTFM/Manufacture decisions
     concurrency-safe rather than merely idempotent on retry.
+
+    Returns the locked row's status and ended flag. Read them from here rather
+    than with a plain read afterwards: MariaDB's default REPEATABLE READ lets a
+    plain read answer from the snapshot this request took before it waited,
+    while a locking read always sees the latest committed row.
     """
-    frappe.db.sql(
-        "select name from `tabWork Order` where name = %s for update",
+    rows = frappe.db.sql(
+        "select name, status, custom_production_ended from `tabWork Order` "
+        "where name = %s for update",
         (work_order,),
+        as_dict=True,
     )
+    return rows[0] if rows else None
 
 
-def _lock_work_orders_for_update(work_orders: list[str]) -> None:
+def _lock_work_orders_for_update(work_orders: list[str]) -> dict:
     """Row-lock several Work Orders, always in deterministic (sorted) order.
 
     Acquiring multiple row locks in a consistent order across all callers
     prevents lock-ordering deadlocks when two Close Production requests overlap
     on an intersecting set of Work Orders.
+
+    Returns ``{name: row}`` with each locked row's status and ended flag, for
+    the reason given in :func:`_lock_work_order_for_update`.
     """
     if not work_orders:
-        return
+        return {}
     ordered = sorted(set(work_orders))
     placeholders = ", ".join(["%s"] * len(ordered))
-    frappe.db.sql(
+    rows = frappe.db.sql(
         f"""
-        select name
+        select name, status, custom_production_ended
         from `tabWork Order`
         where name in ({placeholders})
         order by name
         for update
         """,
         tuple(ordered),
+        as_dict=True,
     )
+    return {r.name: r for r in rows}
 
 
 def _submitted_mtfm_qty(work_order: str) -> float:
@@ -2294,16 +2307,26 @@ def _sweep_surplus_to_wip(
 
     Idempotent: each surplus SE is claimed atomically before being moved, so a
     later start of another originating WO will not move it again. A failure on one
-    surplus SE rolls back only its own claim and is logged; it does not block the
-    remaining surplus or the Work Order start.
+    surplus SE rolls back only its own claim and transfer and is logged; it does
+    not block the remaining surplus, the Work Order start or the close.
     """
     if not staging_wh or not wip_wh:
         return []
 
     created: list[str] = []
     for se_name in _find_eligible_surplus_ses(work_order, staging_wh):
+        # The claim and the transfer share one savepoint. A transfer can fail
+        # part-way through submit — when the surplus is no longer in staging,
+        # the batch check throws after the first ledger row is written — and
+        # catching the exception does not undo what was written. Without this
+        # the request then committed a submitted Stock Entry with one of its
+        # four ledger rows and the close reported success.
+        save_point = f"surplus_sweep_{frappe.generate_hash(length=10)}"
+        frappe.db.savepoint(save_point)
+        messages_before = len(getattr(frappe.local, "message_log", None) or [])
         if not _claim_surplus_for_sweep(se_name, work_order):
             # Another originating WO already swept this surplus.
+            frappe.db.release_savepoint(save_point)
             continue
         try:
             new_name = _create_surplus_wip_transfer(
@@ -2315,18 +2338,16 @@ def _sweep_surplus_to_wip(
                     update_modified=False,
                 )
                 created.append(new_name)
+            frappe.db.release_savepoint(save_point)
         except Exception as exc:
-            # Roll back the claim so the surplus can be retried on a later start.
-            frappe.db.set_value(
-                "Stock Entry",
-                se_name,
-                {
-                    "custom_surplus_swept_to_wip": 0,
-                    "custom_surplus_swept_by_work_order": None,
-                    "custom_surplus_swept_at": None,
-                },
-                update_modified=False,
-            )
+            # Takes the claim back with the partial transfer, so the surplus
+            # stays unswept and can be retried on a later start or close.
+            frappe.db.rollback(save_point=save_point)
+            # The failed submit queued its red popup ("Batch No … has negative
+            # stock") on the response; with nothing of it left in the ledger,
+            # showing it on top of a successful close only misleads.
+            if getattr(frappe.local, "message_log", None):
+                del frappe.local.message_log[messages_before:]
             frappe.log_error(
                 title="Sweep Surplus To WIP Error",
                 message=f"Failed to sweep surplus {se_name} for {work_order}: {exc}",
@@ -2460,6 +2481,49 @@ def _validate_sfg_availability(usage: dict, warehouse: str) -> None:
         frappe.throw(
             _("Insufficient semi-finished stock:") + "<br>" + "<br>".join(problems)
         )
+
+def _sfg_usage_not_yet_recorded(wo, rows: list[dict]) -> list[dict]:
+    """The part of the End WO semi-finished figures not already consumed for
+    this order.
+
+    The dialog asks for the quantities the order used, and End WO used to post
+    them as given. That is only right the first time: an order reopened with
+    Undo End WO and ended again would consume the same slurry twice, because
+    nothing in _post_sfg_consumption knows it was taken before. Reading each
+    figure as the order's total and posting only what the ledger does not yet
+    show makes ending again harmless, and is how Close Production already reads
+    its packaging figures. Whatever LOAD consumed counts too — it is the same
+    material.
+    """
+    entered: dict[str, float] = {}
+    for r in rows or []:
+        item_code = (r.get("item_code") or "").strip()
+        try:
+            qty = float(r.get("qty") or 0)
+        except Exception:
+            qty = 0.0
+        if item_code and qty > 0:
+            entered[item_code] = entered.get(item_code, 0.0) + qty
+    if not entered:
+        return []
+
+    consumed = _get_consumed_materials_from_load(wo.name)
+    out: list[dict] = []
+    notes: list[str] = []
+    for item_code, qty in entered.items():
+        recorded = flt(consumed.get(item_code, 0))
+        # Both figures are quantities at the posting precision; rounding to
+        # nearest keeps float noise from costing a tick.
+        remaining = postable_qty(qty - recorded)
+        if recorded > 0:
+            notes.append(_("{0}: {1:g} entered, {2:g} already recorded, {3:g} consumed now").format(
+                item_code, qty, recorded, max(remaining, 0.0)))
+        if remaining > 0:
+            out.append({"item_code": item_code, "qty": remaining})
+    if notes:
+        wo.add_comment("Info", _("End WO semi-finished usage: {0}.").format("; ".join(notes)))
+    return out
+
 
 def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     """Post Material Consumption for Manufacture for semi-finished items.
@@ -3309,9 +3373,13 @@ def get_end_wo_summary(work_order: str):
         sfg_src_wh = _default_sfg_source(work_order)
         bom_quantity = flt(sfg_components.get("bom_quantity")) or 1.0
         wo_qty = flt(wo_row.qty) if wo_row else 0.0
+        # What End WO will not consume again (see _sfg_usage_not_yet_recorded),
+        # so the dialog can say so next to the field.
+        consumed = _get_consumed_materials_from_load(work_order)
         for row in summary["sfg_items"]:
             row["source_warehouse"] = sfg_src_wh
             row["available_qty"] = _sfg_available_qty(row["item_code"], sfg_src_wh)
+            row["already_consumed"] = flt(consumed.get(row["item_code"], 0), 4)
             # Which components are semi-finished stays a BOM question
             # (get_sfg_components_for_wo); only the planned quantity follows the
             # Work Order when editing is enabled. Without this the same dialog
@@ -3322,6 +3390,13 @@ def get_end_wo_summary(work_order: str):
                 flt(planned_required, 4)
                 if planned_required is not None
                 else flt(flt(row.get("qty")) * wo_qty / bom_quantity, 4)
+            )
+            # Only this much has to come out of stock: the rest is already
+            # recorded and End WO will not consume it again. Comparing the full
+            # requirement with stock told a manager reopening WO-00086 that its
+            # slurry was short, when nothing more was needed.
+            row["still_needed_qty"] = max(
+                postable_qty(row["required_qty"] - row["already_consumed"]), 0.0
             )
             row["pending_wos"] = _pending_sfg_work_orders(row["item_code"])
     return summary
@@ -3341,7 +3416,9 @@ def end_work_order(work_order: str, sfg_usage: str = None,
 
     Args:
         work_order: Work Order name
-        sfg_usage: JSON string of SFG items to consume [{"item_code": "...", "qty": ...}]
+        sfg_usage: JSON string of the SFG quantities this order used in total
+            [{"item_code": "...", "qty": ...}]; whatever is already recorded
+            against the order is not consumed again
         override_reason: Production Manager reason to force-end below tolerance
         good_qty: actual good output (semi-finished WOs in structural mode only)
         reject_qty: actual rejected output (same scope as good_qty)
@@ -3350,13 +3427,20 @@ def end_work_order(work_order: str, sfg_usage: str = None,
 
     wo = frappe.get_doc("Work Order", work_order)
 
-    # Validate WO status - must be In Process or Not Started with allocation
     if wo.status not in ("Not Started", "In Process"):
         frappe.throw(_("Work Order must be 'Not Started' or 'In Process' to end"))
 
     # Check if already ended
     if wo.get("custom_production_ended"):
         frappe.throw(_("Work Order is already ended"))
+
+    # Start is what moves the staged material into the line's WIP, and once an
+    # order is ended it can no longer be started. Ending first stranded
+    # MFG-WO-2026-00086's 300 cartons and 20 kg of film in staging, and Close
+    # Production then had nothing on the line to consume. The status alone
+    # cannot tell: ERPNext leaves a never-started order at "Not Started", which
+    # is also what an order with a Start still to come looks like.
+    _assert_started(work_order)
 
     # Parse and post SFG consumption if provided
     sfg_rows: list[dict] = []
@@ -3369,6 +3453,7 @@ def end_work_order(work_order: str, sfg_usage: str = None,
         elif isinstance(sfg_usage, (list, tuple)):
             sfg_rows = list(sfg_usage)
 
+    sfg_rows = _sfg_usage_not_yet_recorded(wo, sfg_rows)
     if sfg_rows:
         # Record SFG consumption against the parent WO. ERPNext requires a
         # non-zero For Quantity on this entry; pass the WO qty (does not affect
@@ -3471,6 +3556,47 @@ def end_work_order(work_order: str, sfg_usage: str = None,
     wo.add_comment("Info", _("Work Order ended - awaiting production closure"))
 
     return {"success": True, "message": "Work Order ended successfully"}
+
+
+@frappe.whitelist()
+def undo_end_work_order(work_order: str, reason: str = None):
+    """Reopen an ended Work Order so it can be worked on again.
+
+    Ending blocks Start, every material movement and a second End WO, which is
+    right while the order waits for Close Production and leaves no way back
+    when it was ended by mistake — MFG-WO-2026-00086 was ended before Start and
+    the only recovery was unticking a custom field in the desk. This is that
+    recovery, supported: Production Manager only, with a reason on the record.
+
+    Only an order with nothing booked as produced can be reopened. Anything
+    already consumed stays consumed: ending again does not consume the same
+    semi-finished material twice (see _sfg_usage_not_yet_recorded).
+    """
+    _require_roles(ROLES_END_WO_OVERRIDE)
+    reason = (reason or "").strip()
+    if not reason:
+        frappe.throw(_("A reason is required to undo End WO"))
+
+    # Status and the ended flag come from the locking read, so a Close
+    # Production that committed while this request waited is seen and refused.
+    locked = _lock_work_order_for_update(work_order) or {}
+    wo = frappe.get_doc("Work Order", work_order)
+    if wo.docstatus != 1:
+        frappe.throw(_("Work Order {0} is not submitted").format(work_order))
+    # Before the ended check: Close Production clears the ended flag, so a
+    # closed order would otherwise be reported as never ended.
+    status = locked.get("status", wo.status)
+    if status in ("Completed", "Closed", "Cancelled") or _submitted_manufacture_qty(work_order) > 0:
+        frappe.throw(_(
+            "Work Order {0} has already been closed — its production is booked, "
+            "so End WO cannot be undone."
+        ).format(work_order))
+    if not locked.get("custom_production_ended", wo.get("custom_production_ended")):
+        frappe.throw(_("Work Order {0} has not been ended").format(work_order))
+
+    wo.db_set("custom_production_ended", 0)
+    wo.add_comment("Info", _("End WO undone by {0}. Reason: {1}").format(frappe.session.user, reason))
+    return {"success": True, "message": _("Work Order {0} reopened").format(work_order)}
 
 @frappe.whitelist()
 def get_ended_work_orders(lines: str = None):
@@ -3978,6 +4104,48 @@ def get_packaging_items():
     
     return {"items": items}
 
+def _packaging_batches_staged_for(work_orders: list[str], item_code: str) -> set[str]:
+    """Batches of a packaging item staged for these orders, whether or not they
+    have reached WIP yet.
+
+    The Close Production dialog takes its batch rows from what the orders moved
+    into WIP, and two routes there leave no trace under the order's name: the
+    surplus sweep posts a plain transfer that names no Work Order, and an order
+    ended before Start moved nothing at all. Either way the dialog offered a row
+    with no batch, ERPNext then picked batches itself, and WO-00086's dialog
+    showed neither a batch nor "Already consumed". The storekeeper's own
+    transfers name the order (or carry it as the surplus's originating order),
+    so they say which batches belong to it.
+    """
+    if not work_orders or not item_code:
+        return set()
+    rows = frappe.db.sql("""
+        select distinct coalesce(nullif(sed.batch_no, ''), sbe.batch_no) as batch_no
+        from `tabStock Entry` se
+        join `tabStock Entry Detail` sed on sed.parent = se.name
+        left join `tabSerial and Batch Entry` sbe on sbe.parent = sed.serial_and_batch_bundle
+        where se.docstatus = 1
+          and se.purpose = 'Material Transfer'
+          and sed.item_code = %(item)s
+          and (
+              se.work_order in %(wos)s
+              or (
+                  coalesce(se.custom_is_surplus, 0) = 1
+                  and (
+                      se.custom_originating_work_order in %(wos)s
+                      or exists (
+                          select 1 from `tabSurplus Originating Work Order` sowo
+                          where sowo.parent = se.name
+                            and sowo.parenttype = 'Stock Entry'
+                            and sowo.work_order in %(wos)s
+                      )
+                  )
+              )
+          )
+    """, {"item": item_code, "wos": tuple(work_orders)}, as_dict=True)
+    return {r.batch_no for r in rows if r.batch_no}
+
+
 @frappe.whitelist()
 def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = None):
     """
@@ -4123,7 +4291,9 @@ def get_packaging_bom_items_for_ended_wos(work_orders: str = None, lines: str = 
                 """, params_wo, as_dict=True)
 
                 found_batches = list(
-                    {r.batch_no for r in direct_rows} | {r.batch_no for r in bundle_rows}
+                    {r.batch_no for r in direct_rows}
+                    | {r.batch_no for r in bundle_rows}
+                    | _packaging_batches_staged_for(wo_list, item_code)
                 )
 
                 # Compute consumed qty per batch from Material Consumption for Manufacture
@@ -4261,6 +4431,26 @@ def _calculate_proportional_split(ended_wos, total_good, total_reject, packaging
     return result
 
 
+def _never_started_message(work_orders: list[str]) -> str:
+    """Why an ended order that was never started cannot be closed, and the way
+    out.
+
+    Start is what moves an order's staged material into the line's WIP. An
+    order ended without it — possible until End WO began requiring Start — still
+    has its packaging in staging, so a close either fails on ERPNext's stock
+    check ("Available qty 10.0 is less than the Required Qty 305.0") or quietly
+    consumes whatever another order left on the line. Close Production refuses
+    it with this, and the dialog shows the same words before the button is
+    pressed.
+    """
+    return _(
+        "Work Order(s) {0} were ended without being started, so the material "
+        "staged for them never reached the line. A Production Manager can select "
+        "each one in the Operator Hub and press Undo End WO; then press Start, "
+        "End WO, and close production again."
+    ).format(", ".join(work_orders))
+
+
 def _packaging_remainder(wo_name: str, item_code: str, qty: float,
                          batch_no: Optional[str]) -> tuple[float, float]:
     """What a close posts for one packaging figure: ``(already_consumed, remainder)``.
@@ -4323,13 +4513,36 @@ def _surplus_due_into_wip(work_orders: list[str]) -> dict[tuple, float]:
         where parent in %(names)s
           and qty > 0
     """, {"names": tuple(claimed)}, as_dict=True)
-    due: dict[tuple, float] = {}
+    by_entry: dict[str, list] = {}
     for r in rows:
-        staging_wh, wip_wh = claimed[r.parent]
-        if r.t_warehouse != staging_wh:
+        if r.t_warehouse == claimed[r.parent][0]:
+            by_entry.setdefault(r.parent, []).append(r)
+
+    # The sweep moves a surplus entry whole or not at all, so an entry whose
+    # stock has left staging — taken onto the line by hand, say — sweeps
+    # nothing, and counting it would call a close covered that then fails on
+    # "Batch No … has negative stock". An unreadable balance is given the
+    # benefit of the doubt: this only advises.
+    staging_used: dict[tuple, float] = {}
+    due: dict[tuple, float] = {}
+    for se_name, (staging_wh, wip_wh) in claimed.items():
+        need: dict[tuple, float] = {}
+        for r in by_entry.get(se_name, []):
+            need[(r.item_code, r.batch_no)] = need.get((r.item_code, r.batch_no), 0.0) + flt(r.qty)
+        sweepable = True
+        for (item_code, batch_no), qty in need.items():
+            on_hand = _packaging_on_hand(item_code, batch_no or None, staging_wh)
+            used = staging_used.get((item_code, batch_no, staging_wh), 0.0)
+            if on_hand is not None and qty > on_hand - used + QTY_EPSILON:
+                sweepable = False
+        if not sweepable:
             continue
-        key = (r.item_code, r.batch_no, wip_wh)
-        due[key] = due.get(key, 0.0) + flt(r.qty)
+        for (item_code, batch_no), qty in need.items():
+            staging_used[(item_code, batch_no, staging_wh)] = (
+                staging_used.get((item_code, batch_no, staging_wh), 0.0) + qty
+            )
+            key = (item_code, batch_no, wip_wh)
+            due[key] = due.get(key, 0.0) + qty
     return due
 
 
@@ -4337,12 +4550,12 @@ def _packaging_shortfalls(wanted: dict[tuple, float], work_orders: list[str]) ->
     """Packaging figures the line does not hold, which ERPNext will refuse.
 
     ``wanted`` maps ``(item_code, batch_no, wip_warehouse)`` to what the close
-    would post across ``work_orders``. An over-run uses more packaging than the
-    order was issued — a carton per carton — and unlike a recipe material there
-    is nothing to scale back: the operator counted what was used. So the extra
-    has to be in WIP, or staged as surplus the close sweeps in, or the stock
-    ledger refuses the close. Saying so in the dialog is the difference between
-    a figure to fix and ERPNext's "Batch No … has negative stock".
+    would post across ``work_orders``. Unlike a recipe material there is
+    nothing to scale back: the operator counted what was used, so it has to be
+    in WIP, or staged as surplus the close sweeps in, or the stock ledger
+    refuses the close. An over-run is the usual reason — a carton per extra
+    carton — but not the only one. Saying so in the dialog is the difference
+    between a figure to fix and ERPNext's "Batch No … has negative stock".
     """
     if not wanted:
         return []
@@ -4352,7 +4565,15 @@ def _packaging_shortfalls(wanted: dict[tuple, float], work_orders: list[str]) ->
         on_hand = _packaging_on_hand(item_code, batch_no or None, wip_wh)
         if on_hand is None:
             continue
-        available = on_hand + surplus.get((item_code, batch_no, wip_wh), 0.0)
+        if batch_no:
+            due = surplus.get((item_code, batch_no, wip_wh), 0.0)
+        else:
+            # A row without a batch draws whichever batches ERPNext picks, so
+            # surplus of every batch counts — as the WIP balance above already
+            # does. Keyed by batch alone, WO-00086's 10 swept cartons read as 0.
+            due = sum(q for (item, _batch, wh), q in surplus.items()
+                      if item == item_code and wh == wip_wh)
+        available = on_hand + due
         short = postable_qty(qty - available)
         if short > 0:
             out.append({
@@ -4734,7 +4955,8 @@ def close_production(groups: str = None, lines: str = None,
             "Work Order",
             filters=filters,
             fields=["name", "qty", "production_item", "company", "bom_no",
-                    "fg_warehouse", "wip_warehouse", "custom_factory_line"],
+                    "fg_warehouse", "wip_warehouse", "custom_factory_line",
+                    "actual_start_date"],
             order_by="creation asc",
         )
         if line_list:
@@ -4753,6 +4975,10 @@ def close_production(groups: str = None, lines: str = None,
         if not ended_wos:
             label = production_item or _("the specified lines")
             frappe.throw(_("No ended work orders found for {0}").format(label))
+
+        never_started = [wo["name"] for wo in ended_wos if not wo.get("actual_start_date")]
+        if never_started:
+            frappe.throw(_never_started_message(never_started))
 
         # Legacy single-group call: backfill production_item before batch logic.
         if not production_item:
@@ -4811,7 +5037,23 @@ def close_production(groups: str = None, lines: str = None,
     # Lock every Work Order we are about to close, in deterministic order, so a
     # concurrent Close Production (double-click / retry) blocks here and then
     # sees the committed Completed status instead of re-booking Manufacture.
-    _lock_work_orders_for_update([wo["name"] for wo in all_ended_wos])
+    # The state comes from the locking read itself (see
+    # _lock_work_order_for_update): a plain re-read could still answer from
+    # before the wait.
+    locked = _lock_work_orders_for_update([wo["name"] for wo in all_ended_wos]) or {}
+
+    # Undo End WO may have reopened an order between the ended-orders query
+    # above and the lock. Closing it would book its production and complete it
+    # while the manager was told it was reopened.
+    reopened = sorted(
+        name for name, row in locked.items()
+        if row.get("status") != "Completed" and not row.get("custom_production_ended")
+    )
+    if reopened:
+        frappe.throw(_(
+            "These Work Orders are no longer ended and awaiting close: {0}. "
+            "Reload the queue and try again."
+        ).format(", ".join(reopened)))
 
     completed_wos = []
     skipped_wos = []
@@ -4820,9 +5062,9 @@ def close_production(groups: str = None, lines: str = None,
             entry["ended_wos"], entry["good_qty"], entry["reject_qty"], entry["packaging_items"],
         )
         for wo_data in entry["ended_wos"]:
-            # Re-read status under the lock: another request may have completed
-            # this Work Order while we were waiting to acquire the lock.
-            current_status = frappe.db.get_value("Work Order", wo_data["name"], "status")
+            # Another request may have completed this Work Order while we were
+            # waiting to acquire the lock.
+            current_status = (locked.get(wo_data["name"]) or {}).get("status")
             if current_status == "Completed":
                 skipped_wos.append(wo_data["name"])
                 continue
@@ -4876,8 +5118,10 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0, packaging
         :func:`_shortfall_split`), ``short`` (the subset that cannot be
         covered), ``planned_qty``, ``output_qty``, ``over_qty``,
         ``allowance_pct``, ``refused`` (orders whose output the allowance would
-        refuse outright) and ``packaging_short`` (figures the line does not
-        hold — see :func:`_packaging_shortfalls`).
+        refuse outright), ``packaging_short`` (figures the line does not
+        hold — see :func:`_packaging_shortfalls`) and ``not_started`` /
+        ``not_started_message`` (ended orders that were never started, which
+        Close Production refuses — see :func:`_never_started_message`).
     """
     _require_roles(ROLES_OPERATOR)
 
@@ -4908,18 +5152,26 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0, packaging
     ))
     empty = {"rows": [], "short": [], "planned_qty": 0.0, "output_qty": 0.0,
              "over_qty": 0.0, "allowance_pct": allowance_pct, "refused": [],
-             "packaging_short": []}
+             "packaging_short": [], "not_started": [], "not_started_message": ""}
     if not names or good <= 0:
         return empty
 
     wos = frappe.get_all(
         "Work Order",
         filters={"name": ["in", names]},
-        fields=["name", "qty"],
+        fields=["name", "qty", "actual_start_date"],
         order_by="creation asc",
     )
     if not wos:
         return empty
+
+    # Close Production refuses these before looking at any material (see
+    # _never_started_message), so the preview says that and nothing else: a
+    # list of "short" packaging would point the operator at the wrong fix.
+    not_started = [w["name"] for w in wos if not w.get("actual_start_date")]
+    if not_started:
+        return dict(empty, not_started=not_started,
+                    not_started_message=_never_started_message(not_started))
 
     splits = _calculate_proportional_split(wos, good, reject, pkg_rows)
     planned_qty = sum(flt(w["qty"]) for w in wos)
@@ -4999,6 +5251,8 @@ def get_close_production_coverage(work_orders, good_qty, reject_qty=0, packaging
         "packaging_short": _packaging_shortfalls(
             pkg_wanted, [w["name"] for w in wos if w["name"] not in refused]
         ),
+        "not_started": [],
+        "not_started_message": "",
     }
 
 @frappe.whitelist()

@@ -216,6 +216,8 @@ class WorkOrder:
         self.wip_warehouse = WIP
         self.fg_warehouse = fg_warehouse
         self.actual_end_date = None
+        # Every order on the real day was started; End WO now insists on it.
+        self.actual_start_date = "2026-09-17 07:30:00"
         self.required = required          # {item_code: required_qty at self.qty}
         self.comments = []
         self.flags = MagicMock()
@@ -444,7 +446,8 @@ class Factory:
         if doctype != "Work Order":
             return []
         names = (filters or {}).get("name", ["in", []])[1]
-        return [{"name": n, "qty": self.work_orders[n].qty}
+        return [{"name": n, "qty": self.work_orders[n].qty,
+                 "actual_start_date": self.work_orders[n].actual_start_date}
                 for n in names if n in self.work_orders]
 
 
@@ -1171,12 +1174,48 @@ class TestSurplusDueIntoWip(unittest.TestCase):
                              side_effect=lambda _dt, name, _f: {"WO-A": WIP, "WO-B": "WIP-B"}[name]), \
                 patch.object(mes_ops, "_find_eligible_surplus_ses",
                              side_effect=lambda wo, _wh: eligible[wo]), \
+                patch.object(mes_ops, "_packaging_on_hand", return_value=1000.0), \
                 patch.object(mes_ops.frappe.db, "sql", return_value=rows) as sql:
             due = mes_ops._surplus_due_into_wip(["WO-A", "WO-B"])
 
         self.assertEqual(due, {("CR30001", "frit0907", WIP): 5.0,
                                ("PM40008", "", "WIP-B"): 1.667})
         self.assertEqual(set(sql.call_args[0][1]["names"]), {"MAT-STE-S1", "MAT-STE-S2"})
+
+    def test_an_entry_whose_stock_left_staging_is_not_counted(self):
+        """The sweep moves a surplus entry whole or not at all. Taken onto the
+        line by hand, WO-00086's 10 cartons were still counted as due, the
+        preview called 305 covered, and the close failed on negative stock."""
+        rows = [
+            frappe._dict(parent="MAT-STE-S1", item_code="CR30002", batch_no="jimm0709",
+                         t_warehouse=SEMI, qty=10.0),
+            frappe._dict(parent="MAT-STE-S1", item_code="PM40009", batch_no="298/26",
+                         t_warehouse=SEMI, qty=5.0),
+        ]
+        on_hand = {("CR30002", "jimm0709"): 0.0, ("PM40009", "298/26"): 5.0}
+        with patch.object(mes_ops, "_default_line_staging", return_value=SEMI), \
+                patch.object(mes_ops.frappe.db, "get_value", return_value=WIP), \
+                patch.object(mes_ops, "_find_eligible_surplus_ses", return_value=["MAT-STE-S1"]), \
+                patch.object(mes_ops, "_packaging_on_hand",
+                             side_effect=lambda item, batch, _wh: on_hand[(item, batch)]), \
+                patch.object(mes_ops.frappe.db, "sql", return_value=rows):
+            self.assertEqual(mes_ops._surplus_due_into_wip([STRAWBERRY_WO]), {})
+
+    def test_two_entries_cannot_both_count_the_same_staging_stock(self):
+        rows = [
+            frappe._dict(parent="MAT-STE-S1", item_code="CR30002", batch_no="jimm0709",
+                         t_warehouse=SEMI, qty=10.0),
+            frappe._dict(parent="MAT-STE-S2", item_code="CR30002", batch_no="jimm0709",
+                         t_warehouse=SEMI, qty=10.0),
+        ]
+        with patch.object(mes_ops, "_default_line_staging", return_value=SEMI), \
+                patch.object(mes_ops.frappe.db, "get_value", return_value=WIP), \
+                patch.object(mes_ops, "_find_eligible_surplus_ses",
+                             return_value=["MAT-STE-S1", "MAT-STE-S2"]), \
+                patch.object(mes_ops, "_packaging_on_hand", return_value=15.0), \
+                patch.object(mes_ops.frappe.db, "sql", return_value=rows):
+            due = mes_ops._surplus_due_into_wip([STRAWBERRY_WO])
+        self.assertEqual(due, {("CR30002", "jimm0709", WIP): 10.0})
 
     def test_nothing_eligible_reads_nothing(self):
         with patch.object(mes_ops, "_default_line_staging", return_value=SEMI), \

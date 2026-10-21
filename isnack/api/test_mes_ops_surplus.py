@@ -108,27 +108,80 @@ class TestSweepSurplusToWip(unittest.TestCase):
     @patch("isnack.api.mes_ops._find_eligible_surplus_ses", return_value=["SE-SURPLUS-1"])
     @patch("frappe.db.set_value")
     def test_failed_transfer_rolls_back_claim(
-        self, mock_set_value, _find, _claim, _create, _log
+        self, mock_set_value, _find, _claim, _create, mock_log
     ):
+        """A transfer can fail part-way through submit, after some ledger rows
+        are written. Rolling back to a savepoint taken before the claim undoes
+        the claim and every partial row together, so the surplus can be retried
+        and nothing half-posted is committed with the rest of the request."""
         wo = MagicMock()
         wo.company = "Test Co"
-
-        created = _sweep_surplus_to_wip("WO1", "Stage-A", "WIP-A", wo)
+        with patch("isnack.api.mes_ops.frappe.db.savepoint") as mock_savepoint, \
+                patch("isnack.api.mes_ops.frappe.db.rollback") as mock_rollback, \
+                patch("isnack.api.mes_ops.frappe.db.release_savepoint") as mock_release:
+            created = _sweep_surplus_to_wip("WO1", "Stage-A", "WIP-A", wo)
 
         self.assertEqual(created, [])
-        # Claim is rolled back so a later start can retry.
-        rollback_call = mock_set_value.call_args_list[-1]
-        self.assertEqual(rollback_call[0][0], "Stock Entry")
-        self.assertEqual(rollback_call[0][1], "SE-SURPLUS-1")
-        self.assertEqual(rollback_call[0][2]["custom_surplus_swept_to_wip"], 0)
+        save_point = mock_savepoint.call_args[0][0]
+        mock_rollback.assert_called_once_with(save_point=save_point)
+        mock_release.assert_not_called()
+        # The savepoint takes the claim back; no separate reset is written.
+        mock_set_value.assert_not_called()
+        mock_log.assert_called_once()
+
+    @patch("isnack.api.mes_ops.frappe.log_error")
+    @patch("isnack.api.mes_ops._claim_surplus_for_sweep", return_value=True)
+    @patch("isnack.api.mes_ops._find_eligible_surplus_ses", return_value=["SE-SURPLUS-1"])
+    def test_failed_transfer_does_not_leave_its_popup_on_the_response(self, _find, _claim, _log):
+        """The failed submit queued "Batch No … has negative stock" for the
+        client. With nothing of it left in the ledger, a successful close must
+        not show it."""
+        wo = MagicMock()
+        wo.company = "Test Co"
+        frappe.local.message_log = ["earlier message"]
+
+        def fail(*_a, **_k):
+            frappe.local.message_log.append("Batch No jimm0709 has negative stock")
+            raise frappe.ValidationError("negative stock")
+
+        try:
+            with patch("isnack.api.mes_ops._create_surplus_wip_transfer", side_effect=fail), \
+                    patch("isnack.api.mes_ops.frappe.db.savepoint"), \
+                    patch("isnack.api.mes_ops.frappe.db.rollback"), \
+                    patch("isnack.api.mes_ops.frappe.db.release_savepoint"):
+                _sweep_surplus_to_wip("WO1", "Stage-A", "WIP-A", wo)
+            self.assertEqual(frappe.local.message_log, ["earlier message"])
+        finally:
+            frappe.local.message_log = []
+
+    @patch("isnack.api.mes_ops._create_surplus_wip_transfer", return_value="MAT-STE-NEW")
+    @patch("isnack.api.mes_ops._find_eligible_surplus_ses", return_value=["SE-A", "SE-B"])
+    @patch("frappe.db.set_value")
+    def test_each_surplus_gets_its_own_savepoint(self, _set_value, _find, _create):
+        """A lost claim and a successful transfer both release their savepoint;
+        neither rolls anything back."""
+        wo = MagicMock()
+        wo.company = "Test Co"
+        with patch("isnack.api.mes_ops._claim_surplus_for_sweep", side_effect=[False, True]), \
+                patch("isnack.api.mes_ops.frappe.db.savepoint") as mock_savepoint, \
+                patch("isnack.api.mes_ops.frappe.db.rollback") as mock_rollback, \
+                patch("isnack.api.mes_ops.frappe.db.release_savepoint") as mock_release:
+            created = _sweep_surplus_to_wip("WO1", "Stage-A", "WIP-A", wo)
+
+        self.assertEqual(created, ["MAT-STE-NEW"])
+        taken = [c[0][0] for c in mock_savepoint.call_args_list]
+        self.assertEqual(len(set(taken)), 2)
+        self.assertEqual([c[0][0] for c in mock_release.call_args_list], taken)
+        mock_rollback.assert_not_called()
 
 
 class TestCreateSurplusWipTransfer(unittest.TestCase):
     @patch("frappe.new_doc")
     @patch("frappe.db.sql")
     def test_builds_plain_material_transfer_with_batches(self, mock_sql, mock_new_doc):
+        # frappe.db.sql(as_dict=True) returns frappe._dict rows, read by attribute.
         mock_sql.return_value = [
-            {"item_code": "ITEM-X", "batch_no": "B1", "uom": "Kg", "qty": 12.65},
+            frappe._dict({"item_code": "ITEM-X", "batch_no": "B1", "uom": "Kg", "qty": 12.65}),
         ]
         se = MagicMock()
         se.name = "MAT-STE-NEW"
