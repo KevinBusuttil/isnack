@@ -328,7 +328,17 @@ function init_operator_hub($root) {
   }
   function flashStatus(message, tone = 'neutral', ms = 2500) {
     setStatus(message, tone);
-    setTimeout(() => { if (state.current_emp) setStatus('Ready', 'neutral'); }, ms);
+    setTimeout(() => { if (state.current_emp) setStatus(startHint() || 'Ready', startHint() ? 'warning' : 'neutral'); }, ms);
+  }
+  // A staged order that has not been started: Start is the only way its
+  // material reaches the line, and Load and End WO stay shut until it runs. The
+  // status bar settles on this rather than "Ready", because a greyed-out button
+  // explains nothing on a touch screen — and ending first is what stranded
+  // MFG-WO-2026-00086's packaging in staging.
+  function startHint() {
+    if (!state.current_wo || state.current_stage_status !== 'Staged') return '';
+    if (state.current_production_ended || state.current_wo_started) return '';
+    return '<b>Press Start</b> to move the staged material to the line — Load and End WO open after that';
   }
   function ensureOperatorNotice(){ if (!state.current_emp) setStatus('<b>Set Operator first to continue</b>', 'warning'); }
 
@@ -410,9 +420,20 @@ function init_operator_hub($root) {
     $('#btn-label', $root).prop('disabled', !(hasEmp && state.current_lines.length));
     $('#btn-label-history', $root).prop('disabled', !(enableActions && state.current_is_fg));
 
-    // End WO button: enabled when operator set + WO selected + WO allocated + not already ended
-    $('#btn-end-wo', $root).prop('disabled', !(enableActions && !isProductionEnded));
-    
+    // End WO button: enabled once the order has been started and until it is
+    // ended. Ending an order that was never started leaves its staged material
+    // off the line for good, since an ended order cannot be started; the server
+    // refuses it too.
+    const notStartedYet = enableLiveActions && !state.current_wo_started;
+    $('#btn-end-wo', $root)
+      .prop('disabled', !(enableLiveActions && !!state.current_wo_started))
+      .attr('title', notStartedYet ? 'Press Start first' : '');
+    $('#btn-load, #btn-manual-load', $root).attr('title', notStartedYet ? 'Press Start first' : '');
+
+    // Undo End WO: Production Managers only (the button is hidden for
+    // everyone else), on an order that has been ended.
+    $('#btn-undo-end-wo', $root).prop('disabled', !(enableCore && isProductionEnded));
+
     // Close Production button: enabled when operator set + line(s) set (no specific WO required)
     $('#btn-close-production', $root).prop('disabled', !(hasEmp && state.current_lines.length));
 
@@ -420,6 +441,8 @@ function init_operator_hub($root) {
       ensureOperatorNotice();
     } else if (hasWO && !isAllocated) {
       setStatus('<b>Work Order not fully allocated</b>', 'warning');
+    } else if (startHint()) {
+      setStatus(startHint(), 'warning');
     }
   }
 
@@ -2674,6 +2697,9 @@ function init_operator_hub($root) {
         if (row.required_qty) {
           desc += `${desc ? ' · ' : ''}Planned: ${row.required_qty} ${row.uom || ''}`;
         }
+        if (row.already_consumed > 0) {
+          desc += `${desc ? ' · ' : ''}Already recorded: ${row.already_consumed} ${row.uom || ''}`;
+        }
         const short = (row.available_qty !== undefined) && (row.required_qty || 0) > row.available_qty;
         const pendingEnded = (row.pending_wos || []).filter(w => w.ended).map(w => w.name);
         const pendingOpen = (row.pending_wos || []).filter(w => !w.ended).map(w => w.name);
@@ -2768,7 +2794,7 @@ function init_operator_hub($root) {
     }
     const sfgHelp = d.get_field('sfg_help');
     if (sfgHelp && sfgHelp.$wrapper) {
-      sfgHelp.$wrapper.html('<div class="text-muted small mb-2">Enter the actual quantities of semi-finished materials used. They will be consumed from the Semi-finished warehouse.</div>');
+      sfgHelp.$wrapper.html('<div class="text-muted small mb-2">Enter the total quantities of semi-finished materials this order used. They are consumed from the Semi-finished warehouse; anything already recorded for the order is not consumed again.</div>');
     }
 
     // Disable the End WO submit when we cannot end and the user lacks the override role.
@@ -2776,6 +2802,39 @@ function init_operator_hub($root) {
       d.get_primary_btn().prop('disabled', true).attr('title', 'Required materials below tolerance');
     }
 
+    d.show();
+  });
+
+  // Undo End WO: reopens an order ended by mistake — most often one ended
+  // before Start, whose staged material then cannot reach the line. Shown to
+  // Production Managers only; the server enforces the role and keeps the
+  // reason on the Work Order.
+  $('#btn-undo-end-wo', $root).toggle(frappe.user.has_role('Production Manager'));
+  $('#btn-undo-end-wo',$root).on('click', () => {
+    if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
+    const wo = state.current_wo;
+    const d = opDialog({
+      title: `Undo End WO — ${wo}`,
+      fields: [
+        { fieldtype: 'HTML', fieldname: 'undo_help',
+          options: '<div class="text-muted small mb-2">The order goes back to the line: press Start if it was never started, then End WO again. Semi-finished material already recorded is not consumed twice.</div>' },
+        { fieldtype: 'Small Text', fieldname: 'reason', label: 'Reason', reqd: 1 },
+      ],
+      primary_action_label: 'Undo End WO',
+      primary_action: async (v) => {
+        const $btn = d.get_primary_btn();
+        if ($btn.prop('disabled')) return;
+        $btn.prop('disabled', true);
+        try {
+          await rpc('isnack.api.mes_ops.undo_end_work_order', { work_order: wo, reason: (v.reason || '').trim() });
+          d.hide();
+          flashStatus(`End WO undone — ${wo}`, 'success');
+          await load_queue();
+        } catch (e) {
+          $btn.prop('disabled', false);
+        }
+      },
+    });
     d.show();
   });
 
@@ -3133,6 +3192,16 @@ function init_operator_hub($root) {
       }
 
       function html(data) {
+        // An ended order that was never started: its material is still in
+        // staging and the close refuses it outright, so nothing else here is
+        // the operator's next step.
+        if ((data.not_started || []).length) {
+          return `<div class="cp-coverage cp-coverage-bad">`
+            + `<div class="cp-coverage-head">Ended without being started</div>`
+            + `<div>${esc(data.not_started_message)}</div>`
+            + `</div>`;
+        }
+
         const refused = data.refused || [];
         if (refused.length) {
           return `<div class="cp-coverage cp-coverage-bad">`
@@ -3152,15 +3221,15 @@ function init_operator_hub($root) {
         const allowance = parseFloat(data.allowance_pct) || 0;
         const panels = [];
 
-        // The one thing here that does stop a close: an over-run uses more
-        // packaging than the order was issued, and the stock ledger refuses a
-        // figure the line does not hold.
+        // The one thing here that does stop a close: the stock ledger refuses a
+        // packaging figure the line does not hold — most often an over-run,
+        // which uses more packaging than the order was issued.
         if (packaging.length) {
           panels.push(`<div class="cp-coverage cp-coverage-bad">`
-            + `<div class="cp-coverage-head">More packaging entered than the line holds</div>`
+            + `<div class="cp-coverage-head">Not enough packaging on the line</div>`
             + `<ul class="cp-coverage-list">${packaging.map(packagingLine).join('')}</ul>`
             + `<div class="cp-coverage-foot">The stock ledger will refuse the close as entered. `
-            + `Have the extra moved to the line (or staged as surplus for this order) first, or correct the figure.</div>`
+            + `Have the missing quantity sent to the line (surplus staged for this order is moved in at close), or correct the figure.</div>`
             + `</div>`);
         }
 

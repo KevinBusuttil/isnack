@@ -216,6 +216,8 @@ class WorkOrder:
         self.wip_warehouse = WIP
         self.fg_warehouse = fg_warehouse
         self.actual_end_date = None
+        # Every order on the real day was started; End WO now insists on it.
+        self.actual_start_date = "2026-09-17 07:30:00"
         self.required = required          # {item_code: required_qty at self.qty}
         self.comments = []
         self.flags = MagicMock()
@@ -444,7 +446,8 @@ class Factory:
         if doctype != "Work Order":
             return []
         names = (filters or {}).get("name", ["in", []])[1]
-        return [{"name": n, "qty": self.work_orders[n].qty}
+        return [{"name": n, "qty": self.work_orders[n].qty,
+                 "actual_start_date": self.work_orders[n].actual_start_date}
                 for n in names if n in self.work_orders]
 
 
