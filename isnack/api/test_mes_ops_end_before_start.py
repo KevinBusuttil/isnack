@@ -49,41 +49,74 @@ class WorkOrderStub:
         self.comments.append(text)
 
 
+_real_get_value = frappe.db.get_value
+
+
+def get_value_for(overrides):
+    """A frappe.db.get_value stand-in answering only the lookups named in
+    ``overrides`` ({(doctype, fieldname): value}) and passing every other call
+    to the real function — Meta and System Settings loads included, which a
+    blanket patch would answer with the same constant on a cold cache."""
+
+    def side_effect(doctype, filters=None, fieldname="name", *args, **kwargs):
+        key = (doctype, fieldname if isinstance(fieldname, str) else None)
+        if key in overrides:
+            return overrides[key]
+        return _real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+    return side_effect
+
+
+def setUpModule():
+    # bench run-tests clears the cache first; load these before any patch is
+    # active so nothing below ever has to read them through one.
+    frappe.get_meta("Stock Entry Detail")
+    frappe.get_system_settings("rounding_method")
+
+
 def end(wo, started, sfg_usage=None, consumed=None):
-    """Run end_work_order on a legacy-mode finished-good order."""
+    """Run end_work_order on a legacy-mode finished-good order.
+
+    Returns (result or the ValidationError raised, the _post_sfg_consumption
+    mock end_work_order actually called)."""
+    start = "2026-10-21 10:40:00" if started else None
     with patch.object(mes_ops, "_require_roles"), \
             patch.object(mes_ops.frappe, "get_doc", return_value=wo), \
             patch.object(mes_ops.frappe.db, "get_value",
-                         return_value="2026-10-21 10:40:00" if started else None), \
+                         side_effect=get_value_for({("Work Order", "actual_start_date"): start})), \
             patch.object(mes_ops, "_get_consumed_materials_from_load", return_value=consumed or {}), \
             patch.object(mes_ops, "_end_wo_consumption_summary",
                          return_value={"can_end": True, "items": [], "shortfalls": 0, "tolerance_pct": 5}), \
             patch.object(mes_ops, "_wo_closes_at_end", return_value=False), \
             patch.object(mes_ops.frappe, "get_precision", return_value=3), \
             patch.object(mes_ops, "_post_sfg_consumption") as post:
-        result = mes_ops.end_work_order(WO, sfg_usage=json.dumps(sfg_usage) if sfg_usage else None)
+        try:
+            result = mes_ops.end_work_order(WO, sfg_usage=json.dumps(sfg_usage) if sfg_usage else None)
+        except frappe.ValidationError as e:
+            result = e
     return result, post
 
 
 class TestEndWoRequiresStart(unittest.TestCase):
     def test_a_never_started_order_is_refused(self):
         wo = WorkOrderStub()
-        with self.assertRaises(frappe.ValidationError) as caught:
-            end(wo, started=False)
+        outcome, _post = end(wo, started=False)
 
-        self.assertIn("has not been started", str(caught.exception))
-        self.assertIn("Press Start", str(caught.exception))
+        self.assertIsInstance(outcome, frappe.ValidationError)
+        self.assertIn("has not been started", str(outcome))
+        self.assertIn("Press Start", str(outcome))
         wo.db_set.assert_not_called()
 
     def test_it_is_refused_before_any_semi_finished_is_consumed(self):
         """WO-00086's End WO consumed 160 kg of corn mix and 120 kg of slurry
         before anything checked the order had been started."""
         wo = WorkOrderStub()
-        with patch.object(mes_ops, "_post_sfg_consumption") as post:
-            with self.assertRaises(frappe.ValidationError):
-                end(wo, started=False,
-                    sfg_usage=[{"item_code": "SFG10001", "qty": 160}])
+        outcome, post = end(wo, started=False,
+                            sfg_usage=[{"item_code": "SFG10001", "qty": 160}])
+
+        self.assertIsInstance(outcome, frappe.ValidationError)
         post.assert_not_called()
+        self.assertEqual(wo.comments, [])
 
     def test_a_started_order_ends(self):
         wo = WorkOrderStub(status="In Process")
@@ -148,15 +181,17 @@ class TestSfgUsageNotYetRecorded(unittest.TestCase):
         self.assertEqual(rows, [{"item_code": "SFG10001", "qty": 160.0}])
 
 
-def undo(wo, manufactured=0.0, reason="Ended before Start by mistake", roles_ok=True):
+def undo(wo, manufactured=0.0, reason="Ended before Start by mistake", roles_ok=True,
+         locked_row=None):
     def require(roles):
         if roles != ["Production Manager"]:
             raise AssertionError(f"unexpected roles {roles}")
         if not roles_ok:
             raise frappe.PermissionError("Not permitted")
 
+    row = locked_row or {"status": wo.status, "custom_production_ended": wo.custom_production_ended}
     with patch.object(mes_ops, "_require_roles", side_effect=require), \
-            patch.object(mes_ops, "_lock_work_order_for_update") as lock, \
+            patch.object(mes_ops, "_lock_work_order_for_update", return_value=row) as lock, \
             patch.object(mes_ops.frappe, "get_doc", return_value=wo), \
             patch.object(mes_ops, "_submitted_manufacture_qty", return_value=manufactured):
         result = mes_ops.undo_end_work_order(WO, reason=reason)
@@ -200,6 +235,15 @@ class TestUndoEndWo(unittest.TestCase):
             self.assertIn("already been closed", str(caught.exception))
             wo.db_set.assert_not_called()
 
+    def test_a_close_that_committed_while_undo_waited_is_seen(self):
+        """The order was read before the lock; Close Production completed it
+        meanwhile. The locking read, not the earlier read, decides."""
+        wo = WorkOrderStub(status="In Process", ended=1)
+        with self.assertRaises(frappe.ValidationError) as caught:
+            undo(wo, locked_row={"status": "Completed", "custom_production_ended": 0})
+        self.assertIn("already been closed", str(caught.exception))
+        wo.db_set.assert_not_called()
+
 
 ENDED_WO_ROW = {
     "name": WO, "qty": 300.0, "production_item": "FG10020", "company": "Isnack",
@@ -210,16 +254,18 @@ ENDED_WO_ROW = {
 
 
 class TestCloseProductionRefusesANeverStartedOrder(unittest.TestCase):
-    def close(self, row):
+    def close(self, row, locked_row=None):
         groups = [{"production_item": "FG10020", "good_qty": 305, "reject_qty": 0,
                    "batch_no": "DDD-444", "work_orders": [WO],
                    "packaging_usage": [{"item_code": "CR30002", "qty": 305, "batch_no": None}]}]
+        locked = {WO: locked_row or {"status": "In Process", "custom_production_ended": 1}}
         with patch.object(mes_ops, "_require_roles"), \
                 patch.object(mes_ops.frappe, "get_all", return_value=[dict(row)]), \
                 patch.object(mes_ops, "_line_for_work_order", return_value="CORN EXTRUSION"), \
-                patch.object(mes_ops.frappe.db, "get_value", return_value=1), \
+                patch.object(mes_ops.frappe.db, "get_value",
+                             side_effect=get_value_for({("Item", "has_batch_no"): 1})), \
                 patch.object(mes_ops, "_validate_close_production"), \
-                patch.object(mes_ops, "_lock_work_orders_for_update"), \
+                patch.object(mes_ops, "_lock_work_orders_for_update", return_value=locked), \
                 patch.object(mes_ops, "_close_single_wo") as close_one:
             try:
                 return mes_ops.close_production(groups=json.dumps(groups),
@@ -240,6 +286,26 @@ class TestCloseProductionRefusesANeverStartedOrder(unittest.TestCase):
 
         self.assertTrue(outcome["success"])
         close_one.assert_called_once()
+
+    def test_an_order_reopened_while_close_waited_for_the_lock_is_not_closed(self):
+        """Undo End WO committed between the ended-orders query and the lock.
+        Closing it anyway would book its production after the manager was told
+        it was reopened."""
+        started = dict(ENDED_WO_ROW, actual_start_date="2026-10-21 10:40:00")
+        outcome, close_one = self.close(started, locked_row={"status": "In Process",
+                                                             "custom_production_ended": 0})
+
+        self.assertIsInstance(outcome, frappe.ValidationError)
+        self.assertIn("no longer ended and awaiting close", str(outcome))
+        close_one.assert_not_called()
+
+    def test_an_order_completed_while_close_waited_is_skipped(self):
+        started = dict(ENDED_WO_ROW, actual_start_date="2026-10-21 10:40:00")
+        outcome, close_one = self.close(started, locked_row={"status": "Completed",
+                                                             "custom_production_ended": 0})
+
+        self.assertEqual(outcome["skipped_wos"], [WO])
+        close_one.assert_not_called()
 
     def test_the_dialog_says_the_same_before_the_button_is_pressed(self):
         with patch.object(mes_ops, "_require_roles"), \
@@ -277,6 +343,34 @@ class TestPackagingCheckForARowWithNoBatch(unittest.TestCase):
     def test_a_row_with_a_batch_counts_only_that_batch(self):
         got = self.shortfalls({("CR30002", "jimm0709", WIP): 305.0})
         self.assertEqual(got, {"CR30002": (10.0, 295.0)})
+
+
+class TestEndWoSummaryAfterAnUndo(unittest.TestCase):
+    """After Undo End WO and Start, WO-00086's dialog said the slurry was short
+    of the 120 kg planned, with 0 in stock — but all 120 kg was already
+    recorded and End WO consumes nothing more."""
+
+    def test_only_the_unrecorded_part_is_still_needed(self):
+        sfg = {"items": [{"item_code": "SFG10005", "qty": 60}], "bom_quantity": 150}
+        with patch.object(mes_ops, "_require_roles"), \
+                patch.object(mes_ops, "_end_wo_consumption_summary",
+                             return_value={"items": [], "shortfalls": 0, "can_end": True}), \
+                patch.object(mes_ops, "get_sfg_components_for_wo", return_value=sfg), \
+                patch.object(mes_ops.frappe, "get_roles", return_value=[]), \
+                patch.object(mes_ops.frappe.db, "get_value",
+                             return_value=frappe._dict(production_item="FG10020", qty=300.0)), \
+                patch.object(mes_ops, "_is_fg", return_value=True), \
+                patch.object(mes_ops, "_wo_closes_at_end", return_value=False), \
+                patch.object(mes_ops, "_default_sfg_source", return_value="Semi-finished - ISN"), \
+                patch.object(mes_ops, "_sfg_available_qty", return_value=0.0), \
+                patch.object(mes_ops, "_planned_required_qty", return_value=120.0), \
+                patch.object(mes_ops, "_pending_sfg_work_orders", return_value=[]), \
+                patch.object(mes_ops, "_get_consumed_materials_from_load", return_value={"SFG10005": 120.0}), \
+                patch.object(mes_ops.frappe, "get_precision", return_value=3):
+            row = mes_ops.get_end_wo_summary(WO)["sfg_items"][0]
+
+        self.assertEqual((row["required_qty"], row["already_consumed"], row["still_needed_qty"]),
+                         (120.0, 120.0, 0.0))
 
 
 if __name__ == "__main__":

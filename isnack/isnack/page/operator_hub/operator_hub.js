@@ -338,6 +338,11 @@ function init_operator_hub($root) {
   function startHint() {
     if (!state.current_wo || state.current_stage_status !== 'Staged') return '';
     if (state.current_production_ended || state.current_wo_started) return '';
+    // Paused before it was ever started: Start stays shut while Stopped
+    // (ERPNext refuses a transfer against a stopped Work Order).
+    if (state.current_wo_status === 'Stopped') {
+      return '<b>Press Resume, then Start</b> to move the staged material to the line';
+    }
     return '<b>Press Start</b> to move the staged material to the line — Load and End WO open after that';
   }
   function ensureOperatorNotice(){ if (!state.current_emp) setStatus('<b>Set Operator first to continue</b>', 'warning'); }
@@ -374,7 +379,9 @@ function init_operator_hub($root) {
   }
 
   // ---------- Enable/disable ----------
-  function refreshButtonStates() {
+  // keepStatus: leave the status bar alone, so a message still on show — a
+  // failed Start's error — is not replaced by the Press Start hint at once.
+  function refreshButtonStates({ keepStatus = false } = {}) {
     const hasEmp  = !!state.current_emp;
     const hasWO   = !!state.current_wo;
     const enableCore = hasEmp && hasWO;
@@ -391,8 +398,12 @@ function init_operator_hub($root) {
     const enableLoading = enableLiveActions && !!state.current_wo_started;
     const status = state.current_wo_status;
 
-    // Enable Start button only if status is "Not Started" and fully allocated
-    const isStartDisabled = !enableLiveActions || status !== "Not Started";
+    // Start: offered on a fully allocated order until it has been started —
+    // not only at status "Not Started". Paused and resumed before Start, an
+    // order reads "In Process" with nothing on the line, and with End WO now
+    // waiting for Start it would otherwise have no way forward. Not while
+    // Stopped: ERPNext refuses a transfer against a stopped Work Order.
+    const isStartDisabled = !enableLiveActions || !!state.current_wo_started || status === "Stopped";
     $('#btn-start',  $root).prop('disabled', isStartDisabled);
 
     // Dynamic Pause/Resume button
@@ -441,7 +452,7 @@ function init_operator_hub($root) {
       ensureOperatorNotice();
     } else if (hasWO && !isAllocated) {
       setStatus('<b>Work Order not fully allocated</b>', 'warning');
-    } else if (startHint()) {
+    } else if (!keepStatus && startHint()) {
       setStatus(startHint(), 'warning');
     }
   }
@@ -1019,13 +1030,17 @@ function init_operator_hub($root) {
     if (state.__starting) return;
     state.__starting = true;
     $('#btn-start', $root).prop('disabled', true);
+    let started = false;
     try {
       await rpc('isnack.api.mes_ops.set_work_order_state', { work_order: state.current_wo, action:'Start' });
+      started = true;
       flashStatus(`Started — ${state.current_wo}`, 'success');
       await updateAfterAction();
     } finally {
       state.__starting = false;
-      refreshButtonStates();
+      // After a failure the error stays on show; the flash timer brings the
+      // hint back.
+      refreshButtonStates({ keepStatus: !started });
     }
   }
 
@@ -2700,7 +2715,11 @@ function init_operator_hub($root) {
         if (row.already_consumed > 0) {
           desc += `${desc ? ' · ' : ''}Already recorded: ${row.already_consumed} ${row.uom || ''}`;
         }
-        const short = (row.available_qty !== undefined) && (row.required_qty || 0) > row.available_qty;
+        // Only what is not yet recorded has to come out of stock.
+        const stillNeeded = (row.still_needed_qty !== undefined)
+          ? row.still_needed_qty
+          : Math.max((row.required_qty || 0) - (row.already_consumed || 0), 0);
+        const short = (row.available_qty !== undefined) && stillNeeded > row.available_qty;
         const pendingEnded = (row.pending_wos || []).filter(w => w.ended).map(w => w.name);
         const pendingOpen = (row.pending_wos || []).filter(w => !w.ended).map(w => w.name);
         if (short && pendingEnded.length) {
@@ -2809,7 +2828,9 @@ function init_operator_hub($root) {
   // before Start, whose staged material then cannot reach the line. Shown to
   // Production Managers only; the server enforces the role and keeps the
   // reason on the Work Order.
-  $('#btn-undo-end-wo', $root).toggle(frappe.user.has_role('Production Manager'));
+  // has_role returns undefined, not false, for a missing role, and jQuery's
+  // toggle(undefined) flips visibility instead of hiding.
+  $('#btn-undo-end-wo', $root).toggle(!!frappe.user.has_role('Production Manager'));
   $('#btn-undo-end-wo',$root).on('click', () => {
     if (!state.current_wo || !state.current_emp) { ensureOperatorNotice(); return; }
     const wo = state.current_wo;

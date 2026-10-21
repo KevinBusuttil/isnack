@@ -736,41 +736,54 @@ def _clamp_good_qty_to_allowance(wo_name: str, wo_qty: float, good: float) -> fl
 # (b) sum the *submitted* Stock Entries as the source of truth.
 # ============================================================
 
-def _lock_work_order_for_update(work_order: str) -> None:
+def _lock_work_order_for_update(work_order: str):
     """Row-lock a single Work Order until the current transaction commits.
 
     A concurrent request touching the same Work Order blocks here until we
     commit, so it then reads our committed Stock Entries rather than the stale
     pre-transfer state. This is what makes the MTFM/Manufacture decisions
     concurrency-safe rather than merely idempotent on retry.
+
+    Returns the locked row's status and ended flag. Read them from here rather
+    than with a plain read afterwards: MariaDB's default REPEATABLE READ lets a
+    plain read answer from the snapshot this request took before it waited,
+    while a locking read always sees the latest committed row.
     """
-    frappe.db.sql(
-        "select name from `tabWork Order` where name = %s for update",
+    rows = frappe.db.sql(
+        "select name, status, custom_production_ended from `tabWork Order` "
+        "where name = %s for update",
         (work_order,),
+        as_dict=True,
     )
+    return rows[0] if rows else None
 
 
-def _lock_work_orders_for_update(work_orders: list[str]) -> None:
+def _lock_work_orders_for_update(work_orders: list[str]) -> dict:
     """Row-lock several Work Orders, always in deterministic (sorted) order.
 
     Acquiring multiple row locks in a consistent order across all callers
     prevents lock-ordering deadlocks when two Close Production requests overlap
     on an intersecting set of Work Orders.
+
+    Returns ``{name: row}`` with each locked row's status and ended flag, for
+    the reason given in :func:`_lock_work_order_for_update`.
     """
     if not work_orders:
-        return
+        return {}
     ordered = sorted(set(work_orders))
     placeholders = ", ".join(["%s"] * len(ordered))
-    frappe.db.sql(
+    rows = frappe.db.sql(
         f"""
-        select name
+        select name, status, custom_production_ended
         from `tabWork Order`
         where name in ({placeholders})
         order by name
         for update
         """,
         tuple(ordered),
+        as_dict=True,
     )
+    return {r.name: r for r in rows}
 
 
 def _submitted_mtfm_qty(work_order: str) -> float:
@@ -3378,6 +3391,13 @@ def get_end_wo_summary(work_order: str):
                 if planned_required is not None
                 else flt(flt(row.get("qty")) * wo_qty / bom_quantity, 4)
             )
+            # Only this much has to come out of stock: the rest is already
+            # recorded and End WO will not consume it again. Comparing the full
+            # requirement with stock told a manager reopening WO-00086 that its
+            # slurry was short, when nothing more was needed.
+            row["still_needed_qty"] = max(
+                postable_qty(row["required_qty"] - row["already_consumed"]), 0.0
+            )
             row["pending_wos"] = _pending_sfg_work_orders(row["item_code"])
     return summary
 
@@ -3557,18 +3577,21 @@ def undo_end_work_order(work_order: str, reason: str = None):
     if not reason:
         frappe.throw(_("A reason is required to undo End WO"))
 
-    _lock_work_order_for_update(work_order)
+    # Status and the ended flag come from the locking read, so a Close
+    # Production that committed while this request waited is seen and refused.
+    locked = _lock_work_order_for_update(work_order) or {}
     wo = frappe.get_doc("Work Order", work_order)
     if wo.docstatus != 1:
         frappe.throw(_("Work Order {0} is not submitted").format(work_order))
     # Before the ended check: Close Production clears the ended flag, so a
     # closed order would otherwise be reported as never ended.
-    if wo.status in ("Completed", "Closed", "Cancelled") or _submitted_manufacture_qty(work_order) > 0:
+    status = locked.get("status", wo.status)
+    if status in ("Completed", "Closed", "Cancelled") or _submitted_manufacture_qty(work_order) > 0:
         frappe.throw(_(
             "Work Order {0} has already been closed — its production is booked, "
             "so End WO cannot be undone."
         ).format(work_order))
-    if not wo.get("custom_production_ended"):
+    if not locked.get("custom_production_ended", wo.get("custom_production_ended")):
         frappe.throw(_("Work Order {0} has not been ended").format(work_order))
 
     wo.db_set("custom_production_ended", 0)
@@ -4490,13 +4513,36 @@ def _surplus_due_into_wip(work_orders: list[str]) -> dict[tuple, float]:
         where parent in %(names)s
           and qty > 0
     """, {"names": tuple(claimed)}, as_dict=True)
-    due: dict[tuple, float] = {}
+    by_entry: dict[str, list] = {}
     for r in rows:
-        staging_wh, wip_wh = claimed[r.parent]
-        if r.t_warehouse != staging_wh:
+        if r.t_warehouse == claimed[r.parent][0]:
+            by_entry.setdefault(r.parent, []).append(r)
+
+    # The sweep moves a surplus entry whole or not at all, so an entry whose
+    # stock has left staging — taken onto the line by hand, say — sweeps
+    # nothing, and counting it would call a close covered that then fails on
+    # "Batch No … has negative stock". An unreadable balance is given the
+    # benefit of the doubt: this only advises.
+    staging_used: dict[tuple, float] = {}
+    due: dict[tuple, float] = {}
+    for se_name, (staging_wh, wip_wh) in claimed.items():
+        need: dict[tuple, float] = {}
+        for r in by_entry.get(se_name, []):
+            need[(r.item_code, r.batch_no)] = need.get((r.item_code, r.batch_no), 0.0) + flt(r.qty)
+        sweepable = True
+        for (item_code, batch_no), qty in need.items():
+            on_hand = _packaging_on_hand(item_code, batch_no or None, staging_wh)
+            used = staging_used.get((item_code, batch_no, staging_wh), 0.0)
+            if on_hand is not None and qty > on_hand - used + QTY_EPSILON:
+                sweepable = False
+        if not sweepable:
             continue
-        key = (r.item_code, r.batch_no, wip_wh)
-        due[key] = due.get(key, 0.0) + flt(r.qty)
+        for (item_code, batch_no), qty in need.items():
+            staging_used[(item_code, batch_no, staging_wh)] = (
+                staging_used.get((item_code, batch_no, staging_wh), 0.0) + qty
+            )
+            key = (item_code, batch_no, wip_wh)
+            due[key] = due.get(key, 0.0) + qty
     return due
 
 
@@ -4991,7 +5037,23 @@ def close_production(groups: str = None, lines: str = None,
     # Lock every Work Order we are about to close, in deterministic order, so a
     # concurrent Close Production (double-click / retry) blocks here and then
     # sees the committed Completed status instead of re-booking Manufacture.
-    _lock_work_orders_for_update([wo["name"] for wo in all_ended_wos])
+    # The state comes from the locking read itself (see
+    # _lock_work_order_for_update): a plain re-read could still answer from
+    # before the wait.
+    locked = _lock_work_orders_for_update([wo["name"] for wo in all_ended_wos]) or {}
+
+    # Undo End WO may have reopened an order between the ended-orders query
+    # above and the lock. Closing it would book its production and complete it
+    # while the manager was told it was reopened.
+    reopened = sorted(
+        name for name, row in locked.items()
+        if row.get("status") != "Completed" and not row.get("custom_production_ended")
+    )
+    if reopened:
+        frappe.throw(_(
+            "These Work Orders are no longer ended and awaiting close: {0}. "
+            "Reload the queue and try again."
+        ).format(", ".join(reopened)))
 
     completed_wos = []
     skipped_wos = []
@@ -5000,9 +5062,9 @@ def close_production(groups: str = None, lines: str = None,
             entry["ended_wos"], entry["good_qty"], entry["reject_qty"], entry["packaging_items"],
         )
         for wo_data in entry["ended_wos"]:
-            # Re-read status under the lock: another request may have completed
-            # this Work Order while we were waiting to acquire the lock.
-            current_status = frappe.db.get_value("Work Order", wo_data["name"], "status")
+            # Another request may have completed this Work Order while we were
+            # waiting to acquire the lock.
+            current_status = (locked.get(wo_data["name"]) or {}).get("status")
             if current_status == "Completed":
                 skipped_wos.append(wo_data["name"])
                 continue
