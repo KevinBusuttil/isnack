@@ -110,9 +110,11 @@ isnack.QualityExplorer = class QualityExplorer {
 	 *  pick: a Link validates on the server and reports the value it was set to
 	 *  (in its stored spelling) when that returns, maybe after the user moved
 	 *  on. A different value in that picker, or one in the other picker, is.
-	 *  Nor is a change that began before the page last moved on: a Link checks
-	 *  its value again on blur, so a click on a trace leaf or a link starts
-	 *  one, which lands after that click has opened another subject or page. */
+	 *  Nor is a Link checking its value again on blur: that reports the value
+	 *  it already showed, maybe after the user picked something else. Nor is a
+	 *  change that began before the user moved on (a click on a trace leaf or
+	 *  a link blurs the picker), which lands after that click has opened
+	 *  another subject or page. */
 	on_pick(kind) {
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
 		if (this.stale_change[kind]) {
@@ -127,6 +129,11 @@ isnack.QualityExplorer = class QualityExplorer {
 		const value = field.get_value();
 		if (!value) return;
 		if (this.syncing[kind].some((synced) => this.same_name(synced, value))) return;
+		// a page control keeps the value before this change as last_value
+		if (this.same_name(field.last_value, value)) {
+			this.sync_pickers();
+			return;
+		}
 		this.open(kind, value);
 	}
 
