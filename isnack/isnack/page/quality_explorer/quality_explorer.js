@@ -38,6 +38,8 @@ isnack.QualityExplorer = class QualityExplorer {
 		this.syncing = { Batch: [], "Work Order": [] };
 		// per picker, a change it was still validating when the page moved on
 		this.stale_change = { Batch: false, "Work Order": false };
+		// the route the explorer set itself last (a pick, adopt_name), as Kind/name
+		this.own_route = null;
 		this.reload_key = null;
 		this.make();
 	}
@@ -118,7 +120,10 @@ isnack.QualityExplorer = class QualityExplorer {
 			this.sync_pickers();
 			return;
 		}
-		if ((frappe.get_route() || [])[0] !== "quality-explorer") return;
+		// the user left the explorer: the address bar says so at once, the
+		// router's route only once the next page has loaded (a Form fetches
+		// its DocType first)
+		if (frappe.router.get_sub_path().split("/")[0] !== "quality-explorer") return;
 		const value = field.get_value();
 		if (!value) return;
 		if (this.syncing[kind].some((synced) => this.same_name(synced, value))) return;
@@ -138,6 +143,7 @@ isnack.QualityExplorer = class QualityExplorer {
 			return;
 		}
 		if (reload) this.reload_key = `${kind}/${name}`;
+		this.own_route = `${kind}/${name}`;
 		frappe.set_route("quality-explorer", kind, name);
 	}
 
@@ -176,7 +182,12 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	load_from_route(kind, name) {
 		if (!["Batch", "Work Order"].includes(kind) || !name) return;
-		this.mark_stale_changes();
+		// the user moving on (Back, a trace leaf, a link) supersedes a pick still
+		// being checked; the explorer's own route (another pick landing,
+		// adopt_name) does not
+		const [own_kind, own_name] = this.split_key(this.own_route);
+		this.own_route = null;
+		if (own_kind !== kind || !this.same_name(own_name, name)) this.mark_stale_changes();
 		const reload = this.reload_key === `${kind}/${name}`;
 		this.reload_key = null;
 		if (reload || !this.is_current(kind, name)) this.explore(kind, name);
@@ -187,6 +198,7 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	/** Back to the bare page: no subject in the URL, so none on screen. */
 	clear() {
+		this.own_route = null;
 		this.mark_stale_changes();
 		this.seq += 1;
 		this.current_key = null;
@@ -242,6 +254,7 @@ isnack.QualityExplorer = class QualityExplorer {
 		// its route only once the next page has loaded, so ask both.
 		if (frappe.get_route_str() === asked_route && frappe.router.get_sub_path() === asked_route) {
 			frappe.route_flags.replace_route = true;
+			this.own_route = `${kind}/${stored}`;
 			frappe.set_route("quality-explorer", kind, stored);
 			// set_route replaced the URL synchronously, but clears the flag only
 			// once the page has settled: left set, the user's next click would
@@ -272,7 +285,9 @@ isnack.QualityExplorer = class QualityExplorer {
 				// the user moved on while this one was loading
 				if (seq !== this.seq || !r || !r.message) return;
 				this.data = r.message;
-				this.adopt_name(kind, name, r.message.subject && r.message.subject.name);
+				// the URL may have come to spell it otherwise while it loaded
+				const asked = this.subject_in_url(kind, name) ?? name;
+				this.adopt_name(kind, asked, r.message.subject && r.message.subject.name);
 				this.render();
 			},
 			error: () => {

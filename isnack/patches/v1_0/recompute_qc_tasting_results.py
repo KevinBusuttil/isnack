@@ -13,9 +13,11 @@ def execute():
     scores; drafts and submitted records alike, cancelled ones are left alone.
 
     The Quality Hub dialog sent stars (1..5) rather than the fraction, which
-    Frappe clamped to 1.0: from its records 1 star and 5 stars read the same.
-    A record whose every rating is 1.0 may be one of those, so its result is
-    left as it was (rather than turned into a 5-star pass) and flagged for QC.
+    Frappe clamped to 1.0: from its rows 1 star and 5 stars read the same. A
+    row whose every rating is 1.0 may be one of those (a dialog draft may have
+    had rows added in the desk form since), so a record holding one is left
+    as it was, rather than turned into a pass on 5-star scores, and flagged
+    for QC.
     """
     if not frappe.db.table_exists("QC Tasting Record"):
         return
@@ -27,14 +29,14 @@ def execute():
     unclear = []
     for name in frappe.get_all("QC Tasting Record", filters={"docstatus": ["<", 2]}, pluck="name"):
         doc = frappe.get_doc("QC Tasting Record", name)
-        ratings = [flt(row.get(f)) for row in doc.scores or [] for f in rating_fields if flt(row.get(f)) > 0]
-        if ratings and all(r >= 1 for r in ratings):
+        if any(_may_be_clamped(row, rating_fields) for row in doc.scores or []):
             unclear.append(name)
             doc.add_comment(
                 "Info",
-                f"Every rating on this tasting reads {top} stars. Ratings entered through the Quality "
-                f"Hub dialog before this update were all stored as {top} stars, whatever the taster "
-                "gave, so the result was left as it was. Check the scores and enter them again if needed.",
+                f"A taster's ratings on this tasting all read {top} stars. Ratings entered through the "
+                f"Quality Hub dialog before this update were all stored as {top} stars, whatever the "
+                "taster gave, so the result was left as it was. Check the scores and enter them again "
+                "if needed.",
             )
             continue
 
@@ -58,4 +60,10 @@ def execute():
         )
 
     if unclear:
-        print(f"QC Tasting Records left as they were, every rating {top} stars (check them): {', '.join(unclear)}")
+        print(f"QC Tasting Records left as they were, a taster's ratings all {top} stars (check them): {', '.join(unclear)}")
+
+
+def _may_be_clamped(row, rating_fields):
+    """Every rating the taster gave reads the top of the scale (1.0)."""
+    ratings = [flt(row.get(f)) for f in rating_fields if flt(row.get(f)) > 0]
+    return bool(ratings) and all(r >= 1 for r in ratings)

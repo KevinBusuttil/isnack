@@ -546,7 +546,7 @@ validate():
 
 **File:** `isnack/isnack/doctype/qc_tasting_record/qc_tasting_record.py`
 
-Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the threshold. Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: the patch leaves a record whose every rating is 1.0 as it was, with a comment asking QC to check its scores, and lists it in the migrate output. The dialog now picks stars (1–5) and sends the fraction.
+Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the threshold. Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: the patch leaves a record with a taster whose every rating is 1.0 as it was (a dialog draft may have had rows added in the desk form since), with a comment asking QC to check its scores, and lists it in the migrate output. The dialog now picks stars (1–5) and sends the fraction.
 
 ```
 validate():
