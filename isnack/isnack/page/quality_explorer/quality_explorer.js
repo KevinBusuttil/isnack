@@ -110,16 +110,18 @@ isnack.QualityExplorer = class QualityExplorer {
 	 *  pick: a Link validates on the server and reports the value it was set to
 	 *  (in its stored spelling) when that returns, maybe after the user moved
 	 *  on. A different value in that picker, or one in the other picker, is.
-	 *  Nor is a Link checking its value again on blur: that reports the value
-	 *  it already showed, maybe after the user picked something else. Nor is a
-	 *  change that began before the user moved on (a click on a trace leaf or
-	 *  a link blurs the picker), which lands after that click has opened
-	 *  another subject or page. */
+	 *  Nor is a Link checking its value again on blur once the URL names
+	 *  another subject: that reports the value it already showed, maybe after
+	 *  the user picked something else. Nor is a change that began before the
+	 *  user moved on (a click on a trace leaf or a link blurs the picker),
+	 *  which lands after that click has opened another subject or page. Either
+	 *  way only that picker follows the URL again: the user may be typing in
+	 *  the other. */
 	on_pick(kind) {
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
 		if (this.stale_change[kind]) {
 			this.stale_change[kind] = false;
-			this.sync_pickers();
+			this.sync_pickers(kind);
 			return;
 		}
 		// the user left the explorer: the address bar says so at once, the
@@ -129,9 +131,11 @@ isnack.QualityExplorer = class QualityExplorer {
 		const value = field.get_value();
 		if (!value) return;
 		if (this.syncing[kind].some((synced) => this.same_name(synced, value))) return;
-		// a page control keeps the value before this change as last_value
-		if (this.same_name(field.last_value, value)) {
-			this.sync_pickers();
+		// a page control keeps the value before this change as last_value; while
+		// the URL names that value, open() leaves the subject on screen alone
+		// (and retries it after an error)
+		if (this.same_name(field.last_value, value) && this.subject_in_url(kind, value) === null) {
+			this.sync_pickers(kind);
 			return;
 		}
 		this.open(kind, value);
@@ -223,16 +227,18 @@ isnack.QualityExplorer = class QualityExplorer {
 		if (this.work_order_field.inside_change_event) this.stale_change["Work Order"] = true;
 	}
 
-	/** Set the pickers to the subject in the URL without that counting as a
-	 *  pick. A set_value can be swallowed while an earlier one is still being
-	 *  validated, so when the subject moved on meanwhile, follow it again. */
-	sync_pickers() {
+	/** Set the pickers (or only the ``only`` one) to the subject in the URL
+	 *  without that counting as a pick. A set_value can be swallowed while an
+	 *  earlier one is still being validated, so when the subject moved on
+	 *  meanwhile, follow it again. */
+	sync_pickers(only = null) {
 		const key = this.current_key || "";
 		const [kind_now, name_now] = this.split_key(key);
 		const want = { Batch: "", "Work Order": "" };
 		if (kind_now) want[kind_now] = name_now;
 		const pickers = { Batch: this.batch_field, "Work Order": this.work_order_field };
 		Object.entries(pickers).forEach(([kind, field]) => {
+			if (only && kind !== only) return;
 			// the server answers with the name as stored: FG10005-001 for fg10005-001
 			if (this.same_name(field.get_value(), want[kind])) return;
 			const pending = this.syncing[kind];
