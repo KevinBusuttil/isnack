@@ -228,6 +228,11 @@
 .qe-cov-hidden {
 	--qe-cov-color: var(--gray-400, #c0c6cc);
 }
+.qe-cov-count small {
+	font-size: var(--text-xs);
+	font-weight: 500;
+	color: var(--text-muted);
+}
 .qe-cov.qe-cov-missing .qe-cov-count,
 .qe-cov.qe-cov-hidden .qe-cov-count {
 	color: var(--text-muted);

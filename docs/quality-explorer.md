@@ -51,7 +51,13 @@ An ingredient batch with no receiving record gets a **No receiving record** tag:
 
 ## Permissions
 
-The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs Batch read; exploring a Work Order needs read on that Work Order. Records are read per QC doctype with the user's permissions; a type the user may not read shows as "—" in the coverage strip and is named under the summary. Tracing ingredients needs Stock Entry read, as on the Batch Explorer; without it the records of the batch and its Work Orders are still listed and the page says the ingredients were not traced.
+The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs Batch read; exploring a Work Order needs read on that Work Order.
+
+A record type the user may not read shows as "—" in the coverage strip and is named under the summary. Within a type, records a User Permission keeps from the user (on a line, an item, a supplier) are not shown but are counted: the summary says how many are hidden, a type whose only records are hidden reads "—" rather than "No record", and an ingredient whose receiving record is hidden is not flagged **No receiving record**. Nothing on the page claims a record is missing when the user simply may not see it.
+
+Tracing ingredients needs Stock Entry read, as on the Batch Explorer; without it the records of the batch and its Work Orders are still listed and the page says the ingredients were not traced. When some of a Work Order's Stock Entries are hidden by permissions, the page says the ingredients may be incomplete.
+
+The page keeps the URL on the subject shown (`/app/quality-explorer/Batch/<batch>`), so Back, refresh and a shared link open the same dossier.
 
 ## Files
 

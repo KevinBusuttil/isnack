@@ -48,6 +48,7 @@ isnack.QualityExplorer = class QualityExplorer {
 			change: () => this.on_pick("Batch"),
 		});
 		this.batch_field.$input.attr("placeholder", __("Batch, item code or item name"));
+		this.match_every_word();
 
 		this.work_order_field = this.page.add_field({
 			fieldname: "work_order",
@@ -63,8 +64,8 @@ isnack.QualityExplorer = class QualityExplorer {
 			() => {
 				const batch = this.batch_field.get_value();
 				const work_order = this.work_order_field.get_value();
-				if (batch) this.explore("Batch", batch);
-				else if (work_order) this.explore("Work Order", work_order);
+				if (batch) this.open("Batch", batch, true);
+				else if (work_order) this.open("Work Order", work_order, true);
 				else frappe.show_alert({ message: __("Please pick a batch or a work order"), indicator: "orange" });
 			},
 			"search"
@@ -76,6 +77,22 @@ isnack.QualityExplorer = class QualityExplorer {
 		this.set_tree_buttons(false);
 	}
 
+	/** Enter/Tab only pick an option the typed text is part of (Frappe releases
+	 *  that have ``input_matches_item``). search_batches matches each word on its
+	 *  own, so "FG10005 crisps" lists batches whose text never holds that phrase:
+	 *  accept an option holding every word too. As on the Batch Explorer. */
+	match_every_word() {
+		const field = this.batch_field;
+		if (typeof field.input_matches_item !== "function") return;
+		const frappe_match = field.input_matches_item.bind(field);
+		field.input_matches_item = (input, item) => {
+			if (frappe_match(input, item)) return true;
+			if (!item.value || String(item.value).includes("__link_option")) return false;
+			const text = `${item.value} ${item.description || ""}`.toLowerCase();
+			return input.split(/\s+/).filter(Boolean).every((w) => text.includes(w));
+		};
+	}
+
 	/** One subject at a time: picking a batch empties the Work Order and the
 	 *  other way round. Emptying a field fires its change too, which stops at
 	 *  the empty value. */
@@ -85,7 +102,23 @@ isnack.QualityExplorer = class QualityExplorer {
 		const value = field.get_value();
 		if (!value) return;
 		if (other.get_value()) other.set_value("");
-		this.explore(kind, value);
+		// a picker fires change again when it loses focus: that subject is shown already
+		if (this.is_current(kind, value)) return;
+		this.open(kind, value);
+	}
+
+	/** Explore by way of the URL, so the address bar, Back and a refresh always
+	 *  name the subject on screen: on_page_show explores it. ``reload`` explores
+	 *  again when the URL names it already (the Explore button). */
+	open(kind, name, reload = false) {
+		const route = ["quality-explorer", kind, name];
+		if (frappe.get_route_str() !== route.join("/")) frappe.set_route(...route);
+		else if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+	}
+
+	/** The subject is on screen or on its way; after an error it is neither. */
+	is_current(kind, name) {
+		return `${kind}/${name}` === this.current_key && (this.loading || !!this.data);
 	}
 
 	set_tree_buttons(enabled) {
@@ -102,12 +135,13 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	load_from_route(kind, name) {
 		if (!["Batch", "Work Order"].includes(kind) || !name) return;
-		if (`${kind}/${name}` === this.current_key) return;
-		// set_value fires the field's change handler, which already explores;
-		// the explicit call below only runs when it did not.
+		if (this.is_current(kind, name)) return;
+		// explore first: the change the pickers fire then finds the subject current
+		this.explore(kind, name);
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
-		field.set_value(name);
-		if (`${kind}/${name}` !== this.current_key) this.explore(kind, name);
+		const other = kind === "Batch" ? this.work_order_field : this.batch_field;
+		if (field.get_value() !== name) field.set_value(name);
+		if (other.get_value()) other.set_value("");
 	}
 
 	explore(kind, name) {
@@ -203,6 +237,7 @@ isnack.QualityExplorer = class QualityExplorer {
 		if ((summary.hidden || []).length) {
 			notes.push(__("Not shown, you may not read them: {0}", [summary.hidden.join(", ")]));
 		}
+		if (summary.withheld) notes.push(__("{0} records hidden by your permissions", [summary.withheld]));
 		if (summary.trace_hint) notes.push(esc(summary.trace_hint));
 
 		const route = is_batch ? ["batch-explorer", subject.name] : ["Form", "Work Order", subject.name];
@@ -231,7 +266,7 @@ isnack.QualityExplorer = class QualityExplorer {
 					${stat(summary.submitted, __("Submitted"))}
 					${stat(summary.drafts, __("Drafts"), summary.drafts ? "qe-warn" : "", __("Not submitted yet"))}
 					${stat(summary.failed, __("Failed / Rejected"), summary.failed ? "qe-danger" : "")}
-					${stat(summary.work_orders, __("Work Orders"), "", __("Work Orders whose records are listed here"))}
+					${stat(summary.work_orders, __("Work Orders"), "", __("Work Orders traced from here, listed under Work Orders below"))}
 					${stat(summary.ingredients, __("Ingredient Batches"), "", __("Raw-material batches the Work Orders consumed"))}
 				</div>
 				<div class="qe-card-foot">
@@ -244,6 +279,7 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	bind_summary_links($root) {
 		$root.find(".qe-card-link").on("click", function (e) {
+			if (e.ctrlKey || e.metaKey) return; // the browser opens a new tab
 			e.preventDefault();
 			frappe.set_route(...JSON.parse($(this).attr("data-route")));
 		});
@@ -260,9 +296,12 @@ isnack.QualityExplorer = class QualityExplorer {
 			hidden: __("You may not read these records"),
 		};
 		const chips = coverage.map((c) => {
-			const count = c.state === "hidden" ? "—" : c.count;
+			const withheld = c.withheld ? __("{0} hidden by your permissions", [c.withheld]) : "";
+			const title = [titles[c.state], withheld].filter(Boolean).join(" · ");
+			let count = c.state === "hidden" ? "—" : c.count;
+			if (c.withheld && c.state !== "hidden") count += ` <small>+${c.withheld}</small>`;
 			return `
-				<div class="qe-cov qe-cov-${c.state}" title="${esc(c.label)}: ${esc(titles[c.state] || "")}">
+				<div class="qe-cov qe-cov-${c.state}" title="${esc(c.label)}: ${esc(title)}">
 					<span class="qe-cov-code">${esc(c.code)}</span>
 					<span class="qe-cov-label">${esc(c.label)}</span>
 					<span class="qe-cov-count">${count}</span>
@@ -400,6 +439,7 @@ isnack.QualityExplorer = class QualityExplorer {
 		// on paper the hrefs stay, so the PDF links back into the desk
 		if (!opts.print) {
 			$leaf.find(".qe-leaf-name").on("click", (e) => {
+				if (e.ctrlKey || e.metaKey) return; // the browser opens a new tab
 				e.preventDefault();
 				frappe.set_route("Form", node.doctype, node.name);
 			});
@@ -446,6 +486,7 @@ isnack.QualityExplorer = class QualityExplorer {
 		if (!opts.print) {
 			// explore that Work Order or batch in its turn
 			$leaf.find(".qe-leaf-name").on("click", (e) => {
+				if (e.ctrlKey || e.metaKey) return; // the browser opens a new tab
 				e.preventDefault();
 				frappe.set_route(...node.route);
 			});

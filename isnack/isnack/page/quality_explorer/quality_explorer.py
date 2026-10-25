@@ -29,11 +29,15 @@ record reached by two routes names both.
 Permissions
 -----------
 A Batch needs Batch read and a Work Order read on that Work Order, as on the
-Batch Explorer, whose raw reads resolve the Work Orders and batches. Records
-are read with ``frappe.get_list`` one QC doctype at a time; a doctype the user
-may not read is left out and its code listed in ``summary.hidden``. The
-ingredient trace needs Stock Entry read, like the Batch Explorer's production
-inputs; without it the summary says the trace was skipped.
+Batch Explorer, whose raw reads resolve the Work Orders and batches. A QC
+doctype the user may not read is left out and its code listed in
+``summary.hidden``. Within a doctype, records are filtered the way the Batch
+Explorer filters its production inputs: read raw, then kept only when
+``frappe.get_list`` lets the user see them. The ones a User Permission keeps
+from the user (on a line, an item, a supplier) are counted, so the page says
+"hidden" where it would otherwise claim a record is missing. The ingredient
+trace needs Stock Entry read, like the Batch Explorer's production inputs;
+without it, or when some Stock Entries are hidden, the summary says so.
 """
 
 from __future__ import annotations
@@ -128,7 +132,7 @@ def get_quality_records(batch_no: str | None = None, work_order: str | None = No
 
 	batches = list(scope["batches"]) + [b for b in trace["batches"] if b not in scope["batches"]]
 	work_orders = list(scope["work_orders"]) + [w for w in trace["runs"] if w not in scope["work_orders"]]
-	records, hidden = _read_records(batches, work_orders)
+	records, hidden, withheld = _read_records(batches, work_orders)
 
 	inspectors = be._user_names({r.get("qc_inspector") for rows in records.values() for r in rows})
 	groups = []
@@ -148,13 +152,13 @@ def get_quality_records(batch_no: str | None = None, work_order: str | None = No
 			}
 		)
 
-	groups += _trace_groups(subject, scope, trace, records, "QCA" in hidden)
+	groups += _trace_groups(subject, scope, trace, records, hidden, withheld)
 
 	nodes = [n for g in groups if g.get("code") for n in g["nodes"]]
 	return {
 		"subject": subject,
 		"groups": groups,
-		"coverage": _coverage(records, hidden),
+		"coverage": _coverage(records, hidden, withheld),
 		"summary": {
 			"records": len(nodes),
 			"submitted": sum(1 for n in nodes if n["docstatus"] == 1),
@@ -163,6 +167,7 @@ def get_quality_records(batch_no: str | None = None, work_order: str | None = No
 			"work_orders": sum(1 for w in work_orders if scope["work_order_roles"].get(w) != WO_SUBJECT),
 			"ingredients": len(trace["batches"]),
 			"hidden": hidden,
+			"withheld": sum(len(rows) for rows in withheld.values()),
 			"trace_hint": trace["hint"],
 		},
 	}
@@ -275,18 +280,21 @@ def _ingredient_trace(work_orders: list[str]) -> dict:
 		out["hint"] = _("Ingredients not traced: you may not read Stock Entries.")
 		return out
 
+	hints = []
 	traced = work_orders[:MAX_TRACED_WORK_ORDERS]
 	if len(traced) < len(work_orders):
-		out["hint"] = _("Ingredients traced for the first {0} of {1} Work Orders.").format(
-			len(traced), len(work_orders)
+		hints.append(
+			_("Ingredients traced for the first {0} of {1} Work Orders.").format(len(traced), len(work_orders))
 		)
 
 	seen = set(work_orders)
+	hidden_entries = 0
 	level = [(wo, (wo,)) for wo in traced]
 	while level:
 		below = []
 		for wo, path in level:
 			read = be._read_work_order(wo)
+			hidden_entries += read["hidden"]
 			materials = batch_lineage.consumed_materials(
 				read["submitted"], read["rows_by_entry"], read["bundle_map"]
 			)
@@ -310,6 +318,15 @@ def _ingredient_trace(work_orders: list[str]) -> dict:
 				out["runs"][run] = {"item_code": item_code, "for_work_order": wo}
 				below.append((run, path + (run,)))
 		level = below
+
+	if hidden_entries:
+		# a dossier must not look complete when it is not
+		hints.append(
+			_("Ingredients may be incomplete: {0} Stock Entries are hidden by your permissions.").format(
+				hidden_entries
+			)
+		)
+	out["hint"] = " ".join(hints) or None
 	return out
 
 
@@ -341,17 +358,23 @@ def _semi_finished_runs(materials: list[dict]) -> list[tuple[str, str]]:
 # Records
 # ---------------------------------------------------------------------------
 
-def _read_records(batches: list[str], work_orders: list[str]) -> tuple[dict[str, list], list[str]]:
-	"""``({code: [row, ...]}, hidden_codes)``: the live records naming a batch or Work Order.
+def _read_records(
+	batches: list[str], work_orders: list[str]
+) -> tuple[dict[str, list], list[str], dict[str, list]]:
+	"""``(records, hidden, withheld)``: the live records naming a batch or Work Order.
 
-	Drafts are included, cancelled records are not. A code the user may not
-	read is in ``hidden_codes`` and absent from the dict.
+	``records`` -- ``{code: [row, ...]}``, the ones the user may read. Drafts
+	are included, cancelled records are not.
+	``hidden`` -- the codes the user may not read at all (absent from both dicts).
+	``withheld`` -- ``{code: [row, ...]}``, the rows the user's User Permissions
+	filter out; only their existence is used, never shown.
 	"""
-	records, hidden = {}, []
+	records, hidden, withheld = {}, [], {}
 	for code, doctype in QC_DOCTYPES.items():
 		if not frappe.has_permission(doctype, "read"):
 			hidden.append(code)
 			continue
+		records[code], withheld[code] = [], []
 		meta = frappe.get_meta(doctype)
 		or_filters = []
 		if batches and meta.has_field("batch_no"):
@@ -359,17 +382,18 @@ def _read_records(batches: list[str], work_orders: list[str]) -> tuple[dict[str,
 		if work_orders and meta.has_field("work_order"):
 			or_filters.append(["work_order", "in", work_orders])
 		if not or_filters:
-			records[code] = []
 			continue
-		records[code] = frappe.get_list(
+		rows = frappe.get_all(
 			doctype,
 			filters={"docstatus": ["<", 2]},
 			or_filters=or_filters,
 			fields=["name", "docstatus"] + [f for f in _RECORD_FIELDS if meta.has_field(f)],
 			order_by="record_date asc, modified asc",
-			limit_page_length=0,
 		)
-	return records, hidden
+		permitted, _count = be._permitted_names(doctype, [r.name for r in rows])
+		for r in rows:
+			(records if r.name in permitted else withheld)[code].append(r)
+	return records, hidden, withheld
 
 
 def _result(row) -> tuple[str | None, str | None]:
@@ -444,18 +468,21 @@ def _record_node(code: str, row, relations: list[dict], inspectors: dict[str, st
 	}
 
 
-def _coverage(records: dict[str, list], hidden: list[str]) -> list[dict]:
+def _coverage(records: dict[str, list], hidden: list[str], withheld: dict[str, list]) -> list[dict]:
 	"""One entry per record type, in code order, with its counts and ``state``.
 
-	``state`` is ``hidden`` (may not read), ``missing`` (no record), ``failed``
-	(a record failed), ``submitted`` or ``draft`` (drafts only).
+	``state`` is ``hidden`` (may not read the type, or every record of it is
+	withheld from the user), ``missing`` (no record), ``failed`` (a record
+	failed), ``submitted`` or ``draft`` (drafts only). ``withheld`` counts the
+	records the user's permissions keep from them.
 	"""
 	out = []
 	for code, doctype in QC_DOCTYPES.items():
 		rows = records.get(code) or []
+		kept_back = len(withheld.get(code) or [])
 		submitted = sum(1 for r in rows if r.docstatus == 1)
 		failed = sum(1 for r in rows if _result(r)[1] == "fail")
-		if code in hidden:
+		if code in hidden or (kept_back and not rows):
 			state = "hidden"
 		elif not rows:
 			state = "missing"
@@ -474,6 +501,7 @@ def _coverage(records: dict[str, list], hidden: list[str]) -> list[dict]:
 				"submitted": submitted,
 				"drafts": len(rows) - submitted,
 				"failed": failed,
+				"withheld": kept_back,
 				"state": state,
 			}
 		)
@@ -484,7 +512,11 @@ def _coverage(records: dict[str, list], hidden: list[str]) -> list[dict]:
 # Trace groups: what the records were found through
 # ---------------------------------------------------------------------------
 
-def _trace_groups(subject: dict, scope: dict, trace: dict, records: dict, qca_hidden: bool) -> list[dict]:
+def _trace_groups(
+	subject: dict, scope: dict, trace: dict, records: dict, hidden: list[str], withheld: dict[str, list]
+) -> list[dict]:
+	# a receiving record the user may not see still counts as on file
+	unseen_receiving = {r.get("batch_no") for r in withheld.get("QCA") or []}
 	by_work_order: dict[str, int] = {}
 	by_batch: dict[str, int] = {}
 	for code, rows in records.items():
@@ -520,7 +552,7 @@ def _trace_groups(subject: dict, scope: dict, trace: dict, records: dict, qca_hi
 			ing = trace["batches"][batch_no]
 			receiving = by_batch.get(("QCA", batch_no), 0)
 			tags = [REL_INGREDIENT]
-			if not receiving and not qca_hidden:
+			if not receiving and "QCA" not in hidden and batch_no not in unseen_receiving:
 				tags.append("no_receiving_record")
 			nodes.append(
 				_batch_node(
