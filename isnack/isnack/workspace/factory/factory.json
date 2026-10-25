@@ -17,7 +17,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Hubs",
-   "link_count": 3,
+   "link_count": 4,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -48,6 +48,16 @@
    "label": "Quality Hub",
    "link_count": 0,
    "link_to": "quality-hub",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Explorer",
+   "link_count": 0,
+   "link_to": "quality-explorer",
    "link_type": "Page",
    "onboard": 0,
    "type": "Link"
@@ -141,7 +151,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-06-16 21:00:00.000000",
+ "modified": "2026-10-25 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Factory",
