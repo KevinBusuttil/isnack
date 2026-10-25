@@ -8,8 +8,6 @@
  "field_order": [
   "record_date",
   "shift",
-  "factory_line",
-  "work_order",
   "operator_name",
   "qc_inspector",
   "status",
@@ -24,7 +22,9 @@
   "packaging_intact",
   "labelling_correct",
   "foreign_body_check",
-  "colour_acceptable",
+  "appearance_acceptable",
+  "dimensions_acceptable",
+  "weight_acceptable",
   "arrival_temperature",
   "acceptable_range_min",
   "acceptable_range_max",
@@ -50,28 +50,18 @@
    "reqd": 1
   },
   {
-   "fieldname": "factory_line",
-   "fieldtype": "Link",
-   "label": "Factory Line",
-   "options": "Factory Line"
-  },
-  {
-   "fieldname": "work_order",
-   "fieldtype": "Link",
-   "label": "Work Order",
-   "options": "Work Order"
-  },
-  {
    "fieldname": "operator_name",
    "fieldtype": "Data",
-   "label": "Operator Name"
+   "label": "Operator Name",
+   "reqd": 1
   },
   {
    "fieldname": "qc_inspector",
    "fieldtype": "Link",
    "label": "QC Inspector",
    "options": "User",
-   "default": "__user"
+   "default": "__user",
+   "reqd": 1
   },
   {
    "fieldname": "status",
@@ -96,13 +86,15 @@
    "fieldname": "supplier",
    "fieldtype": "Link",
    "label": "Supplier",
-   "options": "Supplier"
+   "options": "Supplier",
+   "reqd": 1
   },
   {
    "fieldname": "purchase_receipt",
    "fieldtype": "Link",
    "label": "Purchase Receipt",
-   "options": "Purchase Receipt"
+   "options": "Purchase Receipt",
+   "reqd": 1
   },
   {
    "fieldname": "item_code",
@@ -122,32 +114,50 @@
    "fieldname": "batch_no",
    "fieldtype": "Link",
    "label": "Batch No",
-   "options": "Batch"
+   "options": "Batch",
+   "reqd": 1
   },
   {
    "fieldname": "qty_received",
    "fieldtype": "Float",
-   "label": "Qty Received"
+   "label": "Qty Received",
+   "reqd": 1
   },
   {
    "fieldname": "packaging_intact",
-   "fieldtype": "Check",
-   "label": "Packaging Intact"
+   "fieldtype": "Select",
+   "label": "Packaging Intact",
+   "options": "\nYes\nNo"
   },
   {
    "fieldname": "labelling_correct",
-   "fieldtype": "Check",
-   "label": "Labelling Correct"
+   "fieldtype": "Select",
+   "label": "Labelling Correct",
+   "options": "\nYes\nNo"
   },
   {
    "fieldname": "foreign_body_check",
-   "fieldtype": "Check",
-   "label": "Foreign Body Check"
+   "fieldtype": "Select",
+   "label": "Foreign Body Check",
+   "options": "\nYes\nNo"
   },
   {
-   "fieldname": "colour_acceptable",
-   "fieldtype": "Check",
-   "label": "Colour Acceptable"
+   "fieldname": "appearance_acceptable",
+   "fieldtype": "Select",
+   "label": "Appearance Acceptable",
+   "options": "\nYes\nNo"
+  },
+  {
+   "fieldname": "dimensions_acceptable",
+   "fieldtype": "Select",
+   "label": "Dimensions Acceptable",
+   "options": "\nYes\nNo"
+  },
+  {
+   "fieldname": "weight_acceptable",
+   "fieldtype": "Select",
+   "label": "Weight Acceptable",
+   "options": "\nYes\nNo"
   },
   {
    "fieldname": "arrival_temperature",
@@ -196,7 +206,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-04-15 10:00:00.000000",
+ "modified": "2026-10-25 17:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Receiving Record",

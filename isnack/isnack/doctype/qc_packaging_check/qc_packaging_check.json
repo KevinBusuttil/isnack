@@ -58,14 +58,16 @@
   {
    "fieldname": "operator_name",
    "fieldtype": "Data",
-   "label": "Operator Name"
+   "label": "Operator Name",
+   "reqd": 1
   },
   {
    "fieldname": "qc_inspector",
    "fieldtype": "Link",
    "label": "QC Inspector",
    "options": "User",
-   "default": "__user"
+   "default": "__user",
+   "reqd": 1
   },
   {
    "fieldname": "status",
@@ -153,7 +155,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-04-15 10:00:00.000000",
+ "modified": "2026-10-25 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Packaging Check",

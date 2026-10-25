@@ -7,25 +7,27 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
-            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
-            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Supplier & Item ─────────────────────────────────────
             { fieldname: "sb_supply", fieldtype: "Section Break", label: __("Supplier & Item") },
-            { fieldname: "supplier", fieldtype: "Link", label: __("Supplier"), options: "Supplier" },
-            { fieldname: "purchase_receipt", fieldtype: "Link", label: __("Purchase Receipt"), options: "Purchase Receipt" },
+            { fieldname: "supplier", fieldtype: "Link", label: __("Supplier"), options: "Supplier", reqd: 1 },
+            { fieldname: "purchase_receipt", fieldtype: "Link", label: __("Purchase Receipt"), options: "Purchase Receipt", reqd: 1 },
             { fieldname: "cb_supply", fieldtype: "Column Break" },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item", reqd: 1 },
-            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
-            { fieldname: "qty_received", fieldtype: "Float", label: __("Qty Received") },
+            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch", reqd: 1 },
+            { fieldname: "qty_received", fieldtype: "Float", label: __("Qty Received"), reqd: 1 },
             // ── Section: Quality Checks ──────────────────────────────────────
+            // blank / Yes / No: a blank answer is a check not done, never a pass
             { fieldname: "sb_quality", fieldtype: "Section Break", label: __("Quality Checks") },
-            { fieldname: "packaging_intact", fieldtype: "Check", label: __("Packaging Intact") },
-            { fieldname: "labelling_correct", fieldtype: "Check", label: __("Labelling Correct") },
-            { fieldname: "foreign_body_check", fieldtype: "Check", label: __("Foreign Body Check") },
-            { fieldname: "colour_acceptable", fieldtype: "Check", label: __("Colour Acceptable") },
+            { fieldname: "packaging_intact", fieldtype: "Select", label: __("Packaging Intact"), options: "\nYes\nNo" },
+            { fieldname: "labelling_correct", fieldtype: "Select", label: __("Labelling Correct"), options: "\nYes\nNo" },
+            { fieldname: "foreign_body_check", fieldtype: "Select", label: __("Foreign Body Check"), options: "\nYes\nNo" },
+            { fieldname: "cb_quality_checks", fieldtype: "Column Break" },
+            { fieldname: "appearance_acceptable", fieldtype: "Select", label: __("Appearance Acceptable"), options: "\nYes\nNo" },
+            { fieldname: "dimensions_acceptable", fieldtype: "Select", label: __("Dimensions Acceptable"), options: "\nYes\nNo" },
+            { fieldname: "weight_acceptable", fieldtype: "Select", label: __("Weight Acceptable"), options: "\nYes\nNo" },
             { fieldname: "cb_quality", fieldtype: "Column Break" },
             { fieldname: "arrival_temperature", fieldtype: "Float", label: __("Arrival Temperature (°C)") },
             { fieldname: "acceptable_range_min", fieldtype: "Float", label: __("Acceptable Range Min (°C)") },
@@ -53,8 +55,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
@@ -87,8 +89,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
@@ -121,8 +123,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
@@ -154,8 +156,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
             { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
@@ -187,8 +189,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Scoring ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Scoring") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
@@ -217,8 +219,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Packaging Material & Checks ─────────────────────────
             { fieldname: "sb_packaging", fieldtype: "Section Break", label: __("Packaging Material & Checks") },
             { fieldname: "film_type", fieldtype: "Data", label: __("Film Type") },
@@ -251,8 +253,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Equipment ───────────────────────────────────────────
             { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
             { fieldname: "metal_detector_id", fieldtype: "Data", label: __("Metal Detector ID") },
@@ -286,8 +288,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Limits ────────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Limits") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
@@ -530,6 +532,7 @@ isnack.quality_hub.QualityHub = class {
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Packaging Check">${__("Packaging Checks")}</a>
                             <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="QC Metal Detector Log">${__("Metal Detector Logs")}</a>
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Weight Check">${__("Weight Checks")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-blue qh-quick-link" href="#" data-page="quality-explorer">${__("Quality Explorer")}</a>
                         </div>
                     </div>
                 </div>
@@ -585,9 +588,13 @@ isnack.quality_hub.QualityHub = class {
         // Quick links
         this.$container.on("click", ".qh-quick-link", (e) => {
             e.preventDefault();
-            const doctype = $(e.currentTarget).data("doctype");
+            const $link = $(e.currentTarget);
+            const doctype = $link.data("doctype");
+            const page = $link.data("page");
             if (doctype) {
                 frappe.set_route("List", doctype);
+            } else if (page) {
+                frappe.set_route(page);
             }
         });
 
@@ -1102,11 +1109,19 @@ isnack.quality_hub.QualityHub = class {
             return;
         }
 
+        // a receiving record belongs to a delivery, not to a line
+        const context_cols = tab === "receiving"
+            ? [
+                { key: "supplier", label: __("Supplier") },
+                { key: "item_code", label: __("Item") },
+                { key: "batch_no", label: __("Batch") },
+            ]
+            : [{ key: "factory_line", label: __("Line") }];
         const cols = [
             { key: "name", label: __("Name") },
             { key: "record_date", label: __("Date") },
             { key: "shift", label: __("Shift") },
-            { key: "factory_line", label: __("Line") },
+            ...context_cols,
             { key: "operator_name", label: __("Operator") },
             { key: "overall_status", label: __("Result") },
             { key: "docstatus", label: __("Status") },

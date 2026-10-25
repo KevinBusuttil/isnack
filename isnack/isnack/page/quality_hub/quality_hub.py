@@ -137,7 +137,7 @@ def get_qc_record_summary(date=None):
     result = {}
 
     for code, doctype in QC_DOCTYPES.items():
-        if not frappe.db.table_exists(f"tab{doctype}"):
+        if not frappe.db.table_exists(doctype):
             result[code] = {"total": 0, "submitted": 0, "draft": 0}
             continue
 
@@ -168,7 +168,7 @@ def get_completion_matrix(date=None):
     for shift in shifts:
         matrix[shift] = {}
         for code, doctype in QC_DOCTYPES.items():
-            if not frappe.db.table_exists(f"tab{doctype}"):
+            if not frappe.db.table_exists(doctype):
                 matrix[shift][code] = "not_started"
                 continue
 
@@ -197,7 +197,10 @@ def get_qc_records(doctype, filters=None, limit=20):
     if doctype not in QC_DOCTYPES.values():
         frappe.throw(f"Invalid QC DocType: {doctype}")
 
-    if not frappe.db.table_exists(f"tab{doctype}"):
+    if not frappe.has_permission(doctype, "read"):
+        raise frappe.PermissionError(f"Not permitted to read {doctype}.")
+
+    if not frappe.db.table_exists(doctype):
         return []
 
     parsed_filters = {}
@@ -214,6 +217,9 @@ def get_qc_records(doctype, filters=None, limit=20):
         "shift",
         "factory_line",
         "work_order",
+        "supplier",
+        "item_code",
+        "batch_no",
         "operator_name",
         "qc_inspector",
         "status",
@@ -228,7 +234,8 @@ def get_qc_records(doctype, filters=None, limit=20):
     available_fieldnames.update({"name", "docstatus", "modified"})
     fields = [f for f in fields if f in available_fieldnames]
 
-    records = frappe.get_all(
+    # get_list, not get_all: the user's User Permissions apply to the lists too
+    records = frappe.get_list(
         doctype,
         filters=parsed_filters,
         fields=fields,
@@ -372,11 +379,22 @@ def get_batches_for_receiving(doctype, txt, searchfield, start, page_len, filter
     params = {"start": int(start or 0), "page_len": int(page_len or 20)}
 
     if purchase_receipt:
+        # the batch is on the receipt row itself, or (v15's default) in the
+        # row's Serial and Batch Bundle
         conditions.append(
+            "("
             "EXISTS ("
             "SELECT 1 FROM `tabPurchase Receipt Item` pri"
             " WHERE pri.parent = %(purchase_receipt)s"
             " AND pri.batch_no = b.name"
+            ")"
+            " OR EXISTS ("
+            "SELECT 1 FROM `tabPurchase Receipt Item` pri"
+            " JOIN `tabSerial and Batch Entry` sbe"
+            " ON sbe.parent = pri.serial_and_batch_bundle"
+            " WHERE pri.parent = %(purchase_receipt)s"
+            " AND sbe.batch_no = b.name"
+            ")"
             ")"
         )
         params["purchase_receipt"] = purchase_receipt
