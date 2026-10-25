@@ -94,17 +94,21 @@ class TestReceivingChecksPatch(unittest.TestCase):
 
 
 class TestRecordLists(unittest.TestCase):
+	@patch("frappe.get_all")
 	@patch("frappe.get_list", return_value=[])
 	@patch("frappe.get_meta")
 	@patch("frappe.db.table_exists", return_value=True)
 	@patch("frappe.has_permission", return_value=True)
-	def test_lists_read_the_doctype_with_the_users_permissions(self, _perm, table_exists, get_meta, get_list):
+	def test_lists_read_the_doctype_with_the_users_permissions(self, _perm, table_exists, get_meta, get_list, get_all):
 		get_meta.return_value.fields = [frappe._dict(fieldname=f) for f in ("record_date", "supplier", "batch_no")]
 
 		qh.get_qc_records("QC Receiving Record")
 
 		# Database.table_exists adds the "tab" prefix itself
 		table_exists.assert_called_once_with("QC Receiving Record")
+		# get_list applies the user's User Permissions; get_all would not
+		get_all.assert_not_called()
+		self.assertFalse(get_list.call_args.kwargs.get("ignore_permissions"))
 		self.assertEqual(get_list.call_args.args[0], "QC Receiving Record")
 		self.assertIn("supplier", get_list.call_args.kwargs["fields"])
 		self.assertIn("batch_no", get_list.call_args.kwargs["fields"])
@@ -116,11 +120,39 @@ class TestRecordLists(unittest.TestCase):
 			qh.get_qc_records("QC Receiving Record")
 		get_list.assert_not_called()
 
-	@patch("frappe.db.count", return_value=0)
+	@patch("frappe.db.count")
+	@patch("frappe.get_list")
 	@patch("frappe.db.table_exists", return_value=True)
-	def test_summary_and_matrix_check_the_doctype_not_the_table(self, table_exists, _count):
-		qh.get_qc_record_summary("2026-10-25")
-		qh.get_completion_matrix("2026-10-25")
+	@patch("frappe.has_permission")
+	def test_summary_and_matrix_count_what_the_user_may_read(self, perm, table_exists, get_list, count):
+		perm.side_effect = lambda doctype, ptype: doctype != "QC Tasting Record"
+		day = {
+			"QC Receiving Record": [
+				frappe._dict(shift="Morning", docstatus=1),
+				frappe._dict(shift="Morning", docstatus=0),
+				frappe._dict(shift="Night", docstatus=0),
+			],
+		}
+		get_list.side_effect = lambda doctype, **_kw: day.get(doctype, [])
+
+		summary = qh.get_qc_record_summary("2026-10-25")
+		matrix = qh.get_completion_matrix("2026-10-25")["matrix"]
+
+		self.assertEqual(
+			{k: summary["QCA"][k] for k in ("total", "submitted", "draft", "hidden")},
+			{"total": 3, "submitted": 1, "draft": 2, "hidden": False},
+		)
+		self.assertEqual((summary["QCF"]["total"], summary["QCF"]["hidden"]), (0, True))
+		self.assertEqual(
+			(matrix["Morning"]["QCA"], matrix["Night"]["QCA"], matrix["Afternoon"]["QCA"]),
+			("submitted", "draft", "not_started"),
+		)
+		self.assertEqual({matrix[s]["QCF"] for s in matrix}, {"hidden"})
+		# counted through get_list, which applies the user's User Permissions
+		count.assert_not_called()
+		for call in get_list.call_args_list:
+			self.assertEqual(call.kwargs["filters"], {"record_date": "2026-10-25"})
+		# Database.table_exists adds the "tab" prefix itself
 		for call in table_exists.call_args_list:
 			self.assertIn(call.args[0], QC_DOCTYPES.values())
 
@@ -132,7 +164,12 @@ class TestReceivingBatchPicker(unittest.TestCase):
 
 		query = " ".join(sql.call_args.args[0].split())
 		self.assertIn("pri.batch_no = b.name", query)
-		# v15 keeps a received batch in the row's Serial and Batch Bundle
-		self.assertIn("JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = pri.serial_and_batch_bundle", query)
+		# v15 keeps a received batch in the row's Serial and Batch Bundle, a
+		# rejected one in the row's rejected bundle
+		self.assertIn(
+			"JOIN `tabSerial and Batch Entry` sbe"
+			" ON sbe.parent IN (pri.serial_and_batch_bundle, pri.rejected_serial_and_batch_bundle)",
+			query,
+		)
 		self.assertIn("sbe.batch_no = b.name", query)
 		self.assertEqual(sql.call_args.args[1]["purchase_receipt"], "PR-1")

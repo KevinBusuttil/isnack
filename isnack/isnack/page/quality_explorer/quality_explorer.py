@@ -203,7 +203,13 @@ def _batch_scope(batch_no: str) -> tuple[dict, dict]:
 
 
 def _work_orders_named_on_records(batch_no: str) -> set[str]:
-	"""Work Orders that the batch's own QC records name."""
+	"""Work Orders that the batch's own QC records name.
+
+	Read raw, like the records themselves (``_read_records``): a Work Order
+	named only on a record a User Permission keeps from the user still brings
+	its other records into scope, where they are withheld rather than missing.
+	A doctype the user may not read at all is skipped.
+	"""
 	named = set()
 	for doctype in QC_DOCTYPES.values():
 		meta = frappe.get_meta(doctype)
@@ -212,11 +218,10 @@ def _work_orders_named_on_records(batch_no: str) -> set[str]:
 		if not frappe.has_permission(doctype, "read"):
 			continue
 		named.update(
-			frappe.get_list(
+			frappe.get_all(
 				doctype,
 				filters={"batch_no": batch_no, "docstatus": ["<", 2], "work_order": ["is", "set"]},
 				pluck="work_order",
-				limit_page_length=0,
 			)
 		)
 	return {wo for wo in named if wo}
@@ -521,15 +526,8 @@ def _trace_groups(
 ) -> list[dict]:
 	# a receiving record the user may not see still counts as on file
 	unseen_receiving = {r.get("batch_no") for r in withheld.get("QCA") or []}
-	by_work_order: dict[str, int] = {}
-	by_batch: dict[str, int] = {}
-	for code, rows in records.items():
-		for r in rows:
-			if r.get("work_order"):
-				by_work_order[r.work_order] = by_work_order.get(r.work_order, 0) + 1
-			if r.get("batch_no"):
-				key = (code, r.batch_no)
-				by_batch[key] = by_batch.get(key, 0) + 1
+	by_work_order, by_batch = _counts_by_link(records)
+	withheld_by_work_order, withheld_by_batch = _counts_by_link(withheld)
 
 	groups = []
 	wo_names = list(scope["work_order_roles"]) + [w for w in trace["runs"] if w not in scope["work_order_roles"]]
@@ -547,6 +545,7 @@ def _trace_groups(
 				node["tags"] = [REL_SEMI_FINISHED]
 				node["tag_detail"] = _("made {0} for {1}").format(run["item_code"], run["for_work_order"])
 			node["qc_count"] = by_work_order.get(wo, 0)
+			node["qc_withheld"] = withheld_by_work_order.get(wo, 0)
 			node["route"] = ["quality-explorer", "Work Order", wo]
 		groups.append(_trace_group("work_orders", nodes))
 
@@ -564,7 +563,8 @@ def _trace_groups(
 					extra=" · ".join(dict.fromkeys(x for x in (ing["item_code"], ing.get("item_name")) if x)),
 					tags=tags,
 					tag_detail=_("consumed by {0}").format(", ".join(ing["work_orders"])),
-					qc_count=sum(n for (_code, b), n in by_batch.items() if b == batch_no),
+					qc_count=_batch_count(by_batch, batch_no),
+					qc_withheld=_batch_count(withheld_by_batch, batch_no),
 				)
 			)
 		groups.append(_trace_group("ingredients", nodes, hint=trace["hint"]))
@@ -579,7 +579,8 @@ def _trace_groups(
 				tags=[REL_OUTPUT_BATCH],
 				qty=o["qty"],
 				uom=o["uom"],
-				qc_count=sum(n for (_code, b), n in by_batch.items() if b == o["batch_no"]),
+				qc_count=_batch_count(by_batch, o["batch_no"]),
+				qc_withheld=_batch_count(withheld_by_batch, o["batch_no"]),
 			)
 			for o in scope["outputs"]
 		]
@@ -587,7 +588,27 @@ def _trace_groups(
 	return groups
 
 
-def _batch_node(batch_no: str, extra=None, tags=None, tag_detail=None, qty=None, uom=None, qc_count=0) -> dict:
+def _counts_by_link(records: dict[str, list]) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+	"""``({work_order: n}, {(code, batch_no): n})`` over the rows of ``records``."""
+	by_work_order: dict[str, int] = {}
+	by_batch: dict[tuple[str, str], int] = {}
+	for code, rows in records.items():
+		for r in rows:
+			if r.get("work_order"):
+				by_work_order[r.work_order] = by_work_order.get(r.work_order, 0) + 1
+			if r.get("batch_no"):
+				key = (code, r.batch_no)
+				by_batch[key] = by_batch.get(key, 0) + 1
+	return by_work_order, by_batch
+
+
+def _batch_count(by_batch: dict[tuple[str, str], int], batch_no: str) -> int:
+	return sum(n for (_code, b), n in by_batch.items() if b == batch_no)
+
+
+def _batch_node(
+	batch_no: str, extra=None, tags=None, tag_detail=None, qty=None, uom=None, qc_count=0, qc_withheld=0
+) -> dict:
 	return {
 		"doctype": "Batch",
 		"name": batch_no,
@@ -602,6 +623,7 @@ def _batch_node(batch_no: str, extra=None, tags=None, tag_detail=None, qty=None,
 		"tags": tags or [],
 		"tag_detail": tag_detail,
 		"qc_count": qc_count,
+		"qc_withheld": qc_withheld,
 		"route": ["quality-explorer", "Batch", batch_no],
 	}
 

@@ -1214,6 +1214,7 @@ isnack.quality_hub.QualityHub = class {
             submitted: '<span class="qh-matrix-cell qh-matrix-submitted">✅</span>',
             draft: '<span class="qh-matrix-cell qh-matrix-draft">🟡</span>',
             not_started: '<span class="qh-matrix-cell qh-matrix-not-started">—</span>',
+            hidden: `<span class="qh-matrix-cell qh-matrix-not-started" title="${__("You may not read these records")}">·</span>`,
         };
 
         const shift_cls = {
@@ -1301,10 +1302,14 @@ isnack.quality_hub.QualityHub = class {
             const submitted = data.submitted || 0;
             const total = data.total || 0;
             const cls = submitted > 0 ? "qh-card-success" : total > 0 ? "qh-card-warn" : "";
+            // a record type the user may not read has no counts to show
+            const value = data.hidden
+                ? `<span title="${__("You may not read these records")}">—</span>`
+                : `${submitted}<span class="qh-card-total">/${total}</span>`;
             return `
                 <div class="qh-card ${cls}">
                     <div class="qh-card-label">${label_map[code] || code}</div>
-                    <div class="qh-card-value">${submitted}<span class="qh-card-total">/${total}</span></div>
+                    <div class="qh-card-value">${value}</div>
                 </div>`;
         }).join("");
 

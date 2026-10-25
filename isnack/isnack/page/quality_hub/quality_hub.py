@@ -130,29 +130,41 @@ QC_DIALOG_CONFIG = {
 }
 
 
+def _day_records(doctype, date):
+    """The user's records of ``doctype`` for ``date``, as ``(shift, docstatus)`` rows.
+
+    ``None`` when the user may not read the doctype. Read with get_list, so the
+    counts built on it agree with the record lists the user can open.
+    """
+    if not frappe.has_permission(doctype, "read"):
+        return None
+    if not frappe.db.table_exists(doctype):
+        return []
+    return frappe.get_list(
+        doctype,
+        filters={"record_date": date},
+        fields=["shift", "docstatus"],
+        limit_page_length=0,
+    )
+
+
 @frappe.whitelist()
 def get_qc_record_summary(date=None):
-    """Return counts of QC records per DocType for the given date, grouped by status."""
+    """Return counts of QC records per DocType for the given date, grouped by status.
+
+    A DocType the user may not read comes back with ``hidden`` set and no counts.
+    """
     target_date = date or today()
     result = {}
 
     for code, doctype in QC_DOCTYPES.items():
-        if not frappe.db.table_exists(doctype):
-            result[code] = {"total": 0, "submitted": 0, "draft": 0}
-            continue
-
-        total = frappe.db.count(doctype, filters={"record_date": target_date})
-        submitted = frappe.db.count(
-            doctype, filters={"record_date": target_date, "docstatus": 1}
-        )
-        draft = frappe.db.count(
-            doctype, filters={"record_date": target_date, "docstatus": 0}
-        )
+        rows = _day_records(doctype, target_date)
         result[code] = {
             "doctype": doctype,
-            "total": total,
-            "submitted": submitted,
-            "draft": draft,
+            "total": len(rows or []),
+            "submitted": sum(1 for r in rows or [] if r.docstatus == 1),
+            "draft": sum(1 for r in rows or [] if r.docstatus == 0),
+            "hidden": rows is None,
         }
 
     return result
@@ -160,31 +172,28 @@ def get_qc_record_summary(date=None):
 
 @frappe.whitelist()
 def get_completion_matrix(date=None):
-    """Return a shift × doctype matrix showing completion status for the given date."""
+    """Return a shift × doctype matrix showing completion status for the given date.
+
+    Cells are ``submitted``, ``draft``, ``not_started``, or ``hidden`` for a
+    DocType the user may not read.
+    """
     target_date = date or today()
     shifts = ["Morning", "Afternoon", "Night"]
-    matrix = {}
+    matrix = {shift: {} for shift in shifts}
 
-    for shift in shifts:
-        matrix[shift] = {}
-        for code, doctype in QC_DOCTYPES.items():
-            if not frappe.db.table_exists(doctype):
-                matrix[shift][code] = "not_started"
+    for code, doctype in QC_DOCTYPES.items():
+        rows = _day_records(doctype, target_date)
+        for shift in shifts:
+            if rows is None:
+                matrix[shift][code] = "hidden"
                 continue
-
-            submitted = frappe.db.count(
-                doctype,
-                filters={"record_date": target_date, "shift": shift, "docstatus": 1},
-            )
-            if submitted:
+            statuses = {r.docstatus for r in rows if r.shift == shift}
+            if 1 in statuses:
                 matrix[shift][code] = "submitted"
-                continue
-
-            draft = frappe.db.count(
-                doctype,
-                filters={"record_date": target_date, "shift": shift, "docstatus": 0},
-            )
-            matrix[shift][code] = "draft" if draft else "not_started"
+            elif 0 in statuses:
+                matrix[shift][code] = "draft"
+            else:
+                matrix[shift][code] = "not_started"
 
     return {"matrix": matrix, "date": target_date, "doctypes": QC_DOCTYPES}
 
@@ -380,7 +389,8 @@ def get_batches_for_receiving(doctype, txt, searchfield, start, page_len, filter
 
     if purchase_receipt:
         # the batch is on the receipt row itself, or (v15's default) in the
-        # row's Serial and Batch Bundle
+        # row's Serial and Batch Bundle, or in its rejected bundle when the
+        # goods were rejected at receipt
         conditions.append(
             "("
             "EXISTS ("
@@ -391,7 +401,7 @@ def get_batches_for_receiving(doctype, txt, searchfield, start, page_len, filter
             " OR EXISTS ("
             "SELECT 1 FROM `tabPurchase Receipt Item` pri"
             " JOIN `tabSerial and Batch Entry` sbe"
-            " ON sbe.parent = pri.serial_and_batch_bundle"
+            " ON sbe.parent IN (pri.serial_and_batch_bundle, pri.rejected_serial_and_batch_bundle)"
             " WHERE pri.parent = %(purchase_receipt)s"
             " AND sbe.batch_no = b.name"
             ")"

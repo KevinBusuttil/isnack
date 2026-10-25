@@ -53,11 +53,11 @@ An ingredient batch with no receiving record gets a **No receiving record** tag:
 
 The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs read on that batch; exploring a Work Order needs read on that Work Order. Both are checked on the document, so User Permissions apply to a direct call or a shared link too, not only to the pickers.
 
-A record type the user may not read shows as "—" in the coverage strip and is named under the summary. Within a type, records a User Permission keeps from the user (on a line, an item, a supplier) are not shown but are counted: the summary says how many are hidden, a type whose only records are hidden reads "—" rather than "No record", and an ingredient whose receiving record is hidden is not flagged **No receiving record**. Nothing on the page claims a record is missing when the user simply may not see it.
+A record type the user may not read shows as "—" in the coverage strip and is named under the summary. Within a type, records a User Permission keeps from the user (on a line, an item, a supplier) are not shown but are counted: the summary says how many are hidden, a type whose only records are hidden reads "—" rather than "No record", a Work Order or batch in the trace groups says "+N hidden" next to its record count, and an ingredient whose receiving record is hidden is not flagged **No receiving record**. A Work Order that only a hidden record names still has its other records looked up. Nothing on the page claims a record is missing when the user simply may not see it.
 
 Tracing ingredients needs Stock Entry read, as on the Batch Explorer; without it the records of the batch and its Work Orders are still listed and the page says the ingredients were not traced. When some of a Work Order's Stock Entries are hidden by permissions, the page says the ingredients may be incomplete.
 
-The page keeps the URL on the subject shown (`/app/quality-explorer/Batch/<batch>`), so Back, refresh and a shared link open the same dossier.
+The URL always names the subject on screen (`/app/quality-explorer/Batch/<batch>`), so Back, refresh and a shared link open the same dossier, and Back to the bare `/app/quality-explorer` empties the page. A link that spells a name in another case (`fg10005-001` for `FG10005-001`) opens the batch and takes its stored name, without adding a step to Back.
 
 ## Files
 
