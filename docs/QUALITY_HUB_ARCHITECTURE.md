@@ -704,7 +704,7 @@ If a DocType's database table does not yet exist, the entry is `{ "total": 0, "s
 - `filters` — JSON string or dict of filter conditions (optional)  
 - `limit` — integer row cap (default 20, UI passes 50)
 
-**Purpose:** Generic record fetcher used by every record-list tab. Returns the base common fields plus `supplier`, `item_code`, `batch_no`, `overall_status` and `modified`, with fields not present on the specific DocType silently dropped. Requires read permission on the DocType and reads with `frappe.get_list`, so the user's User Permissions apply.
+**Purpose:** Generic record fetcher used by every record-list tab. Returns the base common fields plus `supplier`, `item_code`, `batch_no`, `overall_status` and `modified`, with fields not present on the specific DocType silently dropped. Requires read permission on the DocType and reads with `frappe.get_list`, so the user's User Permissions apply. `get_qc_record_summary` and `get_completion_matrix` count the same way: a DocType the user may not read comes back `hidden` (a "—" card, a "·" matrix cell) instead of with counts.
 
 **Note:** `frappe.db.table_exists()` takes the DocType name and adds the `tab` prefix itself. `get_qc_records`, `get_qc_record_summary` and `get_completion_matrix` used to pass `tab<DocType>`, which never matched, so every list, summary card and matrix cell came back empty; fixed 2026-10.
 

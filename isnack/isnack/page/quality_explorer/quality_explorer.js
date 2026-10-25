@@ -10,12 +10,15 @@ frappe.pages["quality-explorer"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["quality-explorer"].on_page_show = function (wrapper) {
-	// Deep links: /app/quality-explorer/Batch/<batch-id>
-	//             /app/quality-explorer/Work Order/<work-order>
-	const route = frappe.get_route();
-	if (route && route.length > 2 && wrapper.quality_explorer) {
-		wrapper.quality_explorer.load_from_route(route[1], route.slice(2).join("/"));
-	}
+	// The URL names the subject on screen:
+	//   /app/quality-explorer/Batch/<batch-id>
+	//   /app/quality-explorer/Work Order/<work-order>
+	// and the bare /app/quality-explorer (Back past the first pick) names none.
+	const explorer = wrapper.quality_explorer;
+	if (!explorer) return;
+	const route = frappe.get_route() || [];
+	if (route.length > 2) explorer.load_from_route(route[1], route.slice(2).join("/"));
+	else explorer.clear();
 };
 
 const QE_METHOD = "isnack.isnack.page.quality_explorer.quality_explorer";
@@ -29,6 +32,11 @@ isnack.QualityExplorer = class QualityExplorer {
 		this.current_key = null;
 		this.filter_text = "";
 		this.loading = false;
+		// bumped by every load, so only the latest response lands
+		this.seq = 0;
+		// pickers being set to follow the URL: their changes are not picks
+		this.syncing = 0;
+		this.reload_key = null;
 		this.make();
 	}
 
@@ -93,27 +101,31 @@ isnack.QualityExplorer = class QualityExplorer {
 		};
 	}
 
-	/** One subject at a time: picking a batch empties the Work Order and the
-	 *  other way round. Emptying a field fires its change too, which stops at
-	 *  the empty value. */
+	/** A pick by the user. One subject at a time: the other picker is emptied
+	 *  (as the URL now names this one). Changes the pickers fire while they are
+	 *  set to follow the URL are not picks: a Link validates on the server and
+	 *  reports a change when that returns, maybe after the user moved on. */
 	on_pick(kind) {
+		if (this.syncing) return;
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
-		const other = kind === "Batch" ? this.work_order_field : this.batch_field;
 		const value = field.get_value();
 		if (!value) return;
-		if (other.get_value()) other.set_value("");
-		// a picker fires change again when it loses focus: that subject is shown already
-		if (this.is_current(kind, value)) return;
 		this.open(kind, value);
 	}
 
 	/** Explore by way of the URL, so the address bar, Back and a refresh always
-	 *  name the subject on screen: on_page_show explores it. ``reload`` explores
-	 *  again when the URL names it already (the Explore button). */
+	 *  name the subject on screen: on_page_show explores it. When the URL names
+	 *  it already no route change comes, so explore here, unless it is on screen
+	 *  (a picker's second change on blur). ``reload`` explores it again anyway
+	 *  (the Explore button). */
 	open(kind, name, reload = false) {
 		const route = ["quality-explorer", kind, name];
-		if (frappe.get_route_str() !== route.join("/")) frappe.set_route(...route);
-		else if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+		if (frappe.get_route_str() === route.join("/")) {
+			if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+			return;
+		}
+		if (reload) this.reload_key = `${kind}/${name}`;
+		frappe.set_route(...route);
 	}
 
 	/** The subject is on screen or on its way; after an error it is neither. */
@@ -135,19 +147,66 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	load_from_route(kind, name) {
 		if (!["Batch", "Work Order"].includes(kind) || !name) return;
-		if (this.is_current(kind, name)) return;
-		// explore first: the change the pickers fire then finds the subject current
-		this.explore(kind, name);
-		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
-		const other = kind === "Batch" ? this.work_order_field : this.batch_field;
-		if (field.get_value() !== name) field.set_value(name);
-		if (other.get_value()) other.set_value("");
+		const reload = this.reload_key === `${kind}/${name}`;
+		this.reload_key = null;
+		if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+		this.sync_pickers();
+	}
+
+	/** Back to the bare page: no subject in the URL, so none on screen. */
+	clear() {
+		this.seq += 1;
+		this.current_key = null;
+		this.loading = false;
+		this.reload_key = null;
+		this.show_empty(__("Select a batch or a work order to see its quality records."));
+		this.sync_pickers();
+	}
+
+	/** Set the pickers to the subject in the URL without that counting as a
+	 *  pick. A set_value can be swallowed while an earlier one is still being
+	 *  validated, so when the subject moved on meanwhile, follow it again. */
+	sync_pickers() {
+		const key = this.current_key || "";
+		const cut = key.indexOf("/");
+		const want = { Batch: "", "Work Order": "" };
+		if (cut > 0) want[key.slice(0, cut)] = key.slice(cut + 1);
+		const pickers = { Batch: this.batch_field, "Work Order": this.work_order_field };
+		Object.entries(pickers).forEach(([kind, field]) => {
+			// the server answers with the name as stored: FG10005-001 for fg10005-001
+			if (this.same_name(field.get_value(), want[kind])) return;
+			this.syncing += 1;
+			Promise.resolve(field.set_value(want[kind])).finally(() => {
+				this.syncing -= 1;
+				if ((this.current_key || "") !== key) this.sync_pickers();
+			});
+		});
+	}
+
+	/** Names as the database compares them: case and trailing spaces ignored. */
+	same_name(a, b) {
+		return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+	}
+
+	/** Take the subject's name as stored when the URL spelled it otherwise
+	 *  (case, spaces): replace the URL, so Back does not land on the same
+	 *  subject again. */
+	adopt_name(kind, asked, stored) {
+		// only ever a different spelling of the same name, never another subject
+		if (!stored || stored === asked || !this.same_name(stored, asked)) return;
+		this.current_key = `${kind}/${stored}`;
+		if (frappe.get_route_str() === ["quality-explorer", kind, asked].join("/")) {
+			frappe.route_flags.replace_route = true;
+			frappe.set_route("quality-explorer", kind, stored);
+		}
 	}
 
 	explore(kind, name) {
 		const key = `${kind}/${name}`;
 		if (key === this.current_key && this.loading) return;
+		const seq = (this.seq += 1);
 		this.current_key = key;
+		this.data = null;
 		this.loading = true;
 		this.set_tree_buttons(false);
 		this.$summary.empty();
@@ -162,15 +221,16 @@ isnack.QualityExplorer = class QualityExplorer {
 			args: kind === "Batch" ? { batch_no: name } : { work_order: name },
 			callback: (r) => {
 				// the user moved on while this one was loading
-				if (key !== this.current_key || !r || !r.message) return;
+				if (seq !== this.seq || !r || !r.message) return;
 				this.data = r.message;
+				this.adopt_name(kind, name, r.message.subject && r.message.subject.name);
 				this.render();
 			},
 			error: () => {
-				if (key === this.current_key) this.show_empty(__("Could not load quality records."));
+				if (seq === this.seq) this.show_empty(__("Could not load quality records."));
 			},
 			always: () => {
-				if (key === this.current_key) this.loading = false;
+				if (seq === this.seq) this.loading = false;
 			},
 		});
 	}
@@ -463,9 +523,14 @@ isnack.QualityExplorer = class QualityExplorer {
 			? `<span class="qe-qty">${format_number(node.qty)}${node.uom ? `<small>${esc(node.uom)}</small>` : ""}</span>`
 			: "";
 		const n = node.qc_count || 0;
-		const count = `<span class="qe-qc-count ${n ? "" : "qe-qc-count-none"}">${
+		const withheld = node.qc_withheld || 0;
+		// records the user may not see are there all the same: never a bare "0"
+		const hidden_note = withheld
+			? ` <small title="${__("Hidden by your permissions")}">+${__("{0} hidden", [withheld])}</small>`
+			: "";
+		const count = `<span class="qe-qc-count ${n || withheld ? "" : "qe-qc-count-none"}">${
 			n === 1 ? __("1 QC record") : __("{0} QC records", [n])
-		}</span>`;
+		}${hidden_note}</span>`;
 
 		const $leaf = $(`
 			<div class="qe-leaf" style="--qe-color:${group.color}">

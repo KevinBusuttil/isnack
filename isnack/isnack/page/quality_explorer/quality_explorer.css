@@ -471,6 +471,9 @@
 	color: var(--text-color);
 	white-space: nowrap;
 }
+.qe-qc-count small {
+	color: var(--text-muted);
+}
 .qe-qc-count.qe-qc-count-none {
 	color: var(--text-muted);
 }

@@ -257,6 +257,27 @@ class TestReadRecords(unittest.TestCase):
 		permitted.assert_any_call("QC Receiving Record", ["QCA-1", "QCA-2"])
 
 
+class TestNamedWorkOrders(unittest.TestCase):
+	@patch("frappe.get_list")
+	@patch("frappe.get_all")
+	@patch("frappe.get_meta", side_effect=_meta)
+	@patch("frappe.has_permission")
+	def test_read_raw_from_the_doctypes_the_user_may_read(self, perm, _get_meta, get_all, get_list):
+		perm.side_effect = lambda doctype, ptype: doctype != "QC Tasting Record"
+		# the weight check naming WO-7 may be withheld from the user; WO-7 still counts
+		get_all.side_effect = lambda doctype, **_kw: ["WO-7", None] if doctype == "QC Weight Check" else []
+
+		named = qe._work_orders_named_on_records("FG-1")
+
+		self.assertEqual(named, {"WO-7"})
+		get_list.assert_not_called()
+		self.assertEqual([c.args[0] for c in get_all.call_args_list], ["QC Weight Check"])
+		self.assertEqual(
+			get_all.call_args.kwargs["filters"],
+			{"batch_no": "FG-1", "docstatus": ["<", 2], "work_order": ["is", "set"]},
+		)
+
+
 class TestScopes(unittest.TestCase):
 	@patch.object(qe, "_work_orders_named_on_records", return_value={"WO-NAMED", "WO-P"})
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._batch_roles")
@@ -379,7 +400,7 @@ class TestGetQualityRecords(unittest.TestCase):
 		self.assertEqual(sorted(trace_groups), ["ingredients", "work_orders"])
 		wo_nodes = {n["name"]: n for n in trace_groups["work_orders"]["nodes"]}
 		self.assertEqual(wo_nodes["WO-1"]["tags"], [qe.WO_PRODUCED])
-		self.assertEqual(wo_nodes["WO-1"]["qc_count"], 2)
+		self.assertEqual((wo_nodes["WO-1"]["qc_count"], wo_nodes["WO-1"]["qc_withheld"]), (2, 0))
 		self.assertEqual(wo_nodes["WO-S"]["tags"], [qe.REL_SEMI_FINISHED])
 		ing = {n["name"]: n for n in trace_groups["ingredients"]["nodes"]}
 		self.assertEqual(ing["RM-B1"]["tags"], [qe.REL_INGREDIENT])
@@ -400,32 +421,48 @@ class TestGetQualityRecords(unittest.TestCase):
 		self.assertEqual(out["summary"]["hidden"], ["QCF"])
 		self.assertEqual(out["summary"]["withheld"], 0)
 
-	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes", return_value=[])
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes")
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._user_names", return_value={})
 	@patch.object(qe, "_read_records")
 	@patch.object(qe, "_ingredient_trace")
 	@patch.object(qe, "_batch_scope")
-	def test_withheld_records_never_read_as_missing(self, scope, trace, read, _names, _build_nodes):
+	def test_withheld_records_never_read_as_missing(self, scope, trace, read, _names, build_nodes):
 		scope.return_value = (
 			{"kind": "Batch", "name": "FG-1"},
-			{"batches": {"FG-1": qe.REL_THIS_BATCH}, "work_orders": {}, "work_order_roles": {}, "outputs": []},
+			{
+				"batches": {"FG-1": qe.REL_THIS_BATCH},
+				"work_orders": {"WO-7": qe.REL_WORK_ORDER},
+				"work_order_roles": {"WO-7": qe.WO_NAMED},
+				"outputs": [],
+			},
 		)
 		trace.return_value = {
-			"batches": {"RM-B1": {"item_code": "RM1", "item_name": "Corn", "work_orders": ["WO-1"]}},
+			"batches": {"RM-B1": {"item_code": "RM1", "item_name": "Corn", "work_orders": ["WO-7"]}},
 			"runs": {},
 			"hint": None,
 		}
-		# the corn's receiving record exists, but a User Permission keeps it from this user
-		read.return_value = ({"QCA": [], "QCI": []}, [], {"QCA": [_rec("QCA-9", batch_no="RM-B1")], "QCI": []})
+		# the corn's receiving record and WO-7's frying record exist, but a User
+		# Permission keeps both from this user
+		read.return_value = (
+			{"QCA": [], "QCD": [], "QCI": []},
+			[],
+			{"QCA": [_rec("QCA-9", batch_no="RM-B1")], "QCD": [_rec("QCD-4", work_order="WO-7")], "QCI": []},
+		)
+		build_nodes.side_effect = lambda _dt, names: [{"name": n, "status": "In Process"} for n in names]
 
 		out = qe.get_quality_records(batch_no="FG-1")
 
+		wo = next(g for g in out["groups"] if g["key"] == "work_orders")["nodes"][0]
+		self.assertEqual((wo["name"], wo["qc_count"], wo["qc_withheld"]), ("WO-7", 0, 1))
+
 		ing = next(g for g in out["groups"] if g["key"] == "ingredients")["nodes"][0]
 		self.assertEqual(ing["tags"], [qe.REL_INGREDIENT])
+		self.assertEqual((ing["qc_count"], ing["qc_withheld"]), (0, 1))
 		coverage = {c["code"]: c for c in out["coverage"]}
 		self.assertEqual((coverage["QCA"]["state"], coverage["QCA"]["withheld"]), ("hidden", 1))
+		self.assertEqual((coverage["QCD"]["state"], coverage["QCD"]["withheld"]), ("hidden", 1))
 		self.assertEqual(coverage["QCI"]["state"], "missing")
-		self.assertEqual(out["summary"]["withheld"], 1)
+		self.assertEqual(out["summary"]["withheld"], 2)
 
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes", return_value=[])
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._user_names", return_value={})
