@@ -276,13 +276,13 @@ def create_qc_record(doctype, payload=None, submit=False):
             frappe.throw(f"{frappe.bold(child_fieldname)} must be a list of rows.")
 
     allowed_parent_fields = {
-        df.fieldname for df in meta.fields if df.fieldtype != "Table" and df.fieldname
+        df.fieldname: df.fieldtype for df in meta.fields if df.fieldtype != "Table" and df.fieldname
     }
-    allowed_parent_fields.add("doctype")
+    allowed_parent_fields["doctype"] = "Data"
 
     doc_data = {"doctype": doctype}
     for fieldname, value in data.items():
-        if fieldname in allowed_parent_fields:
+        if fieldname in allowed_parent_fields and _keep_value(allowed_parent_fields[fieldname], value):
             doc_data[fieldname] = value
 
     if not doc_data.get("status") and not cint(submit):
@@ -293,7 +293,9 @@ def create_qc_record(doctype, payload=None, submit=False):
     if child_fieldname:
         child_meta = frappe.get_meta(child_doctype)
         allowed_child_fields = {
-            df.fieldname for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
+            df.fieldname: df.fieldtype
+            for df in child_meta.fields
+            if df.fieldtype != "Table" and df.fieldname
         }
 
         appended_rows = 0
@@ -304,7 +306,7 @@ def create_qc_record(doctype, payload=None, submit=False):
             clean_row = {
                 fieldname: value
                 for fieldname, value in row.items()
-                if fieldname in allowed_child_fields
+                if fieldname in allowed_child_fields and _keep_value(allowed_child_fields[fieldname], value)
             }
             if _is_non_empty_row(clean_row):
                 doc.append(child_fieldname, clean_row)
@@ -326,6 +328,18 @@ def create_qc_record(doctype, payload=None, submit=False):
         "shift": getattr(doc, "shift", None),
         "overall_status": getattr(doc, "overall_status", None),
     }
+
+
+def _is_blank(value):
+    return value in (None, "", [])
+
+
+def _keep_value(fieldtype, value):
+    """A field the dialog left blank arrives as "": leave it unset, as the desk
+    form would, rather than hand the controllers a string where they expect a
+    number (sum() over a reading column). A blank Select stays blank: unset,
+    Frappe would fill in its first option, which nobody picked."""
+    return not _is_blank(value) or (fieldtype == "Select" and value == "")
 
 
 def _is_non_empty_row(row):

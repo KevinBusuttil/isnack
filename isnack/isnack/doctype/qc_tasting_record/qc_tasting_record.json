@@ -113,19 +113,22 @@
    "fieldname": "avg_overall",
    "fieldtype": "Float",
    "label": "Avg Overall Score",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Average of the tasters' overall scores, in stars."
   },
   {
    "fieldname": "min_score",
    "fieldtype": "Float",
    "label": "Min Score",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Lowest overall score, in stars."
   },
   {
    "fieldname": "pass_threshold",
    "fieldtype": "Float",
    "label": "Pass Threshold",
-   "default": "3.0"
+   "default": "3.0",
+   "description": "Stars the average overall score needs to pass (3.0 is 3 stars of 5)."
   },
   {
    "fieldname": "overall_status",
@@ -138,7 +141,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-25 10:00:00.000000",
+ "modified": "2026-10-25 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Tasting Record",
