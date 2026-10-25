@@ -28,8 +28,9 @@ record reached by two routes names both.
 
 Permissions
 -----------
-A Batch needs Batch read and a Work Order read on that Work Order, as on the
-Batch Explorer, whose raw reads resolve the Work Orders and batches. A QC
+A Batch needs read on that Batch and a Work Order read on that Work Order,
+document-level so User Permissions apply; the Batch Explorer's raw reads then
+resolve the Work Orders and batches. A QC
 doctype the user may not read is left out and its code listed in
 ``summary.hidden``. Within a doctype, records are filtered the way the Batch
 Explorer filters its production inputs: read raw, then kept only when
@@ -182,6 +183,9 @@ def _batch_scope(batch_no: str) -> tuple[dict, dict]:
 		raise frappe.PermissionError(_("Not permitted to read Batch."))
 
 	batch = be._load_batch(batch_no)
+	# the picker applies User Permissions, a direct call or a shared link does not
+	if not frappe.has_permission("Batch", "read", doc=batch.name):
+		raise frappe.PermissionError(_("Not permitted to read Batch {0}.").format(batch.name))
 	se_info = be._stock_entry_info(be._direct_vouchers(batch.name))
 	roles = be._batch_roles(batch.name, batch.item, se_info)
 

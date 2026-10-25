@@ -51,7 +51,7 @@ An ingredient batch with no receiving record gets a **No receiving record** tag:
 
 ## Permissions
 
-The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs Batch read; exploring a Work Order needs read on that Work Order.
+The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs read on that batch; exploring a Work Order needs read on that Work Order. Both are checked on the document, so User Permissions apply to a direct call or a shared link too, not only to the pickers.
 
 A record type the user may not read shows as "—" in the coverage strip and is named under the summary. Within a type, records a User Permission keeps from the user (on a line, an item, a supplier) are not shown but are counted: the summary says how many are hidden, a type whose only records are hidden reads "—" rather than "No record", and an ingredient whose receiving record is hidden is not flagged **No receiving record**. Nothing on the page claims a record is missing when the user simply may not see it.
 

@@ -281,6 +281,19 @@ class TestScopes(unittest.TestCase):
 		with self.assertRaises(frappe.PermissionError):
 			qe._batch_scope("FG-1")
 
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._direct_vouchers")
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._load_batch")
+	@patch("frappe.has_permission")
+	def test_batch_scope_needs_read_on_that_batch(self, perm, load, direct):
+		# Batch read in general, but a User Permission keeps this batch from the user
+		perm.side_effect = lambda doctype, ptype, doc=None: doc is None
+		load.return_value = frappe._dict(name="FG-1", item="FG10005")
+
+		with self.assertRaises(frappe.PermissionError):
+			qe._batch_scope("FG-1")
+		perm.assert_any_call("Batch", "read", doc="FG-1")
+		direct.assert_not_called()
+
 	@patch("isnack.utils.batch_lineage.fg_batch_quantities_by_work_order")
 	@patch("frappe.db.get_value")
 	@patch("frappe.get_meta", return_value=_Meta({"custom_factory_line"}))
