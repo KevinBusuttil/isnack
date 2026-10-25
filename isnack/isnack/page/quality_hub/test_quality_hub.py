@@ -6,7 +6,7 @@
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from isnack.isnack.page.quality_hub import quality_hub as qh
@@ -58,6 +58,17 @@ class TestReceivingRecordSchema(unittest.TestCase):
 
 	def test_field_order_matches_fields(self):
 		self.assertEqual(self.doc["field_order"], [f["fieldname"] for f in self.doc["fields"]])
+
+
+class TestOverallStatusStartsBlank(unittest.TestCase):
+	def test_a_new_record_has_no_result_until_someone_sets_one(self):
+		# a Select without a blank first option defaults to that option, so a
+		# fresh draft read "Pass" (or "Accepted") before anyone judged it
+		for code, doctype in QC_DOCTYPES.items():
+			field = _fields(_doctype(doctype)).get("overall_status")
+			if not field or doctype == "QC Tasting Record":  # set by validate() on every save
+				continue
+			self.assertTrue(field["options"].startswith("\n"), doctype)
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
@@ -120,11 +131,12 @@ class TestRecordLists(unittest.TestCase):
 			qh.get_qc_records("QC Receiving Record")
 		get_list.assert_not_called()
 
+	@patch("frappe.get_all")
 	@patch("frappe.db.count")
 	@patch("frappe.get_list")
 	@patch("frappe.db.table_exists", return_value=True)
 	@patch("frappe.has_permission")
-	def test_summary_and_matrix_count_what_the_user_may_read(self, perm, table_exists, get_list, count):
+	def test_summary_and_matrix_count_what_the_user_may_read(self, perm, table_exists, get_list, count, get_all):
 		perm.side_effect = lambda doctype, ptype: doctype != "QC Tasting Record"
 		day = {
 			"QC Receiving Record": [
@@ -150,8 +162,10 @@ class TestRecordLists(unittest.TestCase):
 		self.assertEqual({matrix[s]["QCF"] for s in matrix}, {"hidden"})
 		# counted through get_list, which applies the user's User Permissions
 		count.assert_not_called()
+		get_all.assert_not_called()
 		for call in get_list.call_args_list:
 			self.assertEqual(call.kwargs["filters"], {"record_date": "2026-10-25"})
+			self.assertFalse(call.kwargs.get("ignore_permissions"))
 		# Database.table_exists adds the "tab" prefix itself
 		for call in table_exists.call_args_list:
 			self.assertIn(call.args[0], QC_DOCTYPES.values())
@@ -173,3 +187,45 @@ class TestReceivingBatchPicker(unittest.TestCase):
 		)
 		self.assertIn("sbe.batch_no = b.name", query)
 		self.assertEqual(sql.call_args.args[1]["purchase_receipt"], "PR-1")
+
+
+class TestCreateRecordFromDialog(unittest.TestCase):
+	@staticmethod
+	def _meta(fieldnames):
+		meta = MagicMock()
+		meta.fields = [frappe._dict(fieldname=f, fieldtype="Float") for f in fieldnames]
+		meta.get_label.return_value = "Readings"
+		return meta
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_blank_cells_are_left_unset(self, get_meta, get_doc):
+		get_meta.side_effect = lambda doctype: (
+			self._meta(["record_date", "shift", "work_order", "overall_status"])
+			if doctype == "QC Puffs Extruder Record"
+			else self._meta(["time_slot", "moisture_content", "product_density"])
+		)
+		doc = MagicMock(docstatus=0)
+		get_doc.return_value = doc
+
+		qh.create_qc_record(
+			"QC Puffs Extruder Record",
+			payload={
+				"record_date": "2026-10-25",
+				"shift": "Night",
+				"work_order": "",
+				"overall_status": "",
+				"readings": [
+					{"time_slot": "22:00", "moisture_content": 12.1, "product_density": ""},
+					{"time_slot": "", "moisture_content": "", "product_density": ""},
+				],
+			},
+		)
+
+		# the controllers average reading columns: "" would be summed with numbers
+		self.assertEqual(
+			get_doc.call_args.args[0],
+			{"doctype": "QC Puffs Extruder Record", "record_date": "2026-10-25", "shift": "Night", "status": "Draft"},
+		)
+		doc.append.assert_called_once_with("readings", {"time_slot": "22:00", "moisture_content": 12.1})
+		doc.insert.assert_called_once()

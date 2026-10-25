@@ -199,14 +199,14 @@
    "fieldname": "overall_status",
    "fieldtype": "Select",
    "label": "Overall Status",
-   "options": "Accepted\nConditionally Accepted\nRejected"
+   "options": "\nAccepted\nConditionally Accepted\nRejected"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-25 17:30:00.000000",
+ "modified": "2026-10-25 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Receiving Record",

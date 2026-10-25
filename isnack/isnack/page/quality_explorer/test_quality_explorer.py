@@ -486,5 +486,30 @@ class TestGetQualityRecords(unittest.TestCase):
 		self.assertEqual([g["key"] for g in out["groups"]], ["outputs"])
 		node = out["groups"][0]["nodes"][0]
 		self.assertEqual((node["name"], node["qty"], node["route"]), ("FG-1", 40.0, ["quality-explorer", "Batch", "FG-1"]))
+		self.assertEqual((node["qc_count"], node["qc_withheld"]), (0, 0))
 		self.assertEqual(out["summary"]["work_orders"], 0)
 		self.assertTrue(all(c["state"] == "missing" for c in out["coverage"]))
+
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes", return_value=[])
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._user_names", return_value={})
+	@patch.object(qe, "_read_records")
+	@patch.object(qe, "_ingredient_trace", return_value=EMPTY_TRACE)
+	@patch.object(qe, "_work_order_scope")
+	def test_a_produced_batch_whose_records_are_hidden_says_so(self, scope, _trace, read, _names, _build):
+		scope.return_value = (
+			{"kind": "Work Order", "name": "WO-1", "item": "FG1"},
+			{
+				"batches": {"FG-1": qe.REL_OUTPUT_BATCH},
+				"work_orders": {"WO-1": qe.REL_THIS_WORK_ORDER},
+				"work_order_roles": {"WO-1": qe.WO_SUBJECT},
+				"outputs": [{"batch_no": "FG-1", "qty": 40.0, "uom": "Carton"}],
+			},
+		)
+		# the weight check of FG-1 exists, but a User Permission keeps it from this user
+		read.return_value = ({"QCI": []}, [], {"QCI": [_rec("QCI-7", batch_no="FG-1")]})
+
+		out = qe.get_quality_records(work_order="WO-1")
+
+		node = next(g for g in out["groups"] if g["key"] == "outputs")["nodes"][0]
+		self.assertEqual((node["qc_count"], node["qc_withheld"]), (0, 1))
+		self.assertEqual({c["code"]: c["state"] for c in out["coverage"]}["QCI"], "hidden")

@@ -4,7 +4,7 @@
 **Module:** Isnack  
 **ERPNext Compatibility:** v15  
 **Developer:** Busuttil Technologies Limited  
-**Last Updated:** 2026-10-25
+**Last Updated:** 2026-10-25 (follow-up fixes)
 
 ---
 
@@ -170,7 +170,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `coa_received` | Check | COA Received | — |
 | `coa_acceptable` | Check | COA Acceptable | — |
 | `spec_sheet_matches` | Check | Spec Sheet Matches | — |
-| `overall_status` | Select | Overall Status | options: Accepted / Conditionally Accepted / Rejected |
+| `overall_status` | Select | Overall Status | options: (blank) / Accepted / Conditionally Accepted / Rejected |
 
 ---
 
@@ -187,7 +187,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
 | `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — moisture > 14% |
-| `overall_status` | Select | Overall Status | options: Pass / Fail |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
 
@@ -204,7 +204,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
 | `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — moisture > 14% |
-| `overall_status` | Select | Overall Status | options: Pass / Fail |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
 
@@ -221,7 +221,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_oil_temperature` | Float | Avg Oil Temperature (°C) | `read_only: 1` — auto-calculated |
 | `avg_product_moisture` | Float | Avg Product Moisture (%) | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — placeholder for future spec-based logic |
-| `overall_status` | Select | Overall Status | options: Pass / Fail |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
 
@@ -239,7 +239,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_zone2_temp` | Float | Avg Zone 2 Temp (°C) | `read_only: 1` — auto-calculated |
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — placeholder for future spec-based logic |
-| `overall_status` | Select | Overall Status | options: Pass / Fail |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
 
@@ -254,9 +254,9 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `batch_no` | Link → Batch | Batch No | — |
 | `scores` | Table → QC Tasting Score | Scores | Child table |
-| `avg_overall` | Float | Avg Overall Score | `read_only: 1` — auto-calculated |
-| `min_score` | Float | Min Score | `read_only: 1` — auto-calculated |
-| `pass_threshold` | Float | Pass Threshold | `default: "3.0"` — configurable per record |
+| `avg_overall` | Float | Avg Overall Score | `read_only: 1` — auto-calculated, in stars |
+| `min_score` | Float | Min Score | `read_only: 1` — auto-calculated, in stars |
+| `pass_threshold` | Float | Pass Threshold | `default: "3.0"` — in stars (3.0 = 3 of 5), configurable per record |
 | `overall_status` | Select | Overall Status | auto-set to Pass/Fail by `validate()` |
 
 ---
@@ -322,7 +322,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `max_weight` | Float | Max Weight (g) | `read_only: 1` — auto-calculated |
 | `tu1_failures` | Int | TU1 Failures | `read_only: 1` — count of samples below `tu1_limit` |
 | `tu2_failures` | Int | TU2 Failures | `read_only: 1` — count of samples below `tu2_limit` |
-| `overall_status` | Select | Overall Status | options: Pass / Fail / Marginal |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail / Marginal |
 
 ---
 
@@ -546,13 +546,16 @@ validate():
 
 **File:** `isnack/isnack/doctype/qc_tasting_record/qc_tasting_record.py`
 
+Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the threshold. Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results. The Quality Hub dialog picks stars (1–5) and sends the fraction.
+
 ```
 validate():
-    overall_scores = [s.overall_score for s in scores if overall_score is not None]
+    out_of = QC Tasting Score.overall_score options or 5        # stars per rating
+    overall_scores = [s.overall_score * out_of for s in scores if s.overall_score > 0]   # 0 = not rated
     avg_overall = mean(overall_scores) if overall_scores else 0
     min_score   = min(overall_scores)  if overall_scores else 0
     threshold   = pass_threshold or 3.0
-    overall_status = "Pass" if avg_overall >= threshold else "Fail"
+    overall_status = "Pass" if overall_scores and avg_overall >= threshold else "Fail"
 ```
 
 ---
@@ -663,13 +666,14 @@ All endpoints are defined in `isnack/isnack/page/quality_hub/quality_hub.py` and
 **Returns:**
 ```json
 {
-  "QCA": { "doctype": "QC Receiving Record",      "total": 3, "submitted": 2, "draft": 1 },
-  "QCB": { "doctype": "QC Puffs Extruder Record", "total": 0, "submitted": 0, "draft": 0 },
+  "QCA": { "doctype": "QC Receiving Record",      "total": 3, "submitted": 2, "draft": 1, "hidden": false },
+  "QCB": { "doctype": "QC Puffs Extruder Record", "total": 0, "submitted": 0, "draft": 0, "hidden": false },
+  "QCF": { "doctype": "QC Tasting Record",        "total": 0, "submitted": 0, "draft": 0, "hidden": true },
   ...
 }
 ```
 
-If a DocType's database table does not yet exist, the entry is `{ "total": 0, "submitted": 0, "draft": 0 }`.
+Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `hidden: true` (all counts 0) marks a DocType the user may not read; the card shows "—". A DocType whose table does not exist yet counts 0 with `hidden: false`.
 
 ---
 
@@ -692,7 +696,7 @@ If a DocType's database table does not yet exist, the entry is `{ "total": 0, "s
 }
 ```
 
-**Cell values:** `"submitted"` | `"draft"` | `"not_started"`
+**Cell values:** `"submitted"` | `"draft"` | `"not_started"` | `"hidden"` (a DocType the user may not read; shown as "·")
 
 ---
 

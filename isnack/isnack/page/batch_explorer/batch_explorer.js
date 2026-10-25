@@ -177,7 +177,7 @@ isnack.BatchExplorer = class BatchExplorer {
 		this.$toolbar.empty();
 		this.$tree.html(
 			`<div class="be-empty">
-				<div class="be-empty-icon">${frappe.utils.icon("tree", "lg")}</div>
+				<div class="be-empty-icon">${frappe.utils.icon("branch", "lg")}</div>
 				<div class="be-empty-text">${frappe.utils.escape_html(msg)}</div>
 			</div>`
 		);
@@ -209,7 +209,7 @@ isnack.BatchExplorer = class BatchExplorer {
 			<div class="be-card">
 				<div class="be-card-head">
 					<div class="be-card-title">
-						<span class="be-batch-icon">${frappe.utils.icon("package", "md")}</span>
+						<span class="be-batch-icon">${frappe.utils.icon("stock", "md")}</span>
 						<div>
 							<div class="be-batch-name">${frappe.utils.escape_html(batch.name)}</div>
 							<div class="be-batch-item">

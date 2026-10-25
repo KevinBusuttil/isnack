@@ -57,7 +57,7 @@ A record type the user may not read shows as "—" in the coverage strip and is 
 
 Tracing ingredients needs Stock Entry read, as on the Batch Explorer; without it the records of the batch and its Work Orders are still listed and the page says the ingredients were not traced. When some of a Work Order's Stock Entries are hidden by permissions, the page says the ingredients may be incomplete.
 
-The URL always names the subject on screen (`/app/quality-explorer/Batch/<batch>`), so Back, refresh and a shared link open the same dossier, and Back to the bare `/app/quality-explorer` empties the page. A link that spells a name in another case (`fg10005-001` for `FG10005-001`) opens the batch and takes its stored name, without adding a step to Back.
+The URL always names the subject on screen (`/app/quality-explorer/Batch/<batch>`), so Back, refresh and a shared link open the same dossier, and Back to the bare `/app/quality-explorer` empties the page. A link or a typed name that spells it in another case (`fg10005-001` for `FG10005-001`) opens the batch once and takes its stored name, without adding a step to Back, whatever the user does while it loads.
 
 ## Files
 

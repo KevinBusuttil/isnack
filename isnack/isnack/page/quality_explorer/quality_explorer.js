@@ -34,8 +34,8 @@ isnack.QualityExplorer = class QualityExplorer {
 		this.loading = false;
 		// bumped by every load, so only the latest response lands
 		this.seq = 0;
-		// pickers being set to follow the URL: their changes are not picks
-		this.syncing = 0;
+		// per picker, the values it is being set to so it follows the URL
+		this.syncing = { Batch: [], "Work Order": [] };
 		this.reload_key = null;
 		this.make();
 	}
@@ -102,35 +102,53 @@ isnack.QualityExplorer = class QualityExplorer {
 	}
 
 	/** A pick by the user. One subject at a time: the other picker is emptied
-	 *  (as the URL now names this one). Changes the pickers fire while they are
-	 *  set to follow the URL are not picks: a Link validates on the server and
-	 *  reports a change when that returns, maybe after the user moved on. */
+	 *  (as the URL now names this one). A picker set to follow the URL is not a
+	 *  pick: a Link validates on the server and reports the value it was set to
+	 *  (in its stored spelling) when that returns, maybe after the user moved
+	 *  on. A different value in that picker, or one in the other picker, is. */
 	on_pick(kind) {
-		if (this.syncing) return;
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
 		const value = field.get_value();
 		if (!value) return;
+		if (this.syncing[kind].some((synced) => this.same_name(synced, value))) return;
 		this.open(kind, value);
 	}
 
 	/** Explore by way of the URL, so the address bar, Back and a refresh always
 	 *  name the subject on screen: on_page_show explores it. When the URL names
-	 *  it already no route change comes, so explore here, unless it is on screen
-	 *  (a picker's second change on blur). ``reload`` explores it again anyway
-	 *  (the Explore button). */
+	 *  it already, in any spelling, no route change comes, so explore here,
+	 *  unless it is on screen (a picker's second change on blur, which carries
+	 *  the stored spelling). ``reload`` explores it again anyway (the Explore
+	 *  button). */
 	open(kind, name, reload = false) {
-		const route = ["quality-explorer", kind, name];
-		if (frappe.get_route_str() === route.join("/")) {
-			if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+		const in_url = this.subject_in_url(kind, name);
+		if (in_url !== null) {
+			if (reload || !this.is_current(kind, in_url)) this.explore(kind, in_url);
 			return;
 		}
 		if (reload) this.reload_key = `${kind}/${name}`;
-		frappe.set_route(...route);
+		frappe.set_route("quality-explorer", kind, name);
 	}
 
-	/** The subject is on screen or on its way; after an error it is neither. */
+	/** The name as the URL spells it when the URL names this subject, else null. */
+	subject_in_url(kind, name) {
+		const route = frappe.get_route() || [];
+		if (route[0] !== "quality-explorer" || route[1] !== kind || route.length < 3) return null;
+		const in_url = route.slice(2).join("/");
+		return this.same_name(in_url, name) ? in_url : null;
+	}
+
+	/** The subject is on screen or on its way, in any spelling; after an error
+	 *  it is neither. */
 	is_current(kind, name) {
-		return `${kind}/${name}` === this.current_key && (this.loading || !!this.data);
+		const [current_kind, current_name] = this.split_key(this.current_key);
+		return current_kind === kind && this.same_name(current_name, name) && (this.loading || !!this.data);
+	}
+
+	/** ``[kind, name]`` of a ``Kind/name`` key; a name may hold a slash itself. */
+	split_key(key) {
+		const cut = (key || "").indexOf("/");
+		return cut > 0 ? [key.slice(0, cut), key.slice(cut + 1)] : [null, ""];
 	}
 
 	set_tree_buttons(enabled) {
@@ -150,6 +168,8 @@ isnack.QualityExplorer = class QualityExplorer {
 		const reload = this.reload_key === `${kind}/${name}`;
 		this.reload_key = null;
 		if (reload || !this.is_current(kind, name)) this.explore(kind, name);
+		// on screen already under another spelling: the URL takes the stored one
+		else if (this.data) this.adopt_name(kind, name, this.data.subject.name);
 		this.sync_pickers();
 	}
 
@@ -168,16 +188,17 @@ isnack.QualityExplorer = class QualityExplorer {
 	 *  validated, so when the subject moved on meanwhile, follow it again. */
 	sync_pickers() {
 		const key = this.current_key || "";
-		const cut = key.indexOf("/");
+		const [kind_now, name_now] = this.split_key(key);
 		const want = { Batch: "", "Work Order": "" };
-		if (cut > 0) want[key.slice(0, cut)] = key.slice(cut + 1);
+		if (kind_now) want[kind_now] = name_now;
 		const pickers = { Batch: this.batch_field, "Work Order": this.work_order_field };
 		Object.entries(pickers).forEach(([kind, field]) => {
 			// the server answers with the name as stored: FG10005-001 for fg10005-001
 			if (this.same_name(field.get_value(), want[kind])) return;
-			this.syncing += 1;
+			const pending = this.syncing[kind];
+			pending.push(want[kind]);
 			Promise.resolve(field.set_value(want[kind])).finally(() => {
-				this.syncing -= 1;
+				pending.splice(pending.indexOf(want[kind]), 1);
 				if ((this.current_key || "") !== key) this.sync_pickers();
 			});
 		});
@@ -195,9 +216,16 @@ isnack.QualityExplorer = class QualityExplorer {
 		// only ever a different spelling of the same name, never another subject
 		if (!stored || stored === asked || !this.same_name(stored, asked)) return;
 		this.current_key = `${kind}/${stored}`;
-		if (frappe.get_route_str() === ["quality-explorer", kind, asked].join("/")) {
+		const asked_route = ["quality-explorer", kind, asked].join("/");
+		// The address bar may already be on its way elsewhere: the router moves
+		// its route only once the next page has loaded, so ask both.
+		if (frappe.get_route_str() === asked_route && frappe.router.get_sub_path() === asked_route) {
 			frappe.route_flags.replace_route = true;
 			frappe.set_route("quality-explorer", kind, stored);
+			// set_route replaced the URL synchronously, but clears the flag only
+			// once the page has settled: left set, the user's next click would
+			// replace this entry instead of adding one
+			delete frappe.route_flags.replace_route;
 		}
 	}
 
@@ -312,7 +340,7 @@ isnack.QualityExplorer = class QualityExplorer {
 			<div class="qe-card">
 				<div class="qe-card-head">
 					<div class="qe-card-title">
-						<span class="qe-subject-icon">${frappe.utils.icon(is_batch ? "package" : "tool", "md")}</span>
+						<span class="qe-subject-icon">${frappe.utils.icon(is_batch ? "stock" : "tool", "md")}</span>
 						<div>
 							<div class="qe-subject-kind">${is_batch ? __("Batch") : __("Work Order")}</div>
 							<div class="qe-subject-name">${esc(subject.name)}</div>

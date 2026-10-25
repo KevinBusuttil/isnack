@@ -669,8 +669,15 @@ isnack.quality_hub.QualityHub = class {
     setup_dialog_specific_behaviour(dialog, doctype) {
         if (doctype !== "QC Receiving Record") return;
 
+        // A Dialog has no set_query (only a form does): a Link control reads
+        // its query from get_query, so set that on the control itself.
+        const set_query = (fieldname, get_query) => {
+            const field = dialog.get_field(fieldname);
+            if (field) field.get_query = get_query;
+        };
+
         // Filter purchase_receipt by selected supplier
-        dialog.set_query("purchase_receipt", () => {
+        set_query("purchase_receipt", () => {
             const supplier = dialog.get_value("supplier");
             const filters = { docstatus: 1 };
             if (supplier) filters.supplier = supplier;
@@ -678,7 +685,7 @@ isnack.quality_hub.QualityHub = class {
         });
 
         // Filter item_code to items contained in the selected purchase receipt
-        dialog.set_query("item_code", () => {
+        set_query("item_code", () => {
             const purchase_receipt = dialog.get_value("purchase_receipt");
             if (!purchase_receipt) return {};
             return {
@@ -688,7 +695,7 @@ isnack.quality_hub.QualityHub = class {
         });
 
         // Filter batch_no by selected item (and purchase receipt when available)
-        dialog.set_query("batch_no", () => {
+        set_query("batch_no", () => {
             const purchase_receipt = dialog.get_value("purchase_receipt");
             const item_code = dialog.get_value("item_code");
             if (purchase_receipt) {
@@ -1021,11 +1028,20 @@ isnack.quality_hub.QualityHub = class {
             .map((row) => {
                 const clean_row = {};
                 config.child_fields.forEach((field) => {
-                    clean_row[field.fieldname] = row[field.fieldname];
+                    clean_row[field.fieldname] = field.fieldtype === "Rating"
+                        ? this.rating_fraction(row[field.fieldname], field)
+                        : row[field.fieldname];
                 });
                 return clean_row;
             })
             .filter((row) => this.child_row_has_values(row, config.child_fields));
+    }
+
+    /** The dialog picks a Rating in stars (1-5); Frappe stores the fraction of
+     *  stars given (4 of 5 is 0.8) and clamps anything above 1 on save. */
+    rating_fraction(stars, field) {
+        if (stars === "" || stars === null || stars === undefined) return "";
+        return Number(stars) / (Number(field.options) || 5);
     }
 
     child_row_has_values(row, fields) {
