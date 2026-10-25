@@ -61,10 +61,8 @@ class TestReceivingRecordSchema(unittest.TestCase):
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
-	def test_every_record_type_after_receiving(self):
-		for code, doctype in QC_DOCTYPES.items():
-			if code == "QCA":
-				continue
+	def test_every_record_type(self):
+		for doctype in QC_DOCTYPES.values():
 			fields = _fields(_doctype(doctype))
 			for fieldname in ("operator_name", "qc_inspector"):
 				self.assertEqual(fields[fieldname].get("reqd"), 1, f"{doctype}.{fieldname}")

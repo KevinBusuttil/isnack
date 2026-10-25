@@ -8,8 +8,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name") },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", default: frappe.session.user },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Supplier & Item ─────────────────────────────────────
             { fieldname: "sb_supply", fieldtype: "Section Break", label: __("Supplier & Item") },
             { fieldname: "supplier", fieldtype: "Link", label: __("Supplier"), options: "Supplier", reqd: 1 },
