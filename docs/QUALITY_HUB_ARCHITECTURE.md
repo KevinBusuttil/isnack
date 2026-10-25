@@ -4,7 +4,7 @@
 **Module:** Isnack  
 **ERPNext Compatibility:** v15  
 **Developer:** Busuttil Technologies Limited  
-**Last Updated:** 2026-04-15
+**Last Updated:** 2026-10-25
 
 ---
 
@@ -120,16 +120,16 @@ All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All chi
 
 ## 4. Common Field Schema
 
-The following 9 fields are present on **every** parent DocType (QCA–QCI) with identical definitions:
+The following 9 fields are present on every parent DocType (QCA–QCI) with identical definitions, with two exceptions for FSSC 22000 (see the notes):
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
 | `record_date` | Date | Record Date | `reqd: 1`, `default: "Today"` |
 | `shift` | Select | Shift | `reqd: 1`, options: Morning / Afternoon / Night |
-| `factory_line` | Link → Factory Line | Factory Line | — |
-| `work_order` | Link → Work Order | Work Order | — |
-| `operator_name` | Data | Operator Name | — |
-| `qc_inspector` | Link → User | QC Inspector | `default: "__user"` (auto-fills current user) |
+| `factory_line` | Link → Factory Line | Factory Line | — · **not on QCA** |
+| `work_order` | Link → Work Order | Work Order | — · **not on QCA** |
+| `operator_name` | Data | Operator Name | `reqd: 1` on QCB–QCI; optional on QCA |
+| `qc_inspector` | Link → User | QC Inspector | `default: "__user"` (auto-fills current user); `reqd: 1` on QCB–QCI |
 | `status` | Select | Status | options: Draft / Submitted / Rejected / Closed |
 | `remarks` | Small Text | Remarks | — |
 | `amended_from` | Link → (same DocType) | Amended From | `read_only: 1`, `no_copy: 1` |
@@ -147,18 +147,22 @@ Each section below lists only the **DocType-specific** fields (beyond the 9 comm
 **Naming:** `QCA-.YYYY.-.#####`  
 **Purpose:** Records goods-inward inspection for raw materials and packaging arriving from suppliers.
 
+A delivery is inspected before any line or Work Order touches it, so QCA has no `factory_line` or `work_order` (FSSC 22000 change, 2026-10). The supplier and item section is all mandatory, and the quality checks are blank / Yes / No selects: a blank answer is a check not done, which a tick box could not tell apart from a failed one. The patch `isnack.patches.v1_0.qc_receiving_yes_no_checks` carried existing records over (ticked → Yes, unticked → blank) and moved `colour_acceptable` to `appearance_acceptable`. The old `factory_line`, `work_order` and `colour_acceptable` columns stay in the table, unused.
+
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `supplier` | Link → Supplier | Supplier | — |
-| `purchase_receipt` | Link → Purchase Receipt | Purchase Receipt | — |
+| `supplier` | Link → Supplier | Supplier | `reqd: 1` |
+| `purchase_receipt` | Link → Purchase Receipt | Purchase Receipt | `reqd: 1` |
 | `item_code` | Link → Item | Item Code | `reqd: 1` |
 | `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
-| `batch_no` | Link → Batch | Batch No | — |
-| `qty_received` | Float | Qty Received | — |
-| `packaging_intact` | Check | Packaging Intact | — |
-| `labelling_correct` | Check | Labelling Correct | — |
-| `foreign_body_check` | Check | Foreign Body Check | — |
-| `colour_acceptable` | Check | Colour Acceptable | — |
+| `batch_no` | Link → Batch | Batch No | `reqd: 1` |
+| `qty_received` | Float | Qty Received | `reqd: 1` |
+| `packaging_intact` | Select | Packaging Intact | options: (blank) / Yes / No |
+| `labelling_correct` | Select | Labelling Correct | options: (blank) / Yes / No |
+| `foreign_body_check` | Select | Foreign Body Check | options: (blank) / Yes / No |
+| `appearance_acceptable` | Select | Appearance Acceptable | options: (blank) / Yes / No · was `colour_acceptable` |
+| `dimensions_acceptable` | Select | Dimensions Acceptable | options: (blank) / Yes / No |
+| `weight_acceptable` | Select | Weight Acceptable | options: (blank) / Yes / No |
 | `arrival_temperature` | Float | Arrival Temperature (°C) | — |
 | `acceptable_range_min` | Float | Acceptable Range Min (°C) | — |
 | `acceptable_range_max` | Float | Acceptable Range Max (°C) | — |
@@ -700,7 +704,7 @@ If a DocType's database table does not yet exist, the entry is `{ "total": 0, "s
 - `filters` — JSON string or dict of filter conditions (optional)  
 - `limit` — integer row cap (default 20, UI passes 50)
 
-**Purpose:** Generic record fetcher used by every record-list tab. Returns the base common fields plus `overall_status` and `modified`, with fields not present on the specific DocType silently dropped.
+**Purpose:** Generic record fetcher used by every record-list tab. Returns the base common fields plus `supplier`, `item_code`, `batch_no`, `overall_status` and `modified`, with fields not present on the specific DocType silently dropped.
 
 **Returns:** List of record dicts ordered by `record_date desc, modified desc`.
 
@@ -776,18 +780,19 @@ new QualityHub(wrapper)
 - Date-picker + Refresh button → calls `get_completion_matrix(date)` 
 - Completion matrix rendered as `<table class="qh-table qh-matrix">` (shift rows × code columns)
   - ✅ = submitted, 🟡 = draft, — = not started
-- Quick Links row with direct `#List/` links to all 9 DocType list views
+- Quick Links row with direct `#List/` links to all 9 DocType list views, and to the Quality Explorer page (see `docs/quality-explorer.md`)
 
 ### Record List Datatable
 
-All record lists (`render_record_list`) render the same 7 columns:
+All record lists (`render_record_list`) render the same columns, except that the Receiving list shows Supplier, Item and Batch where the others show Line:
 
 | Column | Key | Rendering |
 |---|---|---|
 | Name | `name` | Hyperlink to form view (`#Form/<doctype>/<name>`) |
 | Date | `record_date` | Plain text |
 | Shift | `shift` | Plain text |
-| Line | `factory_line` | Plain text |
+| Line | `factory_line` | Plain text (not on Receiving) |
+| Supplier · Item · Batch | `supplier` · `item_code` · `batch_no` | Plain text (Receiving only) |
 | Operator | `operator_name` | Plain text |
 | Result | `overall_status` | Badge: green (Pass/Accepted), red (Fail/Rejected), amber (other) |
 | Status | `docstatus` | Badge: amber (Draft), green (Submitted), red (Cancelled) |
@@ -1016,8 +1021,6 @@ docs/
 
 | QC DocType(s) | Linked DocType | Field | Purpose |
 |---|---|---|---|
-| QCA | Work Order | `work_order` | Links receiving inspection to the production order it feeds |
-| QCA | Factory Line | `factory_line` | Identifies the line receiving the goods |
 | QCA | Purchase Receipt | `purchase_receipt` | Ties QC to the inbound goods receipt |
 | QCA | Batch | `batch_no` | Traces the specific goods batch being inspected |
 | QCA | Item | `item_code` | The raw material or packaging item being received |
