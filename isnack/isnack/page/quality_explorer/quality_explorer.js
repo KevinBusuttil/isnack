@@ -36,6 +36,8 @@ isnack.QualityExplorer = class QualityExplorer {
 		this.seq = 0;
 		// per picker, the values it is being set to so it follows the URL
 		this.syncing = { Batch: [], "Work Order": [] };
+		// per picker, a change it was still validating when the page moved on
+		this.stale_change = { Batch: false, "Work Order": false };
 		this.reload_key = null;
 		this.make();
 	}
@@ -105,9 +107,18 @@ isnack.QualityExplorer = class QualityExplorer {
 	 *  (as the URL now names this one). A picker set to follow the URL is not a
 	 *  pick: a Link validates on the server and reports the value it was set to
 	 *  (in its stored spelling) when that returns, maybe after the user moved
-	 *  on. A different value in that picker, or one in the other picker, is. */
+	 *  on. A different value in that picker, or one in the other picker, is.
+	 *  Nor is a change that began before the page last moved on: a Link checks
+	 *  its value again on blur, so a click on a trace leaf or a link starts
+	 *  one, which lands after that click has opened another subject or page. */
 	on_pick(kind) {
 		const field = kind === "Batch" ? this.batch_field : this.work_order_field;
+		if (this.stale_change[kind]) {
+			this.stale_change[kind] = false;
+			this.sync_pickers();
+			return;
+		}
+		if ((frappe.get_route() || [])[0] !== "quality-explorer") return;
 		const value = field.get_value();
 		if (!value) return;
 		if (this.syncing[kind].some((synced) => this.same_name(synced, value))) return;
@@ -165,6 +176,7 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	load_from_route(kind, name) {
 		if (!["Batch", "Work Order"].includes(kind) || !name) return;
+		this.mark_stale_changes();
 		const reload = this.reload_key === `${kind}/${name}`;
 		this.reload_key = null;
 		if (reload || !this.is_current(kind, name)) this.explore(kind, name);
@@ -175,12 +187,21 @@ isnack.QualityExplorer = class QualityExplorer {
 
 	/** Back to the bare page: no subject in the URL, so none on screen. */
 	clear() {
+		this.mark_stale_changes();
 		this.seq += 1;
 		this.current_key = null;
 		this.loading = false;
 		this.reload_key = null;
 		this.show_empty(__("Select a batch or a work order to see its quality records."));
 		this.sync_pickers();
+	}
+
+	/** The page moves on: a picker change still being validated is not a pick
+	 *  (see on_pick). It swallows the picker's sync meanwhile, so when it lands
+	 *  the picker follows the URL again. */
+	mark_stale_changes() {
+		if (this.batch_field.inside_change_event) this.stale_change.Batch = true;
+		if (this.work_order_field.inside_change_event) this.stale_change["Work Order"] = true;
 	}
 
 	/** Set the pickers to the subject in the URL without that counting as a

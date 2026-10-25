@@ -632,7 +632,10 @@ isnack.quality_hub.QualityHub = class {
         }
 
         const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
-        const fields = [...config.parent_fields];
+        // a copy of each field per dialog: a control keeps the df it was made
+        // from, and the receiving dialog wraps df.onchange, which would
+        // otherwise pile up on the shared config, one wrapper per opening
+        const fields = config.parent_fields.map((df) => ({ ...df }));
         if (has_child_table) {
             if (config.child_in_dedicated_section) {
                 fields.push({

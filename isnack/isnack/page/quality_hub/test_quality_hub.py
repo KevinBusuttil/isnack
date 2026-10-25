@@ -191,9 +191,10 @@ class TestReceivingBatchPicker(unittest.TestCase):
 
 class TestCreateRecordFromDialog(unittest.TestCase):
 	@staticmethod
-	def _meta(fieldnames):
+	def _meta(fieldnames, selects=()):
 		meta = MagicMock()
 		meta.fields = [frappe._dict(fieldname=f, fieldtype="Float") for f in fieldnames]
+		meta.fields += [frappe._dict(fieldname=f, fieldtype="Select") for f in selects]
 		meta.get_label.return_value = "Readings"
 		return meta
 
@@ -229,3 +230,28 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 		)
 		doc.append.assert_called_once_with("readings", {"time_slot": "22:00", "moisture_content": 12.1})
 		doc.insert.assert_called_once()
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_a_blank_select_stays_blank(self, get_meta, get_doc):
+		# Test Piece Type is "Fe\nNon-Fe\nStainless": left unset, Frappe would
+		# record an Fe test piece nobody picked
+		get_meta.side_effect = lambda doctype: (
+			self._meta(["record_date"], selects=["shift"])
+			if doctype == "QC Metal Detector Log"
+			else self._meta(["test_time", "detected"], selects=["test_piece_type"])
+		)
+		doc = MagicMock(docstatus=0)
+		get_doc.return_value = doc
+
+		qh.create_qc_record(
+			"QC Metal Detector Log",
+			payload={
+				"record_date": "2026-10-25",
+				"shift": "",
+				"tests": [{"test_time": "10:00", "test_piece_type": "", "detected": 1}],
+			},
+		)
+
+		self.assertEqual(get_doc.call_args.args[0]["shift"], "")
+		doc.append.assert_called_once_with("tests", {"test_time": "10:00", "test_piece_type": "", "detected": 1})
