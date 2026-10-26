@@ -1,5 +1,25 @@
 frappe.provide("isnack.quality_hub");
 
+// Oven readings are taken on the extruder records (QCB, QCC); the Oven record
+// (QCE) is retired. An extra table of a dialog, described by the same keys as
+// a record's own table.
+isnack.quality_hub.OVEN_READINGS_TABLE = {
+    child_table_field: "oven_readings",
+    child_label: __("Oven Readings"),
+    child_in_dedicated_section: true,
+    min_rows: 0,
+    child_fields: [
+        { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+        { fieldname: "zone_1_temp", fieldtype: "Float", label: __("Zone 1 Temp (°C)") },
+        { fieldname: "zone_2_temp", fieldtype: "Float", label: __("Zone 2 Temp (°C)") },
+        { fieldname: "zone_3_temp", fieldtype: "Float", label: __("Zone 3 Temp (°C)") },
+        { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed") },
+        { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
+        { fieldname: "colour_value", fieldtype: "Float", label: __("Colour Value") },
+        { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+    ],
+};
+
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Receiving Record": {
         parent_fields: [
@@ -47,6 +67,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         child_in_dedicated_section: true,
         min_rows: 1,
+        extra_child_tables: [isnack.quality_hub.OVEN_READINGS_TABLE],
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
             { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
@@ -81,6 +102,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Readings"),
         child_in_dedicated_section: true,
         min_rows: 1,
+        extra_child_tables: [isnack.quality_hub.OVEN_READINGS_TABLE],
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
             { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
@@ -143,39 +165,6 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
     },
-    "QC Oven Record": {
-        child_table_field: "readings",
-        child_label: __("Readings"),
-        child_in_dedicated_section: true,
-        min_rows: 1,
-        parent_fields: [
-            // ── Section: Record Details ──────────────────────────────────────
-            { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
-            { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
-            { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
-            { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line" },
-            { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order" },
-            { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
-            { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
-            // ── Section: Product & Outcome ───────────────────────────────────
-            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
-            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
-            { fieldname: "cb_product", fieldtype: "Column Break" },
-            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
-            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
-        ],
-        child_fields: [
-            { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
-            { fieldname: "zone_1_temp", fieldtype: "Float", label: __("Zone 1 Temp (°C)") },
-            { fieldname: "zone_2_temp", fieldtype: "Float", label: __("Zone 2 Temp (°C)") },
-            { fieldname: "zone_3_temp", fieldtype: "Float", label: __("Zone 3 Temp (°C)") },
-            { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed") },
-            { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
-            { fieldname: "colour_value", fieldtype: "Float", label: __("Colour Value") },
-            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
-        ],
-    },
     "QC Tasting Record": {
         child_table_field: "scores",
         child_label: __("Scores"),
@@ -201,9 +190,9 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
         child_fields: [
             { fieldname: "taster_name", fieldtype: "Data", label: __("Taster Name") },
-            { fieldname: "appearance_score", fieldtype: "Rating", label: __("Appearance") },
+            { fieldname: "appearance_score", fieldtype: "Rating", label: __("Shape") },
             { fieldname: "colour_score", fieldtype: "Rating", label: __("Colour") },
-            { fieldname: "aroma_score", fieldtype: "Rating", label: __("Aroma") },
+            { fieldname: "aroma_score", fieldtype: "Rating", label: __("Smell") },
             { fieldname: "taste_score", fieldtype: "Rating", label: __("Taste") },
             { fieldname: "texture_score", fieldtype: "Rating", label: __("Texture") },
             { fieldname: "overall_score", fieldtype: "Rating", label: __("Overall") },
@@ -361,7 +350,7 @@ isnack.quality_hub.QualityHub = class {
                 <div class="qh-tabs">
                     <button class="qh-tab qh-tab-active" data-tab="monitor">${__("Live Monitor")}</button>
                     <button class="qh-tab" data-tab="receiving">${__("Receiving (QCA)")}</button>
-                    <button class="qh-tab" data-tab="process">${__("Process (QCB–QCE)")}</button>
+                    <button class="qh-tab" data-tab="process">${__("Process (QCB–QCD)")}</button>
                     <button class="qh-tab" data-tab="tasting">${__("Tasting (QCF)")}</button>
                     <button class="qh-tab" data-tab="pkg_weight">${__("Pkg & Weight (QCG/QCI)")}</button>
                     <button class="qh-tab" data-tab="metal">${__("CCP & Metal (QCH)")}</button>
@@ -421,7 +410,6 @@ isnack.quality_hub.QualityHub = class {
                         <button class="qh-pill-nav qh-pill-active" data-sub="puffs">${__("Puffs Extruder (QCB)")}</button>
                         <button class="qh-pill-nav" data-sub="rice">${__("Rice Extruder (QCC)")}</button>
                         <button class="qh-pill-nav" data-sub="frying">${__("Frying Line (QCD)")}</button>
-                        <button class="qh-pill-nav" data-sub="oven">${__("Oven (QCE)")}</button>
                     </div>
                     <div class="qh-filter-bar">
                         <input type="date" class="form-control qh-filter-input" data-filter="record_date" placeholder="${__("Date")}">
@@ -527,7 +515,6 @@ isnack.quality_hub.QualityHub = class {
                             <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Puffs Extruder Record">${__("Puffs Extruder")}</a>
                             <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Rice Extruder Record">${__("Rice Extruder")}</a>
                             <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Frying Line Record">${__("Frying Line")}</a>
-                            <a class="btn btn-sm btn-default qh-ql-green qh-quick-link" href="#" data-doctype="QC Oven Record">${__("Oven Records")}</a>
                             <a class="btn btn-sm btn-default qh-ql-violet qh-quick-link" href="#" data-doctype="QC Tasting Record">${__("Tasting Records")}</a>
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Packaging Check">${__("Packaging Checks")}</a>
                             <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="QC Metal Detector Log">${__("Metal Detector Logs")}</a>
@@ -562,7 +549,6 @@ isnack.quality_hub.QualityHub = class {
                     puffs: "QC Puffs Extruder Record",
                     rice: "QC Rice Extruder Record",
                     frying: "QC Frying Line Record",
-                    oven: "QC Oven Record",
                 };
                 this.$container.find("[data-target='process']").closest(".qh-filter-bar")
                     .find(".qh-new-record").data("doctype", dtmap[sub]);
@@ -631,24 +617,24 @@ isnack.quality_hub.QualityHub = class {
             return;
         }
 
-        const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
+        const tables = this.child_tables(config);
         // a copy of each field per dialog: a control keeps the df it was made
         // from, and the receiving dialog wraps df.onchange, which would
         // otherwise pile up on the shared config, one wrapper per opening
         const fields = config.parent_fields.map((df) => ({ ...df }));
-        if (has_child_table) {
-            if (config.child_in_dedicated_section) {
+        tables.forEach((table) => {
+            if (table.child_in_dedicated_section) {
                 fields.push({
                     fieldtype: "Section Break",
-                    fieldname: "section_break_child_editor",
-                    label: config.child_label,
+                    fieldname: `section_break_${table.child_table_field}`,
+                    label: table.child_label,
                 });
             }
             fields.push({
                 fieldtype: "HTML",
-                fieldname: "child_table_editor",
+                fieldname: `${table.child_table_field}_editor`,
             });
-        }
+        });
 
         const dialog = new frappe.ui.Dialog({
             title: __("New {0}", [doctype]),
@@ -659,14 +645,24 @@ isnack.quality_hub.QualityHub = class {
         });
 
         dialog.__config = config;
-        dialog.__child_rows = has_child_table ? this.make_initial_child_rows(config) : [];
+        // per table, its rows as the user edits them
+        dialog.__child_rows = {};
+        tables.forEach((table) => {
+            dialog.__child_rows[table.child_table_field] = this.make_initial_child_rows(table);
+        });
         dialog.show();
         dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
-        if (has_child_table) {
-            this.render_child_editor(dialog, doctype);
-        }
+        tables.forEach((table) => this.render_child_editor(dialog, table));
+    }
+
+    /** The child tables a dialog edits: the record's own (``child_table_field``),
+     *  then any ``extra_child_tables``, each described by the same keys. */
+    child_tables(config) {
+        return [config, ...(config.extra_child_tables || [])].filter(
+            (table) => table.child_table_field && (table.child_fields || []).length
+        );
     }
 
     setup_dialog_specific_behaviour(dialog, doctype) {
@@ -764,14 +760,13 @@ isnack.quality_hub.QualityHub = class {
 
         const config = dialog.__config;
         const payload = { ...values };
-        const has_child_table = !!(config.child_table_field && (config.child_fields || []).length);
-        if (has_child_table) {
-            const child_rows = this.get_non_empty_child_rows(dialog);
-            if (!child_rows.length) {
-                frappe.msgprint(__("Add at least one row in {0}.", [config.child_label]));
+        for (const table of this.child_tables(config)) {
+            const child_rows = this.get_non_empty_child_rows(dialog, table);
+            if (!child_rows.length && (table.min_rows ?? 1) > 0) {
+                frappe.msgprint(__("Add at least one row in {0}.", [table.child_label]));
                 return;
             }
-            payload[config.child_table_field] = child_rows;
+            payload[table.child_table_field] = child_rows;
         }
 
         this.save_dialog_record({ dialog, doctype, payload, submit });
@@ -816,18 +811,18 @@ isnack.quality_hub.QualityHub = class {
         this.refresh_data(false);
     }
 
-    make_initial_child_rows(config) {
+    make_initial_child_rows(table) {
         const rows = [];
-        const row_count = Math.max(config.min_rows || 1, 1);
+        const row_count = Math.max(table.min_rows || 1, 1);
         for (let index = 0; index < row_count; index++) {
-            rows.push(this.make_empty_child_row(config));
+            rows.push(this.make_empty_child_row(table));
         }
         return rows;
     }
 
-    make_empty_child_row(config) {
+    make_empty_child_row(table) {
         const row = {};
-        (config.child_fields || []).forEach((field) => {
+        (table.child_fields || []).forEach((field) => {
             if (field.default !== undefined) {
                 row[field.fieldname] =
                     typeof field.default === "function" ? field.default() : field.default;
@@ -838,16 +833,15 @@ isnack.quality_hub.QualityHub = class {
         return row;
     }
 
-    render_child_editor(dialog, doctype) {
-        const config = dialog.__config || isnack.quality_hub.DIALOG_RECORD_CONFIG[doctype];
-        const $wrapper = $(dialog.get_field("child_table_editor").wrapper);
-        const rows = dialog.__child_rows || [];
-        const headers = (config.child_fields || [])
+    render_child_editor(dialog, table) {
+        const $wrapper = $(dialog.get_field(`${table.child_table_field}_editor`).wrapper);
+        const rows = dialog.__child_rows[table.child_table_field];
+        const headers = (table.child_fields || [])
             .map((field) => `<th>${frappe.utils.escape_html(field.label)}</th>`)
             .join("");
         const row_html = rows
             .map((row, index) => {
-                const cells = config.child_fields
+                const cells = table.child_fields
                     .map((field) => `<td>${this.render_child_input(field, row[field.fieldname], index)}</td>`)
                     .join("");
 
@@ -870,7 +864,7 @@ isnack.quality_hub.QualityHub = class {
         $wrapper.html(`
             <div class="qh-child-editor">
                 <div class="qh-child-toolbar">
-                    <div class="qh-child-toolbar-label">${frappe.utils.escape_html(config.child_label)}</div>
+                    <div class="qh-child-toolbar-label">${frappe.utils.escape_html(table.child_label)}</div>
                     <button type="button" class="btn btn-sm btn-default qh-child-add">
                         <i class="fa fa-plus"></i> ${__("Add Row")}
                     </button>
@@ -890,38 +884,38 @@ isnack.quality_hub.QualityHub = class {
         `);
 
         $wrapper.find(".qh-child-add").on("click", () => {
-            dialog.__child_rows.push(this.make_empty_child_row(config));
-            this.render_child_editor(dialog, doctype);
+            rows.push(this.make_empty_child_row(table));
+            this.render_child_editor(dialog, table);
         });
 
         $wrapper.find(".qh-child-delete").on("click", (e) => {
             const index = Number($(e.currentTarget).data("row-index"));
-            if (dialog.__child_rows.length <= (config.min_rows || 1)) {
+            if (rows.length <= (table.min_rows || 1)) {
                 frappe.show_alert({
                     message: __("Minimum row count reached. Row cleared instead."),
                     indicator: "orange",
                 });
-                dialog.__child_rows[index] = this.make_empty_child_row(config);
+                rows[index] = this.make_empty_child_row(table);
             } else {
-                dialog.__child_rows.splice(index, 1);
+                rows.splice(index, 1);
             }
-            this.render_child_editor(dialog, doctype);
+            this.render_child_editor(dialog, table);
         });
 
         $wrapper.find(".qh-child-duplicate").on("click", (e) => {
             const index = Number($(e.currentTarget).data("row-index"));
-            const cloned_row = JSON.parse(JSON.stringify(dialog.__child_rows[index]));
-            dialog.__child_rows.splice(index + 1, 0, cloned_row);
-            this.render_child_editor(dialog, doctype);
+            const cloned_row = JSON.parse(JSON.stringify(rows[index]));
+            rows.splice(index + 1, 0, cloned_row);
+            this.render_child_editor(dialog, table);
         });
 
         $wrapper.find(".qh-child-input").on("input change", (e) => {
             const $input = $(e.currentTarget);
             const row_index = Number($input.data("row-index"));
             const fieldname = $input.data("fieldname");
-            const field = config.child_fields.find((item) => item.fieldname === fieldname);
+            const field = table.child_fields.find((item) => item.fieldname === fieldname);
             if (!field) return;
-            dialog.__child_rows[row_index][fieldname] = this.get_input_value($input, field);
+            rows[row_index][fieldname] = this.get_input_value($input, field);
         });
     }
 
@@ -1025,19 +1019,18 @@ isnack.quality_hub.QualityHub = class {
         return value;
     }
 
-    get_non_empty_child_rows(dialog) {
-        const config = dialog.__config;
-        return (dialog.__child_rows || [])
+    get_non_empty_child_rows(dialog, table) {
+        return (dialog.__child_rows[table.child_table_field] || [])
             .map((row) => {
                 const clean_row = {};
-                config.child_fields.forEach((field) => {
+                table.child_fields.forEach((field) => {
                     clean_row[field.fieldname] = field.fieldtype === "Rating"
                         ? this.rating_fraction(row[field.fieldname], field)
                         : row[field.fieldname];
                 });
                 return clean_row;
             })
-            .filter((row) => this.child_row_has_values(row, config.child_fields));
+            .filter((row) => this.child_row_has_values(row, table.child_fields));
     }
 
     /** The dialog picks a Rating in stars (1-5); Frappe stores the fraction of
@@ -1087,7 +1080,6 @@ isnack.quality_hub.QualityHub = class {
                 puffs: "QC Puffs Extruder Record",
                 rice: "QC Rice Extruder Record",
                 frying: "QC Frying Line Record",
-                oven: "QC Oven Record",
             },
             tasting: "QC Tasting Record",
             pkg_weight: {
@@ -1310,7 +1302,6 @@ isnack.quality_hub.QualityHub = class {
             QCB: __("Puffs Extr."),
             QCC: __("Rice Extr."),
             QCD: __("Frying"),
-            QCE: __("Oven"),
             QCF: __("Tasting"),
             QCG: __("Packaging"),
             QCH: __("Metal Det."),

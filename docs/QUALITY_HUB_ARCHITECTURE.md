@@ -52,7 +52,9 @@ The **Quality Hub** is isnack's third specialist interface, sitting alongside th
 
 > *Paper QC sheets → digital ERP records*
 
-Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces all nine DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations on submission.
+Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces the DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations on submission.
+
+**Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings. QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -84,7 +86,7 @@ Access is restricted to the **Quality Controller**, **Quality Manager**, and **S
 | 2 | QCB-002 Puffs Extruder Record.xlsx | QC Puffs Extruder Record | QCB | `QCB-.YYYY.-.#####` | Process |
 | 3 | QCC-003 Rice Extruder Record V2.xlsx | QC Rice Extruder Record | QCC | `QCC-.YYYY.-.#####` | Process |
 | 4 | QCD-004 Frying Line Record V2.xlsx | QC Frying Line Record | QCD | `QCD-.YYYY.-.#####` | Process |
-| 5 | QCE-005 Oven Record Sheet V2.xlsx | QC Oven Record | QCE | `QCE-.YYYY.-.#####` | Process |
+| 5 | QCE-005 Oven Record Sheet V2.xlsx | QC Oven Record | QCE | `QCE-.YYYY.-.#####` | Process — retired 2026-10, now on QCB and QCC |
 | 6 | QCF-006 Tasting Records V2.xlsx | QC Tasting Record | QCF | `QCF-.YYYY.-.#####` | Tasting |
 | 7 | QCG-007 Packaging material checks and reconciliation V2.xlsx | QC Packaging Check | QCG | `QCG-.YYYY.-.#####` | Packaging |
 | 8 | QCH-008 Daily Metal Detector Verification.xlsx | QC Metal Detector Log | QCH | `QCH-.YYYY.-.#####` | CCP |
@@ -102,14 +104,14 @@ All 15 DocTypes (9 parent + 6 child) registered under the **Isnack** module:
 | QC Puffs Extruder Record | Parent | QCB | — | `isnack/isnack/doctype/qc_puffs_extruder_record/` |
 | QC Rice Extruder Record | Parent | QCC | — | `isnack/isnack/doctype/qc_rice_extruder_record/` |
 | QC Frying Line Record | Parent | QCD | — | `isnack/isnack/doctype/qc_frying_line_record/` |
-| QC Oven Record | Parent | QCE | — | `isnack/isnack/doctype/qc_oven_record/` |
+| QC Oven Record | Parent | QCE (retired) | — | `isnack/isnack/doctype/qc_oven_record/` |
 | QC Tasting Record | Parent | QCF | — | `isnack/isnack/doctype/qc_tasting_record/` |
 | QC Packaging Check | Parent | QCG | — | `isnack/isnack/doctype/qc_packaging_check/` |
 | QC Metal Detector Log | Parent | QCH | — | `isnack/isnack/doctype/qc_metal_detector_log/` |
 | QC Weight Check | Parent | QCI | — | `isnack/isnack/doctype/qc_weight_check/` |
 | QC Extruder Reading | Child | N/A | QCB, QCC | `isnack/isnack/doctype/qc_extruder_reading/` |
 | QC Frying Reading | Child | N/A | QCD | `isnack/isnack/doctype/qc_frying_reading/` |
-| QC Oven Reading | Child | N/A | QCE | `isnack/isnack/doctype/qc_oven_reading/` |
+| QC Oven Reading | Child | N/A | QCB, QCC (and QCE, retired) | `isnack/isnack/doctype/qc_oven_reading/` |
 | QC Tasting Score | Child | N/A | QCF | `isnack/isnack/doctype/qc_tasting_score/` |
 | QC Metal Detector Test | Child | N/A | QCH | `isnack/isnack/doctype/qc_metal_detector_test/` |
 | QC Weight Sample | Child | N/A | QCI | `isnack/isnack/doctype/qc_weight_sample/` |
@@ -187,6 +189,12 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
 | `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — moisture > 14% |
+| `oven_readings_section` | Section Break | Oven Readings | — |
+| `oven_readings` | Table → QC Oven Reading | Oven Readings | Child table, optional (was the Oven record, QCE) |
+| `avg_oven_zone1_temp` | Float | Avg Oven Zone 1 Temp (°C) | `read_only: 1` — auto-calculated |
+| `avg_oven_zone2_temp` | Float | Avg Oven Zone 2 Temp (°C) | `read_only: 1` — auto-calculated |
+| `avg_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated |
+| `result_section` | Section Break | — | — |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
@@ -204,6 +212,12 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
 | `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — moisture > 14% |
+| `oven_readings_section` | Section Break | Oven Readings | — |
+| `oven_readings` | Table → QC Oven Reading | Oven Readings | Child table, optional (was the Oven record, QCE) |
+| `avg_oven_zone1_temp` | Float | Avg Oven Zone 1 Temp (°C) | `read_only: 1` — auto-calculated |
+| `avg_oven_zone2_temp` | Float | Avg Oven Zone 2 Temp (°C) | `read_only: 1` — auto-calculated |
+| `avg_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated |
+| `result_section` | Section Break | — | — |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
 ---
@@ -226,6 +240,8 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 ---
 
 ### QCE — QC Oven Record
+
+**Retired 2026-10:** oven readings are taken on QCB and QCC now (`oven_readings`). Kept so old records stay readable.
 
 **Naming:** `QCE-.YYYY.-.#####`  
 **Purpose:** Records oven zone temperatures, belt speed, and product moisture per time slot.
@@ -369,7 +385,7 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 
 ### QC Oven Reading
 
-**Used by:** QC Oven Record (QCE)
+**Used by:** QC Puffs Extruder Record (QCB) and QC Rice Extruder Record (QCC) as `oven_readings`; QC Oven Record (QCE, retired) as `readings`
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
@@ -391,9 +407,9 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
 | `taster_name` | Data | Taster Name | ✅ |
-| `appearance_score` | Rating | Appearance | ✅ |
+| `appearance_score` | Rating | Shape (was "Appearance") | ✅ |
 | `colour_score` | Rating | Colour | ✅ |
-| `aroma_score` | Rating | Aroma | — |
+| `aroma_score` | Rating | Smell (was "Aroma") | — |
 | `taste_score` | Rating | Taste | ✅ |
 | `texture_score` | Rating | Texture | — |
 | `overall_score` | Rating | Overall | ✅ |
@@ -489,6 +505,7 @@ validate():
     avg_moisture = mean(moistures) if moistures else 0
     avg_density  = mean(densities) if densities else 0
     out_of_range_count = count(r for r in readings if r.moisture_content > 14)
+    avg_oven_zone1_temp, avg_oven_zone2_temp, avg_oven_moisture = oven_averages(oven_readings)
 ```
 
 ---
@@ -506,6 +523,7 @@ validate():
     avg_moisture = mean(moistures) if moistures else 0
     avg_density  = mean(densities) if densities else 0
     out_of_range_count = count(r for r in readings if r.moisture_content > 14)
+    avg_oven_zone1_temp, avg_oven_zone2_temp, avg_oven_moisture = oven_averages(oven_readings)
 ```
 
 ---
@@ -531,14 +549,11 @@ validate():
 
 ```
 validate():
-    z1    = [r.zone_1_temp for r in readings if zone_1_temp is not None]
-    z2    = [r.zone_2_temp for r in readings if zone_2_temp is not None]
-    moist = [r.moisture    for r in readings if moisture    is not None]
-    avg_zone1_temp = mean(z1)    if z1    else 0
-    avg_zone2_temp = mean(z2)    if z2    else 0
-    avg_moisture   = mean(moist) if moist else 0
+    avg_zone1_temp, avg_zone2_temp, avg_moisture = oven_averages(readings)
     out_of_range_count = 0   # placeholder — spec-based logic to be added
 ```
+
+`oven_averages` (in `qc_oven_reading.py`) averages zone 1 temperature, zone 2 temperature and moisture over the oven readings that have each, 0 when none does. QCB and QCC use it on their `oven_readings`.
 
 ---
 
@@ -661,7 +676,7 @@ All endpoints are defined in `isnack/isnack/page/quality_hub/quality_hub.py` and
 
 **Method:** `isnack.isnack.page.quality_hub.quality_hub.get_qc_record_summary`  
 **Arguments:** `date` (optional, defaults to today)  
-**Purpose:** Returns per-DocType record counts for the given date, used to render the 9-card QC summary grid on the Live Monitor tab.
+**Purpose:** Returns per-DocType record counts for the given date, used to render the QC summary grid on the Live Monitor tab. Retired types (QCE) are left out.
 
 **Returns:**
 ```json
@@ -681,7 +696,7 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 
 **Method:** `isnack.isnack.page.quality_hub.quality_hub.get_completion_matrix`  
 **Arguments:** `date` (optional, defaults to today)  
-**Purpose:** Returns a shift × DocType matrix showing completion status for the Reports & Trends tab.
+**Purpose:** Returns a shift × DocType matrix showing completion status for the Reports & Trends tab. Retired types (QCE) are left out of `matrix` and `doctypes`.
 
 **Returns:**
 ```json
@@ -741,17 +756,17 @@ new QualityHub(wrapper)
 |---|---|---|---|
 | Live Monitor | `monitor` | Quality Inspection Readings (out-of-range panel) | — |
 | Receiving (QCA) | `receiving` | QC Receiving Record | — |
-| Process (QCB–QCE) | `process` | QC Puffs / Rice / Frying / Oven | Puffs · Rice · Frying · Oven |
+| Process (QCB–QCD) | `process` | QC Puffs / Rice / Frying | Puffs · Rice · Frying |
 | Tasting (QCF) | `tasting` | QC Tasting Record | — |
 | Pkg & Weight (QCG/QCI) | `pkg_weight` | QC Packaging Check / QC Weight Check | Packaging · Weight |
 | CCP & Metal (QCH) | `metal` | QC Metal Detector Log | — |
-| Reports & Trends | `reports` | (matrix — all 9 types) | — |
+| Reports & Trends | `reports` | (matrix — the 8 types in use) | — |
 
 ### Per-Tab Components
 
 **Live Monitor (`monitor`)**
 - 4-card stat grid: Overdue readings · Due in next 5 min · Completed last hour · Open non-conformances
-- 9-card QC summary grid (one card per QCA–QCI, coloured green/amber by submission status)
+- 8-card QC summary grid (one card per type in use, QCA–QCI without the retired QCE, coloured green/amber by submission status)
 - Two-column panel layout:
   - Left: "Due & Overdue Checkpoints" datatable (red badge count)
   - Right: "Recent Out-of-Range Readings" datatable (amber badge count)
@@ -761,7 +776,8 @@ new QualityHub(wrapper)
 - Single panel with record list datatable
 
 **Process (`process`)**
-- Sub-nav pills: Puffs Extruder (QCB) · Rice Extruder (QCC) · Frying Line (QCD) · Oven (QCE)
+- Sub-nav pills: Puffs Extruder (QCB) · Rice Extruder (QCC) · Frying Line (QCD)
+- The New Record dialog for QCB and QCC has two row editors, each in its own section: **Readings** (at least one row) and **Oven Readings** (optional). A dialog config lists extra tables under `extra_child_tables`; `create_qc_record` takes them through `optional_child_tables` in `QC_DIALOG_CONFIG`
 - Filter bar: date · work_order · factory_line · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 - Active sub-nav pill updates `active_process_sub` and re-loads records
@@ -786,7 +802,7 @@ new QualityHub(wrapper)
 - Date-picker + Refresh button → calls `get_completion_matrix(date)` 
 - Completion matrix rendered as `<table class="qh-table qh-matrix">` (shift rows × code columns)
   - ✅ = submitted, 🟡 = draft, — = not started
-- Quick Links row with direct `#List/` links to all 9 DocType list views, and to the Quality Explorer page (see `docs/quality-explorer.md`)
+- Quick Links row with direct `#List/` links to the 8 DocType list views in use, and to the Quality Explorer page (see `docs/quality-explorer.md`)
 
 ### Record List Datatable
 
@@ -942,7 +958,7 @@ isnack/
         │   ├── test_qc_frying_line_record.py
         │   └── __init__.py
         │
-        ├── qc_oven_record/                   ── QCE
+        ├── qc_oven_record/                   ── QCE (retired)
         │   ├── qc_oven_record.json
         │   ├── qc_oven_record.py
         │   ├── test_qc_oven_record.py
@@ -982,9 +998,10 @@ isnack/
         │   ├── qc_frying_reading.py
         │   └── __init__.py
         │
-        ├── qc_oven_reading/                  ── child (QCE)
+        ├── qc_oven_reading/                  ── child (QCB, QCC; QCE retired)
         │   ├── qc_oven_reading.json
-        │   ├── qc_oven_reading.py
+        │   ├── qc_oven_reading.py            ── oven_averages()
+        │   ├── test_oven_averages.py
         │   └── __init__.py
         │
         ├── qc_tasting_score/                 ── child (QCF)

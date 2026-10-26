@@ -21,6 +21,12 @@
   "avg_moisture",
   "avg_density",
   "out_of_range_count",
+  "oven_readings_section",
+  "oven_readings",
+  "avg_oven_zone1_temp",
+  "avg_oven_zone2_temp",
+  "avg_oven_moisture",
+  "result_section",
   "overall_status"
  ],
  "fields": [
@@ -121,6 +127,39 @@
    "read_only": 1
   },
   {
+   "fieldname": "oven_readings_section",
+   "fieldtype": "Section Break",
+   "label": "Oven Readings"
+  },
+  {
+   "fieldname": "oven_readings",
+   "fieldtype": "Table",
+   "label": "Oven Readings",
+   "options": "QC Oven Reading"
+  },
+  {
+   "fieldname": "avg_oven_zone1_temp",
+   "fieldtype": "Float",
+   "label": "Avg Oven Zone 1 Temp (°C)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "avg_oven_zone2_temp",
+   "fieldtype": "Float",
+   "label": "Avg Oven Zone 2 Temp (°C)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "avg_oven_moisture",
+   "fieldtype": "Float",
+   "label": "Avg Oven Moisture (%)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break"
+  },
+  {
    "fieldname": "overall_status",
    "fieldtype": "Select",
    "label": "Overall Status",
@@ -131,7 +170,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-25 21:00:00.000000",
+ "modified": "2026-10-26 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Rice Extruder Record",

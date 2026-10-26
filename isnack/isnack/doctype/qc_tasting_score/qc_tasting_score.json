@@ -26,7 +26,7 @@
    "fieldname": "appearance_score",
    "fieldtype": "Rating",
    "in_list_view": 1,
-   "label": "Appearance"
+   "label": "Shape"
   },
   {
    "fieldname": "colour_score",
@@ -37,7 +37,7 @@
   {
    "fieldname": "aroma_score",
    "fieldtype": "Rating",
-   "label": "Aroma"
+   "label": "Smell"
   },
   {
    "fieldname": "taste_score",
@@ -66,7 +66,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-04-15 10:00:00.000000",
+ "modified": "2026-10-26 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Tasting Score",

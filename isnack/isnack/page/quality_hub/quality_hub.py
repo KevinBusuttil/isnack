@@ -96,23 +96,26 @@ QC_DOCTYPES = {
     "QCI": "QC Weight Check",
 }
 
+# Record types no longer kept: oven readings are taken on the extruder records
+# (QCB, QCC) since 2026-10. Their old records stay readable (Quality Explorer,
+# desk); the hub neither offers, counts nor expects new ones.
+RETIRED_QC_CODES = {"QCE"}
+
 QC_DIALOG_CONFIG = {
     "QC Receiving Record": {},
     "QC Puffs Extruder Record": {
         "child_table_field": "readings",
         "child_doctype": "QC Extruder Reading",
+        "optional_child_tables": {"oven_readings": "QC Oven Reading"},
     },
     "QC Rice Extruder Record": {
         "child_table_field": "readings",
         "child_doctype": "QC Extruder Reading",
+        "optional_child_tables": {"oven_readings": "QC Oven Reading"},
     },
     "QC Frying Line Record": {
         "child_table_field": "readings",
         "child_doctype": "QC Frying Reading",
-    },
-    "QC Oven Record": {
-        "child_table_field": "readings",
-        "child_doctype": "QC Oven Reading",
     },
     "QC Tasting Record": {
         "child_table_field": "scores",
@@ -128,6 +131,11 @@ QC_DIALOG_CONFIG = {
         "child_doctype": "QC Weight Sample",
     },
 }
+
+
+def _hub_doctypes():
+    """The record types the hub expects every day: all but the retired ones."""
+    return {code: doctype for code, doctype in QC_DOCTYPES.items() if code not in RETIRED_QC_CODES}
 
 
 def _day_records(doctype, date):
@@ -157,7 +165,7 @@ def get_qc_record_summary(date=None):
     target_date = date or today()
     result = {}
 
-    for code, doctype in QC_DOCTYPES.items():
+    for code, doctype in _hub_doctypes().items():
         rows = _day_records(doctype, target_date)
         result[code] = {
             "doctype": doctype,
@@ -180,8 +188,9 @@ def get_completion_matrix(date=None):
     target_date = date or today()
     shifts = ["Morning", "Afternoon", "Night"]
     matrix = {shift: {} for shift in shifts}
+    doctypes = _hub_doctypes()
 
-    for code, doctype in QC_DOCTYPES.items():
+    for code, doctype in doctypes.items():
         rows = _day_records(doctype, target_date)
         for shift in shifts:
             if rows is None:
@@ -195,7 +204,7 @@ def get_completion_matrix(date=None):
             else:
                 matrix[shift][code] = "not_started"
 
-    return {"matrix": matrix, "date": target_date, "doctypes": QC_DOCTYPES}
+    return {"matrix": matrix, "date": target_date, "doctypes": doctypes}
 
 
 @frappe.whitelist()
@@ -267,13 +276,19 @@ def create_qc_record(doctype, payload=None, submit=False):
         frappe.throw("Payload must be a JSON object.")
 
     meta = frappe.get_meta(doctype)
-    child_fieldname = config.get("child_table_field")
-    child_doctype = config.get("child_doctype")
-    child_rows = []
-    if child_fieldname:
-        child_rows = data.pop(child_fieldname, []) or []
-        if not isinstance(child_rows, list):
-            frappe.throw(f"{frappe.bold(child_fieldname)} must be a list of rows.")
+    # (fieldname, child doctype, needs a row): the record's own table, then any optional ones
+    tables = []
+    if config.get("child_table_field"):
+        tables.append((config["child_table_field"], config["child_doctype"], True))
+    for fieldname, child_doctype in config.get("optional_child_tables", {}).items():
+        tables.append((fieldname, child_doctype, False))
+
+    child_rows = {}
+    for fieldname, _child_doctype, _required in tables:
+        rows = data.pop(fieldname, []) or []
+        if not isinstance(rows, list):
+            frappe.throw(f"{frappe.bold(fieldname)} must be a list of rows.")
+        child_rows[fieldname] = rows
 
     allowed_parent_fields = {
         df.fieldname: df.fieldtype for df in meta.fields if df.fieldtype != "Table" and df.fieldname
@@ -290,30 +305,10 @@ def create_qc_record(doctype, payload=None, submit=False):
 
     doc = frappe.get_doc(doc_data)
 
-    if child_fieldname:
-        child_meta = frappe.get_meta(child_doctype)
-        allowed_child_fields = {
-            df.fieldname: df.fieldtype
-            for df in child_meta.fields
-            if df.fieldtype != "Table" and df.fieldname
-        }
-
-        appended_rows = 0
-        for row in child_rows:
-            if not isinstance(row, dict):
-                frappe.throw("Each child row must be a JSON object.")
-
-            clean_row = {
-                fieldname: value
-                for fieldname, value in row.items()
-                if fieldname in allowed_child_fields and _keep_value(allowed_child_fields[fieldname], value)
-            }
-            if _is_non_empty_row(clean_row):
-                doc.append(child_fieldname, clean_row)
-                appended_rows += 1
-
-        if not appended_rows:
-            label = meta.get_label(child_fieldname) or child_fieldname.replace("_", " ").title()
+    for fieldname, child_doctype, required in tables:
+        appended_rows = _append_child_rows(doc, fieldname, child_doctype, child_rows[fieldname])
+        if required and not appended_rows:
+            label = meta.get_label(fieldname) or fieldname.replace("_", " ").title()
             frappe.throw(f"At least one row is required in {frappe.bold(label)}.")
 
     doc.insert()
@@ -328,6 +323,30 @@ def create_qc_record(doctype, payload=None, submit=False):
         "shift": getattr(doc, "shift", None),
         "overall_status": getattr(doc, "overall_status", None),
     }
+
+
+def _append_child_rows(doc, fieldname, child_doctype, rows):
+    """Append the dialog's rows that hold a value to ``doc``'s ``fieldname``
+    table; how many it appended."""
+    child_meta = frappe.get_meta(child_doctype)
+    allowed_child_fields = {
+        df.fieldname: df.fieldtype for df in child_meta.fields if df.fieldtype != "Table" and df.fieldname
+    }
+
+    appended_rows = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            frappe.throw("Each child row must be a JSON object.")
+
+        clean_row = {
+            child_field: value
+            for child_field, value in row.items()
+            if child_field in allowed_child_fields and _keep_value(allowed_child_fields[child_field], value)
+        }
+        if _is_non_empty_row(clean_row):
+            doc.append(fieldname, clean_row)
+            appended_rows += 1
+    return appended_rows
 
 
 def _is_blank(value):

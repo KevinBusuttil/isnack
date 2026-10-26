@@ -13,7 +13,7 @@ It is linked from the Factory workspace (Hubs card) and from the Quality Hub's R
 Batch AAO-007 · FG10005 · Salted Crisps 50g · Manufactured 20-10-2026
   8 QC records · 7 submitted · 1 draft · 1 failed · 2 Work Orders · 2 ingredient batches
 
-Record coverage   QCA 1 · QCB 1 · QCC 0 · QCD 2 · QCE 0 · QCF — · QCG 1 · QCH 1 · QCI 2
+Record coverage   QCA 1 · QCB 1 · QCC 0 · QCD 2 · QCF — · QCG 1 · QCH 1 · QCI 2
                   (green: submitted · amber: drafts only · red: a record failed · grey: none)
 
 Batch · AAO-007
@@ -52,6 +52,8 @@ An ingredient batch with no receiving record gets a **No receiving record** tag:
 ## Permissions
 
 The page itself is open to desk users, like the Batch Explorer. Exploring a batch needs read on that batch; exploring a Work Order needs read on that Work Order. Both are checked on the document, so User Permissions apply to a direct call or a shared link too, not only to the pickers.
+
+The Oven record (QCE) is retired: oven readings are on the extruder records (QCB, QCC) now, so the coverage strip lists QCE only when the batch or Work Order has an old Oven record, never as missing.
 
 A record type the user may not read shows as "—" in the coverage strip and is named under the summary. Within a type, records a User Permission keeps from the user (on a line, an item, a supplier) are not shown but are counted: the summary says how many are hidden, a type whose only records are hidden reads "—" rather than "No record", a Work Order or batch in the trace groups says "+N hidden" next to its record count, and an ingredient whose receiving record is hidden is not flagged **No receiving record**. A Work Order that only a hidden record names still has its other records looked up. Nothing on the page claims a record is missing when the user simply may not see it.
 

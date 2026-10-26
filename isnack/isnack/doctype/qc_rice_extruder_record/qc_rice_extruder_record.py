@@ -4,6 +4,8 @@
 import frappe
 from frappe.model.document import Document
 
+from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import oven_averages
+
 
 class QCRiceExtruderRecord(Document):
     def validate(self):
@@ -13,3 +15,6 @@ class QCRiceExtruderRecord(Document):
         self.avg_moisture = sum(moistures) / len(moistures) if moistures else 0
         self.avg_density = sum(densities) / len(densities) if densities else 0
         self.out_of_range_count = sum(1 for r in readings if (r.moisture_content or 0) > 14)
+        self.avg_oven_zone1_temp, self.avg_oven_zone2_temp, self.avg_oven_moisture = oven_averages(
+            self.oven_readings or []
+        )

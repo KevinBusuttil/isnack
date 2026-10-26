@@ -60,6 +60,35 @@ class TestReceivingRecordSchema(unittest.TestCase):
 		self.assertEqual(self.doc["field_order"], [f["fieldname"] for f in self.doc["fields"]])
 
 
+class TestOvenReadingsOnTheExtruders(unittest.TestCase):
+	EXTRUDERS = ("QC Puffs Extruder Record", "QC Rice Extruder Record")
+
+	def test_an_oven_readings_section_under_the_readings(self):
+		for doctype in self.EXTRUDERS:
+			doc = _doctype(doctype)
+			fields = _fields(doc)
+			order = doc["field_order"]
+			self.assertEqual(order, [f["fieldname"] for f in doc["fields"]], doctype)
+			section = fields["oven_readings_section"]
+			self.assertEqual((section["fieldtype"], section["label"]), ("Section Break", "Oven Readings"), doctype)
+			table = fields["oven_readings"]
+			self.assertEqual((table["fieldtype"], table["options"]), ("Table", "QC Oven Reading"), doctype)
+			# the extruder's own readings and their averages, then the oven's
+			self.assertLess(order.index("out_of_range_count"), order.index("oven_readings_section"), doctype)
+			self.assertEqual(order.index("oven_readings"), order.index("oven_readings_section") + 1, doctype)
+			for fieldname in ("avg_oven_zone1_temp", "avg_oven_zone2_temp", "avg_oven_moisture"):
+				self.assertEqual(fields[fieldname].get("read_only"), 1, f"{doctype}.{fieldname}")
+				self.assertLess(order.index("oven_readings"), order.index(fieldname), f"{doctype}.{fieldname}")
+			self.assertLess(order.index("avg_oven_moisture"), order.index("overall_status"), doctype)
+
+	def test_the_dialog_takes_them_and_no_longer_makes_oven_records(self):
+		for doctype in self.EXTRUDERS:
+			self.assertEqual(
+				qh.QC_DIALOG_CONFIG[doctype]["optional_child_tables"], {"oven_readings": "QC Oven Reading"}
+			)
+		self.assertNotIn("QC Oven Record", qh.QC_DIALOG_CONFIG)
+
+
 class TestOverallStatusStartsBlank(unittest.TestCase):
 	def test_a_new_record_has_no_result_until_someone_sets_one(self):
 		# a Select without a blank first option defaults to that option, so a
@@ -160,6 +189,10 @@ class TestRecordLists(unittest.TestCase):
 			("submitted", "draft", "not_started"),
 		)
 		self.assertEqual({matrix[s]["QCF"] for s in matrix}, {"hidden"})
+		# oven readings are on the extruder records: no Oven record is expected
+		self.assertNotIn("QCE", summary)
+		self.assertNotIn("QCE", qh.get_completion_matrix("2026-10-25")["doctypes"])
+		self.assertTrue(all("QCE" not in matrix[s] for s in matrix))
 		# counted through get_list, which applies the user's User Permissions
 		count.assert_not_called()
 		get_all.assert_not_called()
@@ -230,6 +263,57 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 		)
 		doc.append.assert_called_once_with("readings", {"time_slot": "22:00", "moisture_content": 12.1})
 		doc.insert.assert_called_once()
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_oven_readings_go_in_their_own_table(self, get_meta, get_doc):
+		get_meta.side_effect = lambda doctype: {
+			"QC Puffs Extruder Record": self._meta(["record_date"]),
+			"QC Extruder Reading": self._meta(["time_slot", "moisture_content"]),
+			"QC Oven Reading": self._meta(["time_slot", "zone_1_temp", "moisture"]),
+		}[doctype]
+		doc = get_doc.return_value = MagicMock(docstatus=0)
+
+		qh.create_qc_record(
+			"QC Puffs Extruder Record",
+			payload={
+				"record_date": "2026-10-26",
+				"readings": [{"time_slot": "08:00", "moisture_content": 12.0}],
+				"oven_readings": [
+					{"time_slot": "08:30", "zone_1_temp": 180.0, "moisture": ""},
+					{"time_slot": "", "zone_1_temp": "", "moisture": ""},
+				],
+			},
+		)
+
+		self.assertNotIn("oven_readings", get_doc.call_args.args[0])
+		self.assertEqual(
+			[c.args for c in doc.append.call_args_list],
+			[
+				("readings", {"time_slot": "08:00", "moisture_content": 12.0}),
+				("oven_readings", {"time_slot": "08:30", "zone_1_temp": 180.0}),
+			],
+		)
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_oven_readings_are_optional_but_readings_are_not(self, get_meta, get_doc):
+		get_meta.side_effect = lambda doctype: self._meta(["record_date", "time_slot", "zone_1_temp"])
+		doc = get_doc.return_value = MagicMock(docstatus=0)
+
+		qh.create_qc_record(
+			"QC Rice Extruder Record",
+			payload={"record_date": "2026-10-26", "readings": [{"time_slot": "08:00"}], "oven_readings": []},
+		)
+		doc.insert.assert_called_once()
+
+		doc.reset_mock()
+		with self.assertRaises(frappe.ValidationError):
+			qh.create_qc_record(
+				"QC Rice Extruder Record",
+				payload={"record_date": "2026-10-26", "readings": [], "oven_readings": [{"zone_1_temp": 180.0}]},
+			)
+		doc.insert.assert_not_called()
 
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")
