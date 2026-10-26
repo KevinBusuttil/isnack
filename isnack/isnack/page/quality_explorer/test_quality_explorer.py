@@ -489,6 +489,8 @@ class TestGetQualityRecords(unittest.TestCase):
 		self.assertEqual((node["qc_count"], node["qc_withheld"]), (0, 0))
 		self.assertEqual(out["summary"]["work_orders"], 0)
 		self.assertTrue(all(c["state"] == "missing" for c in out["coverage"]))
+		# no Oven record is expected any more: the extruder records hold the oven readings
+		self.assertNotIn("QCE", [c["code"] for c in out["coverage"]])
 
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes", return_value=[])
 	@patch("isnack.isnack.page.batch_explorer.batch_explorer._user_names", return_value={})
@@ -513,3 +515,19 @@ class TestGetQualityRecords(unittest.TestCase):
 		node = next(g for g in out["groups"] if g["key"] == "outputs")["nodes"][0]
 		self.assertEqual((node["qc_count"], node["qc_withheld"]), (0, 1))
 		self.assertEqual({c["code"]: c["state"] for c in out["coverage"]}["QCI"], "hidden")
+
+
+class TestRetiredRecordTypes(unittest.TestCase):
+	def test_an_old_oven_record_still_shows(self):
+		oven = frappe._dict(docstatus=1, overall_status="Pass")
+		coverage = {c["code"]: c for c in qe._coverage({"QCE": [oven]}, [], {})}
+		self.assertEqual((coverage["QCE"]["state"], coverage["QCE"]["count"]), ("submitted", 1))
+
+	def test_one_withheld_from_the_user_still_shows(self):
+		coverage = {c["code"]: c for c in qe._coverage({}, [], {"QCE": [frappe._dict(name="QCE-1")]})}
+		self.assertEqual((coverage["QCE"]["state"], coverage["QCE"]["withheld"]), ("hidden", 1))
+
+	def test_none_is_not_missing(self):
+		codes = [c["code"] for c in qe._coverage({}, ["QCE"], {})]
+		self.assertNotIn("QCE", codes)
+		self.assertIn("QCB", codes)

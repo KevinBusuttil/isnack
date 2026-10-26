@@ -48,7 +48,7 @@ from frappe import _
 from frappe.utils import cint
 
 from isnack.isnack.page.batch_explorer import batch_explorer as be
-from isnack.isnack.page.quality_hub.quality_hub import QC_DOCTYPES
+from isnack.isnack.page.quality_hub.quality_hub import QC_DOCTYPES, RETIRED_QC_CODES
 from isnack.utils import batch_lineage
 from isnack.utils.qty import qty_tick
 
@@ -58,6 +58,7 @@ QC_META = {
 	"QCB": {"label": "Puffs Extruder", "color": "#26a65b"},
 	"QCC": {"label": "Rice Extruder", "color": "#26a65b"},
 	"QCD": {"label": "Frying Line", "color": "#26a65b"},
+	# retired: oven readings are on the extruder records now; old records still show
 	"QCE": {"label": "Oven", "color": "#26a65b"},
 	"QCF": {"label": "Tasting", "color": "#ab47bc"},
 	"QCG": {"label": "Packaging", "color": "#26a69a"},
@@ -483,12 +484,15 @@ def _coverage(records: dict[str, list], hidden: list[str], withheld: dict[str, l
 	``state`` is ``hidden`` (may not read the type, or every record of it is
 	withheld from the user), ``missing`` (no record), ``failed`` (a record
 	failed), ``submitted`` or ``draft`` (drafts only). ``withheld`` counts the
-	records the user's permissions keep from them.
+	records the user's permissions keep from them. A retired record type is
+	only listed when it has records: none is expected any more.
 	"""
 	out = []
 	for code, doctype in QC_DOCTYPES.items():
 		rows = records.get(code) or []
 		kept_back = len(withheld.get(code) or [])
+		if code in RETIRED_QC_CODES and not rows and not kept_back:
+			continue
 		submitted = sum(1 for r in rows if r.docstatus == 1)
 		failed = sum(1 for r in rows if _result(r)[1] == "fail")
 		if code in hidden or (kept_back and not rows):
