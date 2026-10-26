@@ -454,7 +454,7 @@ isnack.QualityExplorer = class QualityExplorer {
 					<span class="qe-legend qe-cov-missing">${__("No record")}</span>
 				</span>
 			</div>
-			<div class="qe-coverage-grid">${chips.join("")}</div>
+			<div class="qe-coverage-grid" style="--qe-coverage-count: ${chips.length}">${chips.join("")}</div>
 		`;
 	}
 
