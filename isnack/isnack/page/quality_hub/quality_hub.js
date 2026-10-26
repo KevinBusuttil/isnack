@@ -890,7 +890,8 @@ isnack.quality_hub.QualityHub = class {
 
         $wrapper.find(".qh-child-delete").on("click", (e) => {
             const index = Number($(e.currentTarget).data("row-index"));
-            if (rows.length <= (table.min_rows || 1)) {
+            // an optional table (min_rows 0) can be emptied, as it may be saved empty
+            if (rows.length <= (table.min_rows ?? 1)) {
                 frappe.show_alert({
                     message: __("Minimum row count reached. Row cleared instead."),
                     indicator: "orange",
@@ -1323,7 +1324,7 @@ isnack.quality_hub.QualityHub = class {
                 </div>`;
         }).join("");
 
-        $grid.html(cards);
+        $grid.css("--qh-summary-count", Object.keys(summary).length).html(cards);
     }
 
     update_ui(data, from_timer) {

@@ -370,8 +370,9 @@
    QC Record Summary grid (Live Monitor)
    ─────────────────────────────────────────────────────────────
 */
+/* one row of cards, as many as the record types the hub expects (set by render_qc_summary_cards) */
 .qh-qc-summary-grid {
-    grid-template-columns: repeat(9, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--qh-summary-count, 8), minmax(0, 1fr));
     gap: 0.6rem;
     margin-bottom: 1.25rem;
 }
