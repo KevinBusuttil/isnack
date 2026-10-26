@@ -114,7 +114,19 @@ class TestRecomputePatch(unittest.TestCase):
 		self.assertIn("Check the scores", doc.add_comment.call_args.args[1])
 		self.assertIn("QCF-1", printed.call_args.args[0])
 
-	def test_a_fraction_anywhere_shows_the_desk_form_scored_it(self, _exists, _all, get_doc, _meta_):
+	@patch("builtins.print")
+	def test_a_dialog_row_among_desk_rows_is_left_alone(self, _printed, _exists, _all, get_doc, _meta_):
+		# a dialog draft finished in the desk form: the first taster gave 1 star
+		doc = get_doc.return_value = _stored(
+			[{"overall_score": 1, "taste_score": 1}, {"overall_score": 0.8, "taste_score": 0.6}], avg_overall=0.9
+		)
+
+		patch_module.execute()
+
+		doc.db_set.assert_not_called()
+		self.assertIn("Check the scores", doc.add_comment.call_args.args[1])
+
+	def test_a_row_with_a_fraction_was_scored_in_the_desk_form(self, _exists, _all, get_doc, _meta_):
 		doc = get_doc.return_value = _stored([{"overall_score": 1, "appearance_score": 0.8}], avg_overall=1.0)
 
 		patch_module.execute()
