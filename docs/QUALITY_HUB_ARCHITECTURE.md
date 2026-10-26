@@ -233,7 +233,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `readings` | Table → QC Frying Reading | Readings | Child table |
 | `avg_oil_temperature` | Float | Avg Oil Temperature (°C) | `read_only: 1` — auto-calculated |
-| `avg_product_moisture` | Float | Avg Product Moisture (%) | `read_only: 1` — auto-calculated |
+| `avg_product_moisture` | Float | Avg Moisture Content (%) | `read_only: 1` — auto-calculated (was "Avg Product Moisture (%)") |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — placeholder for future spec-based logic |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
@@ -374,10 +374,11 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 |---|---|---|---|
 | `time_slot` | Time | Time Slot | ✅ |
 | `oil_temperature` | Float | Oil Temperature (°C) | ✅ |
-| `oil_ffa` | Float | Oil FFA | ✅ |
-| `oil_tpm` | Float | Oil TPM | ✅ |
-| `product_temperature` | Float | Product Temp (°C) | — |
-| `product_moisture` | Float | Product Moisture (%) | ✅ |
+| `oil_ffa` | Float | Oil (FFA) (was "Oil FFA") | ✅ |
+| `oil_tpm` | Float | Oil (TPM) (was "Oil TPM") | ✅ |
+| `oil_pv` | Float | Oil (PV) | — |
+| `oil_anv` | Float | Oil (ANV) | — |
+| `product_moisture` | Float | Moisture Content (%) (was "Product Moisture (%)") | ✅ |
 | `oil_change_flag` | Check | Oil Changed | — |
 | `reading_remarks` | Small Text | Remarks | — |
 

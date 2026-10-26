@@ -60,6 +60,31 @@ class TestReceivingRecordSchema(unittest.TestCase):
 		self.assertEqual(self.doc["field_order"], [f["fieldname"] for f in self.doc["fields"]])
 
 
+class TestFryingReadings(unittest.TestCase):
+	def test_oil_pv_and_anv_replace_product_temperature(self):
+		doc = _doctype("QC Frying Reading")
+		fields = _fields(doc)
+		order = doc["field_order"]
+		self.assertEqual(order, [f["fieldname"] for f in doc["fields"]])
+		self.assertNotIn("product_temperature", fields)
+		for fieldname, label in (("oil_pv", "Oil (PV)"), ("oil_anv", "Oil (ANV)")):
+			self.assertEqual((fields[fieldname]["fieldtype"], fields[fieldname]["label"]), ("Float", label))
+		self.assertEqual(order[order.index("oil_tpm") + 1 : order.index("oil_tpm") + 3], ["oil_pv", "oil_anv"])
+
+	def test_oil_readings_name_the_measure_in_brackets(self):
+		fields = _fields(_doctype("QC Frying Reading"))
+		self.assertEqual(
+			[fields[f]["label"] for f in ("oil_ffa", "oil_tpm", "oil_pv", "oil_anv")],
+			["Oil (FFA)", "Oil (TPM)", "Oil (PV)", "Oil (ANV)"],
+		)
+
+	def test_moisture_reads_moisture_content(self):
+		self.assertEqual(_fields(_doctype("QC Frying Reading"))["product_moisture"]["label"], "Moisture Content (%)")
+		self.assertEqual(
+			_fields(_doctype("QC Frying Line Record"))["avg_product_moisture"]["label"], "Avg Moisture Content (%)"
+		)
+
+
 class TestOvenReadingsOnTheExtruders(unittest.TestCase):
 	EXTRUDERS = ("QC Puffs Extruder Record", "QC Rice Extruder Record")
 

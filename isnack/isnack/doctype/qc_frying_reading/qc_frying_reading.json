@@ -10,7 +10,8 @@
   "oil_temperature",
   "oil_ffa",
   "oil_tpm",
-  "product_temperature",
+  "oil_pv",
+  "oil_anv",
   "product_moisture",
   "oil_change_flag",
   "reading_remarks"
@@ -32,24 +33,29 @@
    "fieldname": "oil_ffa",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Oil FFA"
+   "label": "Oil (FFA)"
   },
   {
    "fieldname": "oil_tpm",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Oil TPM"
+   "label": "Oil (TPM)"
   },
   {
-   "fieldname": "product_temperature",
+   "fieldname": "oil_pv",
    "fieldtype": "Float",
-   "label": "Product Temp (\u00b0C)"
+   "label": "Oil (PV)"
+  },
+  {
+   "fieldname": "oil_anv",
+   "fieldtype": "Float",
+   "label": "Oil (ANV)"
   },
   {
    "fieldname": "product_moisture",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Product Moisture (%)"
+   "label": "Moisture Content (%)"
   },
   {
    "fieldname": "oil_change_flag",
@@ -66,7 +72,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-04-15 10:00:00.000000",
+ "modified": "2026-10-26 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Frying Reading",
