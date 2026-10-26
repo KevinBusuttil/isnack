@@ -111,7 +111,7 @@
   {
    "fieldname": "avg_product_moisture",
    "fieldtype": "Float",
-   "label": "Avg Product Moisture (%)",
+   "label": "Avg Moisture Content (%)",
    "read_only": 1
   },
   {
@@ -131,7 +131,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-25 21:00:00.000000",
+ "modified": "2026-10-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Frying Line Record",
