@@ -157,8 +157,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_fields: [
             { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
             { fieldname: "oil_temperature", fieldtype: "Float", label: __("Oil Temperature (°C)") },
-            { fieldname: "oil_ffa", fieldtype: "Float", label: __("Oil FFA") },
-            { fieldname: "oil_tpm", fieldtype: "Float", label: __("Oil TPM") },
+            { fieldname: "oil_ffa", fieldtype: "Float", label: __("Oil (FFA)") },
+            { fieldname: "oil_tpm", fieldtype: "Float", label: __("Oil (TPM)") },
             { fieldname: "oil_pv", fieldtype: "Float", label: __("Oil (PV)") },
             { fieldname: "oil_anv", fieldtype: "Float", label: __("Oil (ANV)") },
             { fieldname: "product_moisture", fieldtype: "Float", label: __("Moisture Content (%)") },

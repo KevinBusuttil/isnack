@@ -71,6 +71,13 @@ class TestFryingReadings(unittest.TestCase):
 			self.assertEqual((fields[fieldname]["fieldtype"], fields[fieldname]["label"]), ("Float", label))
 		self.assertEqual(order[order.index("oil_tpm") + 1 : order.index("oil_tpm") + 3], ["oil_pv", "oil_anv"])
 
+	def test_oil_readings_name_the_measure_in_brackets(self):
+		fields = _fields(_doctype("QC Frying Reading"))
+		self.assertEqual(
+			[fields[f]["label"] for f in ("oil_ffa", "oil_tpm", "oil_pv", "oil_anv")],
+			["Oil (FFA)", "Oil (TPM)", "Oil (PV)", "Oil (ANV)"],
+		)
+
 	def test_moisture_reads_moisture_content(self):
 		self.assertEqual(_fields(_doctype("QC Frying Reading"))["product_moisture"]["label"], "Moisture Content (%)")
 		self.assertEqual(

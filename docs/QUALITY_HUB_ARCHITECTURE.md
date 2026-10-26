@@ -374,8 +374,8 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 |---|---|---|---|
 | `time_slot` | Time | Time Slot | ✅ |
 | `oil_temperature` | Float | Oil Temperature (°C) | ✅ |
-| `oil_ffa` | Float | Oil FFA | ✅ |
-| `oil_tpm` | Float | Oil TPM | ✅ |
+| `oil_ffa` | Float | Oil (FFA) (was "Oil FFA") | ✅ |
+| `oil_tpm` | Float | Oil (TPM) (was "Oil TPM") | ✅ |
 | `oil_pv` | Float | Oil (PV) | — |
 | `oil_anv` | Float | Oil (ANV) | — |
 | `product_moisture` | Float | Moisture Content (%) (was "Product Moisture (%)") | ✅ |
