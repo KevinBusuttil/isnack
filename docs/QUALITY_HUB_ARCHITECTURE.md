@@ -391,9 +391,9 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
 | `taster_name` | Data | Taster Name | ✅ |
-| `appearance_score` | Rating | Appearance | ✅ |
+| `appearance_score` | Rating | Shape (was "Appearance") | ✅ |
 | `colour_score` | Rating | Colour | ✅ |
-| `aroma_score` | Rating | Aroma | — |
+| `aroma_score` | Rating | Smell (was "Aroma") | — |
 | `taste_score` | Rating | Taste | ✅ |
 | `texture_score` | Rating | Texture | — |
 | `overall_score` | Rating | Overall | ✅ |

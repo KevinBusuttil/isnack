@@ -201,9 +201,9 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
         child_fields: [
             { fieldname: "taster_name", fieldtype: "Data", label: __("Taster Name") },
-            { fieldname: "appearance_score", fieldtype: "Rating", label: __("Appearance") },
+            { fieldname: "appearance_score", fieldtype: "Rating", label: __("Shape") },
             { fieldname: "colour_score", fieldtype: "Rating", label: __("Colour") },
-            { fieldname: "aroma_score", fieldtype: "Rating", label: __("Aroma") },
+            { fieldname: "aroma_score", fieldtype: "Rating", label: __("Smell") },
             { fieldname: "taste_score", fieldtype: "Rating", label: __("Taste") },
             { fieldname: "texture_score", fieldtype: "Rating", label: __("Texture") },
             { fieldname: "overall_score", fieldtype: "Rating", label: __("Overall") },
