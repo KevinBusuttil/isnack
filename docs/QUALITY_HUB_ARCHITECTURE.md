@@ -128,8 +128,8 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 |---|---|---|---|
 | `record_date` | Date | Record Date | `reqd: 1`, `default: "Today"` |
 | `shift` | Select | Shift | `reqd: 1`, options: Morning / Afternoon / Night |
-| `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** |
-| `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** |
+| `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
+| `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
 | `operator_name` | Data | Operator Name | `reqd: 1` |
 | `qc_inspector` | Link → User | QC Inspector | `reqd: 1`, `default: "__user"` (auto-fills current user) |
 | `status` | Select | Status | options: Draft / Submitted / Rejected / Closed |
