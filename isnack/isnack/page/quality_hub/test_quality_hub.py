@@ -92,33 +92,127 @@ class TestFryingReadings(unittest.TestCase):
 		)
 
 
-class TestOvenReadingsOnTheExtruders(unittest.TestCase):
-	EXTRUDERS = ("QC Puffs Extruder Record", "QC Rice Extruder Record")
-
+class TestOvenReadingsOnTheRiceExtruder(unittest.TestCase):
 	def test_an_oven_readings_section_under_the_readings(self):
-		for doctype in self.EXTRUDERS:
-			doc = _doctype(doctype)
-			fields = _fields(doc)
-			order = doc["field_order"]
-			self.assertEqual(order, [f["fieldname"] for f in doc["fields"]], doctype)
-			section = fields["oven_readings_section"]
-			self.assertEqual((section["fieldtype"], section["label"]), ("Section Break", "Oven Readings"), doctype)
-			table = fields["oven_readings"]
-			self.assertEqual((table["fieldtype"], table["options"]), ("Table", "QC Oven Reading"), doctype)
-			# the extruder's own readings and their averages, then the oven's
-			self.assertLess(order.index("out_of_range_count"), order.index("oven_readings_section"), doctype)
-			self.assertEqual(order.index("oven_readings"), order.index("oven_readings_section") + 1, doctype)
-			for fieldname in ("avg_oven_zone1_temp", "avg_oven_zone2_temp", "avg_oven_moisture"):
-				self.assertEqual(fields[fieldname].get("read_only"), 1, f"{doctype}.{fieldname}")
-				self.assertLess(order.index("oven_readings"), order.index(fieldname), f"{doctype}.{fieldname}")
-			self.assertLess(order.index("avg_oven_moisture"), order.index("overall_status"), doctype)
+		doctype = "QC Rice Extruder Record"
+		doc = _doctype(doctype)
+		fields = _fields(doc)
+		order = doc["field_order"]
+		self.assertEqual(order, [f["fieldname"] for f in doc["fields"]])
+		section = fields["oven_readings_section"]
+		self.assertEqual((section["fieldtype"], section["label"]), ("Section Break", "Oven Readings"))
+		self.assertEqual((fields["readings"]["fieldtype"], fields["readings"]["options"]), ("Table", "QC Extruder Reading"))
+		table = fields["oven_readings"]
+		self.assertEqual((table["fieldtype"], table["options"]), ("Table", "QC Oven Reading"))
+		# the extruder's own readings and their averages, then the oven's
+		self.assertLess(order.index("out_of_range_count"), order.index("oven_readings_section"))
+		self.assertEqual(order.index("oven_readings"), order.index("oven_readings_section") + 1)
+		for fieldname in ("avg_oven_zone1_temp", "avg_oven_zone2_temp", "avg_oven_moisture"):
+			self.assertEqual(fields[fieldname].get("read_only"), 1, fieldname)
+			self.assertLess(order.index("oven_readings"), order.index(fieldname), fieldname)
+		self.assertLess(order.index("avg_oven_moisture"), order.index("overall_status"))
 
 	def test_the_dialog_takes_them_and_no_longer_makes_oven_records(self):
-		for doctype in self.EXTRUDERS:
-			self.assertEqual(
-				qh.QC_DIALOG_CONFIG[doctype]["optional_child_tables"], {"oven_readings": "QC Oven Reading"}
-			)
+		config = qh.QC_DIALOG_CONFIG["QC Rice Extruder Record"]
+		self.assertEqual((config["child_table_field"], config["child_doctype"]), ("readings", "QC Extruder Reading"))
+		self.assertEqual(config["optional_child_tables"], {"oven_readings": "QC Oven Reading"})
 		self.assertNotIn("QC Oven Record", qh.QC_DIALOG_CONFIG)
+
+
+class TestPuffsReadings(unittest.TestCase):
+	"""Puffs has its own readings since 2026-11; Rice keeps the shared tables."""
+
+	READINGS = [
+		("time_slot", "Time", "Time Slot"),
+		("moisture_corn_content", "Float", "Moisture Corn Content (%)"),
+		("start_temp", "Float", "Start Temp (°C)"),
+		("motor_speed", "Float", "Motor Speed (Hz)"),
+		("feed_motor", "Float", "Feed Motor (Hz)"),
+		("cutter_speed", "Float", "Cutter Speed (Hz)"),
+	]
+	OVEN_READINGS = [
+		("time_slot", "Time", "Time Slot"),
+		("oven_temp", "Float", "Oven Temp (°C)"),
+		("belt_speed", "Float", "Belt Speed (Hz)"),
+		("moisture", "Float", "Moisture (%)"),
+	]
+
+	def test_the_reading_columns(self):
+		for child, expected in (
+			("QC Puffs Extruder Reading", self.READINGS),
+			("QC Puffs Oven Reading", self.OVEN_READINGS),
+		):
+			doc = _doctype(child)
+			self.assertEqual(doc["istable"], 1, child)
+			self.assertEqual(doc["field_order"], [f["fieldname"] for f in doc["fields"]], child)
+			self.assertEqual([(f["fieldname"], f["fieldtype"], f["label"]) for f in doc["fields"]], expected, child)
+			# every column shows in the desk form's grid: Frappe keeps 2 of its 12
+			# units for the row number and a spare, and drops the columns past 10
+			self.assertTrue(all(f.get("in_list_view") for f in doc["fields"]), child)
+			self.assertLessEqual(sum(f.get("columns") or 2 for f in doc["fields"]), 10, child)
+
+	def test_the_record_takes_them_in_its_readings_and_oven_readings(self):
+		doc = _doctype("QC Puffs Extruder Record")
+		fields = _fields(doc)
+		order = doc["field_order"]
+		self.assertEqual(order, [f["fieldname"] for f in doc["fields"]])
+		for fieldname, label, options in (
+			("puffs_readings", "Readings", "QC Puffs Extruder Reading"),
+			("puffs_oven_readings", "Oven Readings", "QC Puffs Oven Reading"),
+		):
+			table = fields[fieldname]
+			self.assertEqual((table["fieldtype"], table["label"], table["options"]), ("Table", label, options))
+			self.assertFalse(table.get("read_only") or table.get("depends_on"), fieldname)
+		# the readings and their average, then the oven section
+		self.assertLess(order.index("puffs_readings"), order.index("avg_moisture_corn_content"))
+		self.assertLess(order.index("avg_moisture_corn_content"), order.index("oven_readings_section"))
+		self.assertEqual(order.index("puffs_oven_readings"), order.index("oven_readings_section") + 1)
+		for fieldname, table in (
+			("avg_moisture_corn_content", "puffs_readings"),
+			("avg_oven_temp", "puffs_oven_readings"),
+			("avg_puffs_oven_moisture", "puffs_oven_readings"),
+		):
+			self.assertEqual(fields[fieldname].get("read_only"), 1, fieldname)
+			# no 0 average on a record without such readings (an earlier one)
+			self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
+		self.assertLess(order.index("avg_puffs_oven_moisture"), order.index("earlier_readings_section"))
+
+	def test_earlier_readings_are_kept_read_only(self):
+		doc = _doctype("QC Puffs Extruder Record")
+		fields = _fields(doc)
+		order = doc["field_order"]
+		# never pointed at the new tables: their rows would no longer show
+		self.assertEqual(fields["readings"]["options"], "QC Extruder Reading")
+		self.assertEqual(fields["oven_readings"]["options"], "QC Oven Reading")
+		section = fields["earlier_readings_section"]
+		self.assertEqual(section["fieldtype"], "Section Break")
+		self.assertIn("doc.readings", section["depends_on"])
+		self.assertIn("doc.oven_readings", section["depends_on"])
+		earlier = {
+			"readings": ("readings", "avg_moisture", "avg_density", "out_of_range_count"),
+			"oven_readings": ("oven_readings", "avg_oven_zone1_temp", "avg_oven_zone2_temp", "avg_oven_moisture"),
+		}
+		for table, fieldnames in earlier.items():
+			self.assertEqual(fields[table]["read_only"], 1, table)
+			for fieldname in fieldnames:
+				# shown only on a record that has rows in them
+				self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
+				self.assertLess(order.index("earlier_readings_section"), order.index(fieldname), fieldname)
+				self.assertLess(order.index(fieldname), order.index("result_section"), fieldname)
+
+	def test_rice_keeps_the_shared_readings(self):
+		self.assertIn("screw_speed_rpm", _fields(_doctype("QC Extruder Reading")))
+		self.assertIn("zone_1_temp", _fields(_doctype("QC Oven Reading")))
+		rice = _fields(_doctype("QC Rice Extruder Record"))
+		self.assertNotIn("puffs_readings", rice)
+		self.assertNotIn("puffs_oven_readings", rice)
+
+	def test_the_dialog_takes_the_new_tables(self):
+		config = qh.QC_DIALOG_CONFIG["QC Puffs Extruder Record"]
+		self.assertEqual(
+			(config["child_table_field"], config["child_doctype"]), ("puffs_readings", "QC Puffs Extruder Reading")
+		)
+		self.assertEqual(config["optional_child_tables"], {"puffs_oven_readings": "QC Puffs Oven Reading"})
 
 
 class TestOverallStatusStartsBlank(unittest.TestCase):
@@ -306,7 +400,7 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 		get_meta.side_effect = lambda doctype: (
 			self._meta(["record_date", "shift", "work_order", "overall_status"])
 			if doctype == "QC Puffs Extruder Record"
-			else self._meta(["time_slot", "moisture_content", "product_density"])
+			else self._meta(["time_slot", "moisture_corn_content", "start_temp"])
 		)
 		doc = MagicMock(docstatus=0)
 		get_doc.return_value = doc
@@ -318,9 +412,9 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 				"shift": "Night",
 				"work_order": "",
 				"overall_status": "",
-				"readings": [
-					{"time_slot": "22:00", "moisture_content": 12.1, "product_density": ""},
-					{"time_slot": "", "moisture_content": "", "product_density": ""},
+				"puffs_readings": [
+					{"time_slot": "22:00", "moisture_corn_content": 12.1, "start_temp": ""},
+					{"time_slot": "", "moisture_corn_content": "", "start_temp": ""},
 				],
 			},
 		)
@@ -330,7 +424,7 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 			get_doc.call_args.args[0],
 			{"doctype": "QC Puffs Extruder Record", "record_date": "2026-10-25", "shift": "Night", "status": "Draft"},
 		)
-		doc.append.assert_called_once_with("readings", {"time_slot": "22:00", "moisture_content": 12.1})
+		doc.append.assert_called_once_with("puffs_readings", {"time_slot": "22:00", "moisture_corn_content": 12.1})
 		doc.insert.assert_called_once()
 
 	@patch("frappe.get_doc")
@@ -338,8 +432,8 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 	def test_oven_readings_go_in_their_own_table(self, get_meta, get_doc):
 		get_meta.side_effect = lambda doctype: {
 			"QC Puffs Extruder Record": self._meta(["record_date"]),
-			"QC Extruder Reading": self._meta(["time_slot", "moisture_content"]),
-			"QC Oven Reading": self._meta(["time_slot", "zone_1_temp", "moisture"]),
+			"QC Puffs Extruder Reading": self._meta(["time_slot", "moisture_corn_content"]),
+			"QC Puffs Oven Reading": self._meta(["time_slot", "oven_temp", "moisture"]),
 		}[doctype]
 		doc = get_doc.return_value = MagicMock(docstatus=0)
 
@@ -347,22 +441,37 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 			"QC Puffs Extruder Record",
 			payload={
 				"record_date": "2026-10-26",
-				"readings": [{"time_slot": "08:00", "moisture_content": 12.0}],
-				"oven_readings": [
-					{"time_slot": "08:30", "zone_1_temp": 180.0, "moisture": ""},
-					{"time_slot": "", "zone_1_temp": "", "moisture": ""},
+				"puffs_readings": [{"time_slot": "08:00", "moisture_corn_content": 12.0}],
+				"puffs_oven_readings": [
+					{"time_slot": "08:30", "oven_temp": 180.0, "moisture": ""},
+					{"time_slot": "", "oven_temp": "", "moisture": ""},
 				],
 			},
 		)
 
-		self.assertNotIn("oven_readings", get_doc.call_args.args[0])
+		self.assertNotIn("puffs_oven_readings", get_doc.call_args.args[0])
 		self.assertEqual(
 			[c.args for c in doc.append.call_args_list],
 			[
-				("readings", {"time_slot": "08:00", "moisture_content": 12.0}),
-				("oven_readings", {"time_slot": "08:30", "zone_1_temp": 180.0}),
+				("puffs_readings", {"time_slot": "08:00", "moisture_corn_content": 12.0}),
+				("puffs_oven_readings", {"time_slot": "08:30", "oven_temp": 180.0}),
 			],
 		)
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_puffs_rows_in_the_earlier_tables_are_not_taken(self, get_meta, get_doc):
+		# a page loaded before the change sends the earlier tables: read only now
+		get_meta.side_effect = lambda doctype: self._meta(["record_date", "time_slot", "moisture_content"])
+		doc = get_doc.return_value = MagicMock(docstatus=0)
+
+		with self.assertRaises(frappe.ValidationError):
+			qh.create_qc_record(
+				"QC Puffs Extruder Record",
+				payload={"record_date": "2026-11-10", "readings": [{"time_slot": "08:00", "moisture_content": 12.0}]},
+			)
+		doc.append.assert_not_called()
+		doc.insert.assert_not_called()
 
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")

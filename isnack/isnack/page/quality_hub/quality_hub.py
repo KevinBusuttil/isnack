@@ -103,10 +103,12 @@ RETIRED_QC_CODES = {"QCE"}
 
 QC_DIALOG_CONFIG = {
     "QC Receiving Record": {},
+    # Puffs has its own readings since 2026-11; its earlier tables (readings,
+    # oven_readings) are read only
     "QC Puffs Extruder Record": {
-        "child_table_field": "readings",
-        "child_doctype": "QC Extruder Reading",
-        "optional_child_tables": {"oven_readings": "QC Oven Reading"},
+        "child_table_field": "puffs_readings",
+        "child_doctype": "QC Puffs Extruder Reading",
+        "optional_child_tables": {"puffs_oven_readings": "QC Puffs Oven Reading"},
     },
     "QC Rice Extruder Record": {
         "child_table_field": "readings",

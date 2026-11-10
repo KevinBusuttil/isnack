@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-11-10 15:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "time_slot",
+  "moisture_corn_content",
+  "start_temp",
+  "motor_speed",
+  "feed_motor",
+  "cutter_speed"
+ ],
+ "fields": [
+  {
+   "fieldname": "time_slot",
+   "fieldtype": "Time",
+   "columns": 1,
+   "in_list_view": 1,
+   "label": "Time Slot"
+  },
+  {
+   "fieldname": "moisture_corn_content",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Moisture Corn Content (%)"
+  },
+  {
+   "fieldname": "start_temp",
+   "fieldtype": "Float",
+   "columns": 1,
+   "in_list_view": 1,
+   "label": "Start Temp (\u00b0C)"
+  },
+  {
+   "fieldname": "motor_speed",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Motor Speed (Hz)"
+  },
+  {
+   "fieldname": "feed_motor",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Feed Motor (Hz)"
+  },
+  {
+   "fieldname": "cutter_speed",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Cutter Speed (Hz)"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-10 15:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "QC Puffs Extruder Reading",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

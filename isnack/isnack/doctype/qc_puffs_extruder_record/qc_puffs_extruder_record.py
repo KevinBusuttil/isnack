@@ -4,16 +4,24 @@
 import frappe
 from frappe.model.document import Document
 
-from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import oven_averages
+from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import average, oven_averages
 
 
 class QCPuffsExtruderRecord(Document):
     def validate(self):
+        readings = self.puffs_readings or []
+        self.avg_moisture_corn_content = average(readings, "moisture_corn_content")
+        oven_readings = self.puffs_oven_readings or []
+        self.avg_oven_temp = average(oven_readings, "oven_temp")
+        self.avg_puffs_oven_moisture = average(oven_readings, "moisture")
+        self.average_earlier_readings()
+
+    def average_earlier_readings(self):
+        """Readings recorded in the earlier layout (``readings``, ``oven_readings``),
+        read only since the Puffs readings changed (2026-11): averaged as they were."""
         readings = self.readings or []
-        moistures = [r.moisture_content for r in readings if r.moisture_content is not None]
-        densities = [r.product_density for r in readings if r.product_density is not None]
-        self.avg_moisture = sum(moistures) / len(moistures) if moistures else 0
-        self.avg_density = sum(densities) / len(densities) if densities else 0
+        self.avg_moisture = average(readings, "moisture_content")
+        self.avg_density = average(readings, "product_density")
         self.out_of_range_count = sum(1 for r in readings if (r.moisture_content or 0) > 14)
         self.avg_oven_zone1_temp, self.avg_oven_zone2_temp, self.avg_oven_moisture = oven_averages(
             self.oven_readings or []
