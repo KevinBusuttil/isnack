@@ -17,11 +17,17 @@
   "amended_from",
   "product_item",
   "product_name",
+  "puffs_readings",
+  "avg_moisture_corn_content",
+  "oven_readings_section",
+  "puffs_oven_readings",
+  "avg_oven_temp",
+  "avg_puffs_oven_moisture",
+  "earlier_readings_section",
   "readings",
   "avg_moisture",
   "avg_density",
   "out_of_range_count",
-  "oven_readings_section",
   "oven_readings",
   "avg_oven_zone1_temp",
   "avg_oven_zone2_temp",
@@ -106,28 +112,17 @@
    "read_only": 1
   },
   {
-   "fieldname": "readings",
+   "fieldname": "puffs_readings",
    "fieldtype": "Table",
    "label": "Readings",
-   "options": "QC Extruder Reading"
+   "options": "QC Puffs Extruder Reading"
   },
   {
-   "fieldname": "avg_moisture",
+   "fieldname": "avg_moisture_corn_content",
    "fieldtype": "Float",
-   "label": "Avg Moisture (%)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "avg_density",
-   "fieldtype": "Float",
-   "label": "Avg Density",
-   "read_only": 1
-  },
-  {
-   "fieldname": "out_of_range_count",
-   "fieldtype": "Int",
-   "label": "Out of Range Count",
-   "read_only": 1
+   "label": "Avg Moisture Corn Content (%)",
+   "read_only": 1,
+   "depends_on": "eval:(doc.puffs_readings || []).length"
   },
   {
    "fieldname": "oven_readings_section",
@@ -135,28 +130,89 @@
    "label": "Oven Readings"
   },
   {
-   "fieldname": "oven_readings",
+   "fieldname": "puffs_oven_readings",
    "fieldtype": "Table",
    "label": "Oven Readings",
-   "options": "QC Oven Reading"
+   "options": "QC Puffs Oven Reading"
+  },
+  {
+   "fieldname": "avg_oven_temp",
+   "fieldtype": "Float",
+   "label": "Avg Oven Temp (°C)",
+   "read_only": 1,
+   "depends_on": "eval:(doc.puffs_oven_readings || []).length"
+  },
+  {
+   "fieldname": "avg_puffs_oven_moisture",
+   "fieldtype": "Float",
+   "label": "Avg Oven Moisture (%)",
+   "read_only": 1,
+   "depends_on": "eval:(doc.puffs_oven_readings || []).length"
+  },
+  {
+   "fieldname": "earlier_readings_section",
+   "fieldtype": "Section Break",
+   "label": "Earlier Readings",
+   "description": "Readings recorded in the earlier layout, before the readings changed. They can be corrected on a draft; new readings go in Readings and Oven Readings above.",
+   "depends_on": "eval:(doc.readings || []).length || (doc.oven_readings || []).length"
+  },
+  {
+   "fieldname": "readings",
+   "fieldtype": "Table",
+   "label": "Readings (Earlier Layout)",
+   "options": "QC Extruder Reading",
+   "no_copy": 1,
+   "depends_on": "eval:(doc.readings || []).length"
+  },
+  {
+   "fieldname": "avg_moisture",
+   "fieldtype": "Float",
+   "label": "Avg Moisture (%)",
+   "read_only": 1,
+   "depends_on": "eval:(doc.readings || []).length"
+  },
+  {
+   "fieldname": "avg_density",
+   "fieldtype": "Float",
+   "label": "Avg Density",
+   "read_only": 1,
+   "depends_on": "eval:(doc.readings || []).length"
+  },
+  {
+   "fieldname": "out_of_range_count",
+   "fieldtype": "Int",
+   "label": "Out of Range Count",
+   "read_only": 1,
+   "depends_on": "eval:(doc.readings || []).length"
+  },
+  {
+   "fieldname": "oven_readings",
+   "fieldtype": "Table",
+   "label": "Oven Readings (Earlier Layout)",
+   "options": "QC Oven Reading",
+   "no_copy": 1,
+   "depends_on": "eval:(doc.oven_readings || []).length"
   },
   {
    "fieldname": "avg_oven_zone1_temp",
    "fieldtype": "Float",
    "label": "Avg Oven Zone 1 Temp (°C)",
-   "read_only": 1
+   "read_only": 1,
+   "depends_on": "eval:(doc.oven_readings || []).length"
   },
   {
    "fieldname": "avg_oven_zone2_temp",
    "fieldtype": "Float",
    "label": "Avg Oven Zone 2 Temp (°C)",
-   "read_only": 1
+   "read_only": 1,
+   "depends_on": "eval:(doc.oven_readings || []).length"
   },
   {
    "fieldname": "avg_oven_moisture",
    "fieldtype": "Float",
-   "label": "Avg Oven Moisture (%)",
-   "read_only": 1
+   "label": "Avg Oven Moisture (%) (Earlier Layout)",
+   "read_only": 1,
+   "depends_on": "eval:(doc.oven_readings || []).length"
   },
   {
    "fieldname": "result_section",
@@ -173,7 +229,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-10 12:00:00.000000",
+ "modified": "2026-11-10 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Puffs Extruder Record",
