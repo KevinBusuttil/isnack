@@ -64,6 +64,7 @@ class TestPuffsExtruderRecord(unittest.TestCase):
 	def _record(self, **tables):
 		rec = SimpleNamespace(puffs_readings=None, puffs_oven_readings=None, readings=None, oven_readings=None)
 		rec.average_earlier_readings = lambda: QCPuffsExtruderRecord.average_earlier_readings(rec)
+		rec.close_earlier_tables = lambda: None  # test_earlier_readings
 		vars(rec).update(tables)
 		return rec
 

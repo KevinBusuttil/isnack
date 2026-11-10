@@ -58,7 +58,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings. QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
 
-**Puffs readings changed (2026-11).** The Puffs Extruder (QCB) takes its own readings (QC Puffs Extruder Reading) and oven readings (QC Puffs Oven Reading), in `puffs_readings` and `puffs_oven_readings`. Its earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added (`cannot_add_rows`, set by `qc_puffs_extruder_record.js`), and Duplicate does not copy them (`no_copy`). Rice Extruder (QCC) keeps the shared tables.
+**Puffs readings changed (2026-11).** The Puffs Extruder (QCB) takes its own readings (QC Puffs Extruder Reading) and oven readings (QC Puffs Oven Reading), in `puffs_readings` and `puffs_oven_readings`. Its earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by `qc_puffs_extruder_record.js`), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value. Duplicate does not copy them (`no_copy`); Amend does. Rice Extruder (QCC) keeps the shared tables.
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -206,7 +206,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `result_section` | Section Break | — | — |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
-The averages and the out-of-range count of the earlier layout are kept with its rows, in the Earlier Readings section. No out-of-range rule is set for the new readings yet. Every average has `print_hide_if_no_value`, since the standard print does not evaluate `depends_on`.
+The averages and the out-of-range count of the earlier layout are kept with its rows, in the Earlier Readings section. No out-of-range rule is set for the new readings yet. The standard print does not evaluate `depends_on`, so `before_print` leaves out the summary fields of a table without rows, as the form does (an earlier record still prints an Out of Range Count of 0).
 
 ---
 
@@ -360,7 +360,7 @@ Child tables inherit no permissions (permissions are enforced on the parent). Al
 
 ### QC Extruder Reading
 
-**Used by:** QC Rice Extruder Record (QCC); QC Puffs Extruder Record (QCB) for its earlier readings (`readings`, read only)
+**Used by:** QC Rice Extruder Record (QCC); QC Puffs Extruder Record (QCB) for its earlier readings (`readings`; no new rows, `no_copy`)
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
@@ -426,7 +426,7 @@ The desk grid has 10 units for columns; two narrow ones let all six show.
 
 ### QC Oven Reading
 
-**Used by:** QC Rice Extruder Record (QCC) as `oven_readings`; QC Puffs Extruder Record (QCB) for its earlier oven readings (`oven_readings`, read only); QC Oven Record (QCE, retired) as `readings`
+**Used by:** QC Rice Extruder Record (QCC) as `oven_readings`; QC Puffs Extruder Record (QCB) for its earlier oven readings (`oven_readings`; no new rows, `no_copy`); QC Oven Record (QCE, retired) as `readings`
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
@@ -534,11 +534,21 @@ No calculation. The arrival temperature is recorded as read; the acceptable rang
 
 ```
 validate():
+    close_earlier_tables()
     # zero_is_blank: Frappe saves a blank Float as 0, and none of these is ever 0
     avg_moisture_corn_content = average(puffs_readings, "moisture_corn_content", zero_is_blank)
     avg_oven_temp             = average(puffs_oven_readings, "oven_temp", zero_is_blank)
     avg_puffs_oven_moisture   = average(puffs_oven_readings, "moisture", zero_is_blank)
     average_earlier_readings()   # the earlier layout, as QCC below
+
+close_earlier_tables():
+    # in readings / oven_readings, a row added since the last save (on a new
+    # amendment: beyond the amended record's count; on any other new record:
+    # any row) is dropped if blank, refused otherwise
+
+before_print():
+    # the standard print ignores depends_on: blank the summary fields of a
+    # table without rows, in memory only
 
 average_earlier_readings():
     avg_moisture = average(readings, "moisture_content")
@@ -983,6 +993,7 @@ isnack/
         │   ├── qc_puffs_extruder_record.json
         │   ├── qc_puffs_extruder_record.py
         │   ├── test_qc_puffs_extruder_record.py
+        │   ├── test_earlier_readings.py      ── no new rows in the earlier tables; print
         │   └── __init__.py
         │
         ├── qc_rice_extruder_record/          ── QCC

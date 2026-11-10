@@ -173,10 +173,9 @@ class TestPuffsReadings(unittest.TestCase):
 			("avg_puffs_oven_moisture", "puffs_oven_readings"),
 		):
 			self.assertEqual(fields[fieldname].get("read_only"), 1, fieldname)
-			# no 0 average on a record without such readings (an earlier one),
-			# on the form nor in print (which ignores depends_on)
+			# no 0 average on a record without such readings (an earlier one);
+			# in print, before_print does the same
 			self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
-			self.assertEqual(fields[fieldname].get("print_hide_if_no_value"), 1, fieldname)
 		self.assertLess(order.index("avg_puffs_oven_moisture"), order.index("earlier_readings_section"))
 
 	def test_earlier_readings_are_kept(self):
@@ -203,8 +202,6 @@ class TestPuffsReadings(unittest.TestCase):
 				self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
 				self.assertLess(order.index("earlier_readings_section"), order.index(fieldname), fieldname)
 				self.assertLess(order.index(fieldname), order.index("result_section"), fieldname)
-				if fieldname != table:
-					self.assertEqual(fields[fieldname].get("print_hide_if_no_value"), 1, fieldname)
 
 	def test_no_new_rows_in_the_earlier_tables(self):
 		folder = os.path.join(DOCTYPE_DIR, "qc_puffs_extruder_record")
