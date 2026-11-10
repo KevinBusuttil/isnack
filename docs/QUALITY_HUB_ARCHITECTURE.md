@@ -128,8 +128,8 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 |---|---|---|---|
 | `record_date` | Date | Record Date | `reqd: 1`, `default: "Today"` |
 | `shift` | Select | Shift | `reqd: 1`, options: Morning / Afternoon / Night |
-| `factory_line` | Link → Factory Line | Factory Line | — · **not on QCA** |
-| `work_order` | Link → Work Order | Work Order | — · **not on QCA** |
+| `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** |
+| `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** |
 | `operator_name` | Data | Operator Name | `reqd: 1` |
 | `qc_inspector` | Link → User | QC Inspector | `reqd: 1`, `default: "__user"` (auto-fills current user) |
 | `status` | Select | Status | options: Draft / Submitted / Rejected / Closed |
@@ -149,7 +149,7 @@ Each section below lists only the **DocType-specific** fields (beyond the 9 comm
 **Naming:** `QCA-.YYYY.-.#####`  
 **Purpose:** Records goods-inward inspection for raw materials and packaging arriving from suppliers.
 
-A delivery is inspected before any line or Work Order touches it, so QCA has no `factory_line` or `work_order` (FSSC 22000 change, 2026-10). The supplier and item section is all mandatory, and the quality checks are blank / Yes / No selects: a blank answer is a check not done, which a tick box could not tell apart from a failed one. The patch `isnack.patches.v1_0.qc_receiving_yes_no_checks` carried existing records over (ticked → Yes, unticked → blank) and moved `colour_acceptable` to `appearance_acceptable`. The old `factory_line`, `work_order` and `colour_acceptable` columns stay in the table, unused.
+A delivery is inspected before any line or Work Order touches it, so QCA has no `factory_line` or `work_order` (FSSC 22000 change, 2026-10). The supplier and item section is all mandatory, and the quality checks are blank / Yes / No / Not applicable selects: a blank answer is a check not done, which a tick box could not tell apart from a failed one ("Not applicable" added 2026-11). The patch `isnack.patches.v1_0.qc_receiving_yes_no_checks` carried existing records over (ticked → Yes, unticked → blank) and moved `colour_acceptable` to `appearance_acceptable`. The old `factory_line`, `work_order` and `colour_acceptable` columns stay in the table, unused.
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
@@ -159,16 +159,13 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `batch_no` | Link → Batch | Batch No | `reqd: 1` |
 | `qty_received` | Float | Qty Received | `reqd: 1` |
-| `packaging_intact` | Select | Packaging Intact | options: (blank) / Yes / No |
-| `labelling_correct` | Select | Labelling Correct | options: (blank) / Yes / No |
-| `foreign_body_check` | Select | Foreign Body Check | options: (blank) / Yes / No |
-| `appearance_acceptable` | Select | Appearance Acceptable | options: (blank) / Yes / No · was `colour_acceptable` |
-| `dimensions_acceptable` | Select | Dimensions Acceptable | options: (blank) / Yes / No |
-| `weight_acceptable` | Select | Weight Acceptable | options: (blank) / Yes / No |
+| `packaging_intact` | Select | Packaging Intact | options: (blank) / Yes / No / Not applicable |
+| `labelling_correct` | Select | Labelling Correct | options: (blank) / Yes / No / Not applicable |
+| `foreign_body_check` | Select | Foreign Body Check | options: (blank) / Yes / No / Not applicable |
+| `appearance_acceptable` | Select | Appearance Acceptable | options: (blank) / Yes / No / Not applicable · was `colour_acceptable` |
+| `dimensions_acceptable` | Select | Dimensions Acceptable | options: (blank) / Yes / No / Not applicable |
+| `weight_acceptable` | Select | Weight Acceptable | options: (blank) / Yes / No / Not applicable |
 | `arrival_temperature` | Float | Arrival Temperature (°C) | — |
-| `acceptable_range_min` | Float | Acceptable Range Min (°C) | — |
-| `acceptable_range_max` | Float | Acceptable Range Max (°C) | — |
-| `temp_pass` | Check | Temperature Pass | `read_only: 1` — auto-calculated by `validate()` |
 | `coa_received` | Check | COA Received | — |
 | `coa_acceptable` | Check | COA Acceptable | — |
 | `spec_sheet_matches` | Check | Spec Sheet Matches | — |
@@ -183,7 +180,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `product_item` | Link → Item | Product Item | — |
+| `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `readings` | Table → QC Extruder Reading | Readings | Child table |
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
@@ -206,7 +203,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `product_item` | Link → Item | Product Item | — |
+| `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `readings` | Table → QC Extruder Reading | Readings | Shared child table with QCB |
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
@@ -229,7 +226,7 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `product_item` | Link → Item | Product Item | — |
+| `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `readings` | Table → QC Frying Reading | Readings | Child table |
 | `avg_oil_temperature` | Float | Avg Oil Temperature (°C) | `read_only: 1` — auto-calculated |
@@ -266,13 +263,12 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `item_code` | Link → Item | Item Code | — |
-| `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `batch_no` | Link → Batch | Batch No | — |
+| `item_code` | Link → Item | Item Code | `fetch_from: batch_no.item`, `read_only: 1` |
+| `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `scores` | Table → QC Tasting Score | Scores | Child table |
 | `avg_overall` | Float | Avg Overall Score | `read_only: 1` — auto-calculated, in stars |
 | `min_score` | Float | Min Score | `read_only: 1` — auto-calculated, in stars |
-| `pass_threshold` | Float | Pass Threshold | `default: "3.0"` — in stars (3.0 = 3 of 5), configurable per record |
 | `overall_status` | Select | Overall Status | auto-set to Pass/Fail by `validate()` |
 
 ---
@@ -484,14 +480,7 @@ Each parent DocType has a Python controller in `<doctype_folder>/<doctype_name>.
 
 **File:** `isnack/isnack/doctype/qc_receiving_record/qc_receiving_record.py`
 
-```
-validate():
-    if arrival_temperature is not None
-       AND acceptable_range_min is not None
-       AND acceptable_range_max is not None:
-        temp_pass = 1  if  acceptable_range_min ≤ arrival_temperature ≤ acceptable_range_max
-        temp_pass = 0  otherwise
-```
+No calculation. The arrival temperature is recorded as read; the acceptable range and the Temperature Pass computed from it were removed in 2026-11 (their old values stay in the table, no longer shown).
 
 ---
 
@@ -562,7 +551,7 @@ validate():
 
 **File:** `isnack/isnack/doctype/qc_tasting_record/qc_tasting_record.py`
 
-Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the threshold. Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: the patch leaves a record with a taster whose every rating is 1.0 as it was (a dialog draft may have had rows added in the desk form since), with a comment asking QC to check its scores, and lists it in the migrate output. The dialog now picks stars (1–5) and sends the fraction.
+Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the pass threshold, a fixed 3 stars (`PASS_THRESHOLD_STARS`; the per-record Pass Threshold field was removed in 2026-11). Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: the patch leaves a record with a taster whose every rating is 1.0 as it was (a dialog draft may have had rows added in the desk form since), with a comment asking QC to check its scores, and lists it in the migrate output. The dialog now picks stars (1–5) and sends the fraction.
 
 ```
 validate():
@@ -570,8 +559,7 @@ validate():
     overall_scores = [s.overall_score * out_of for s in scores if s.overall_score > 0]   # 0 = not rated
     avg_overall = mean(overall_scores) if overall_scores else 0
     min_score   = min(overall_scores)  if overall_scores else 0
-    threshold   = pass_threshold or 3.0
-    overall_status = "Pass" if overall_scores and avg_overall >= threshold else "Fail"
+    overall_status = "Pass" if overall_scores and avg_overall >= PASS_THRESHOLD_STARS else "Fail"   # 3.0 stars
 ```
 
 ---
@@ -897,7 +885,7 @@ Paper Sheet                   Digital Entry
      │  validate() fires           ▼
      │  on every Save     [validate() in controller .py]
      │                    - Recalculates derived fields
-     │                    - e.g. temp_pass, avg_moisture,
+     │                    - e.g. avg_moisture, avg_overall,
      │                      variance, all_tests_passed …
      │                             │
      │  User clicks Submit         ▼
@@ -1051,7 +1039,7 @@ docs/
 | QCA | Supplier | `supplier` | The vendor supplying the goods |
 | QCB–QCE | Work Order | `work_order` | Links process record to active production order |
 | QCB–QCE | Factory Line | `factory_line` | Identifies which production line generated the reading |
-| QCB–QCE | Item | `product_item` | The product being manufactured |
+| QCB–QCE | Item | `product_item` | The product being manufactured (QCB–QCD: Finished Goods only) |
 | QCF | Item | `item_code` | Product being tasted |
 | QCF | Batch | `batch_no` | Specific batch under evaluation |
 | QCG | Work Order | `work_order` | Packaging run being checked |

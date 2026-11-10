@@ -43,13 +43,15 @@
    "fieldname": "factory_line",
    "fieldtype": "Link",
    "label": "Factory Line",
-   "options": "Factory Line"
+   "options": "Factory Line",
+   "reqd": 1
   },
   {
    "fieldname": "work_order",
    "fieldtype": "Link",
    "label": "Work Order",
-   "options": "Work Order"
+   "options": "Work Order",
+   "reqd": 1
   },
   {
    "fieldname": "operator_name",
@@ -132,7 +134,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-25 10:00:00.000000",
+ "modified": "2026-11-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Metal Detector Log",
