@@ -41,7 +41,7 @@ class TestReceivingRecordSchema(unittest.TestCase):
 		for fieldname in ("supplier", "purchase_receipt", "item_code", "batch_no", "qty_received"):
 			self.assertEqual(self.fields[fieldname].get("reqd"), 1, fieldname)
 
-	def test_quality_checks_are_blank_yes_no(self):
+	def test_quality_checks_are_blank_yes_no_or_not_applicable(self):
 		expected = {
 			"packaging_intact": "Packaging Intact",
 			"labelling_correct": "Labelling Correct",
@@ -53,8 +53,15 @@ class TestReceivingRecordSchema(unittest.TestCase):
 		for fieldname, label in expected.items():
 			field = self.fields[fieldname]
 			self.assertEqual((field["fieldtype"], field["label"]), ("Select", label), fieldname)
-			self.assertEqual(field["options"], "\nYes\nNo", fieldname)
+			self.assertEqual(field["options"], "\nYes\nNo\nNot applicable", fieldname)
 		self.assertNotIn("colour_acceptable", self.fields)
+
+	def test_no_acceptable_range(self):
+		# the arrival temperature is recorded as read; nothing left to compute a Temperature Pass from
+		for fieldname in ("acceptable_range_min", "acceptable_range_max", "temp_pass"):
+			self.assertNotIn(fieldname, self.fields)
+			self.assertNotIn(fieldname, self.doc["field_order"])
+		self.assertIn("arrival_temperature", self.fields)
 
 	def test_field_order_matches_fields(self):
 		self.assertEqual(self.doc["field_order"], [f["fieldname"] for f in self.doc["fields"]])
@@ -123,6 +130,43 @@ class TestOverallStatusStartsBlank(unittest.TestCase):
 			if not field or doctype == "QC Tasting Record":  # set by validate() on every save
 				continue
 			self.assertTrue(field["options"].startswith("\n"), doctype)
+
+
+class TestLineAndWorkOrderMandatory(unittest.TestCase):
+	def test_every_record_type_but_receiving(self):
+		for code, doctype in QC_DOCTYPES.items():
+			# receiving has neither (a delivery comes before any line); the Oven record is retired
+			if code == "QCA" or code in qh.RETIRED_QC_CODES:
+				continue
+			fields = _fields(_doctype(doctype))
+			for fieldname in ("factory_line", "work_order"):
+				self.assertEqual(fields[fieldname].get("reqd"), 1, f"{doctype}.{fieldname}")
+
+
+class TestFinishedGoodsProducts(unittest.TestCase):
+	def test_product_item_lists_finished_goods_only(self):
+		for doctype in ("QC Puffs Extruder Record", "QC Rice Extruder Record", "QC Frying Line Record"):
+			field = _fields(_doctype(doctype))["product_item"]
+			self.assertEqual(
+				json.loads(field["link_filters"]), [["Item", "item_group", "=", "Finished Goods"]], doctype
+			)
+
+
+class TestTastingRecordSchema(unittest.TestCase):
+	def setUp(self):
+		self.doc = _doctype("QC Tasting Record")
+		self.fields = _fields(self.doc)
+
+	def test_no_pass_threshold(self):
+		self.assertNotIn("pass_threshold", self.fields)
+		self.assertNotIn("pass_threshold", self.doc["field_order"])
+
+	def test_item_code_follows_the_batch(self):
+		order = self.doc["field_order"]
+		self.assertLess(order.index("batch_no"), order.index("item_code"))
+		item = self.fields["item_code"]
+		self.assertEqual((item.get("read_only"), item.get("fetch_from")), (1, "batch_no.item"))
+		self.assertEqual(order, [f["fieldname"] for f in self.doc["fields"]])
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):

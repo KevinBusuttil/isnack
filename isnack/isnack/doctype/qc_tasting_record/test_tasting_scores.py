@@ -12,12 +12,10 @@ from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import QCTastingR
 from isnack.patches.v1_0 import recompute_qc_tasting_results as patch_module
 
 
-def _record(overall_scores, pass_threshold=3.0):
-	# Frappe stores a Rating as the fraction of stars: 4 of 5 stars is 0.8
-	return SimpleNamespace(
-		scores=[SimpleNamespace(overall_score=s) for s in overall_scores],
-		pass_threshold=pass_threshold,
-	)
+def _record(overall_scores):
+	# Frappe stores a Rating as the fraction of stars: 4 of 5 stars is 0.8;
+	# the record has no Pass Threshold of its own
+	return SimpleNamespace(scores=[SimpleNamespace(overall_score=s) for s in overall_scores])
 
 
 def _meta(options=None):
@@ -50,16 +48,20 @@ class TestTastingResult(unittest.TestCase):
 		QCTastingRecord.validate(rec)
 		self.assertEqual((rec.avg_overall, rec.overall_status), (0, "Fail"))
 
-	def test_the_threshold_defaults_to_three_stars(self, _meta_):
-		rec = _record([0.6], pass_threshold=None)
+	def test_three_stars_pass_and_just_under_fails(self, _meta_):
+		rec = _record([0.6])
 		QCTastingRecord.validate(rec)
 		self.assertEqual(rec.overall_status, "Pass")
-
-	def test_ratings_out_of_ten(self, get_meta):
-		get_meta.return_value = _meta(options="10")
-		rec = _record([0.7], pass_threshold=6)
+		rec = _record([0.6, 0.56])
 		QCTastingRecord.validate(rec)
-		self.assertEqual((rec.avg_overall, rec.overall_status), (7.0, "Pass"))
+		self.assertEqual((round(rec.avg_overall, 2), rec.overall_status), (2.9, "Fail"))
+
+	def test_ratings_out_of_ten_still_pass_at_three_stars(self, get_meta):
+		get_meta.return_value = _meta(options="10")
+		for fraction, status in ((0.3, "Pass"), (0.25, "Fail")):
+			rec = _record([fraction])
+			QCTastingRecord.validate(rec)
+			self.assertEqual((rec.avg_overall, rec.overall_status), (fraction * 10, status))
 
 
 RATINGS = ("appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score", "overall_score")
@@ -76,7 +78,6 @@ def _stored(rows, avg_overall=0.0, min_score=0.0, overall_status="Fail"):
 	"""A tasting as the database holds it: every Rating a fraction of stars."""
 	doc = MagicMock()
 	doc.scores = [frappe._dict(row) for row in rows]
-	doc.pass_threshold = 3.0
 	doc.avg_overall, doc.min_score, doc.overall_status = avg_overall, min_score, overall_status
 	return doc
 
