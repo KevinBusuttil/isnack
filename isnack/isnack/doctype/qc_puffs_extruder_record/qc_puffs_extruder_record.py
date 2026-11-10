@@ -9,16 +9,18 @@ from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import average, oven_
 
 class QCPuffsExtruderRecord(Document):
     def validate(self):
+        # a corn moisture, oven temperature or oven moisture of 0 is a reading
+        # left blank
         readings = self.puffs_readings or []
-        self.avg_moisture_corn_content = average(readings, "moisture_corn_content")
+        self.avg_moisture_corn_content = average(readings, "moisture_corn_content", zero_is_blank=True)
         oven_readings = self.puffs_oven_readings or []
-        self.avg_oven_temp = average(oven_readings, "oven_temp")
-        self.avg_puffs_oven_moisture = average(oven_readings, "moisture")
+        self.avg_oven_temp = average(oven_readings, "oven_temp", zero_is_blank=True)
+        self.avg_puffs_oven_moisture = average(oven_readings, "moisture", zero_is_blank=True)
         self.average_earlier_readings()
 
     def average_earlier_readings(self):
         """Readings recorded in the earlier layout (``readings``, ``oven_readings``),
-        read only since the Puffs readings changed (2026-11): averaged as they were."""
+        before the Puffs readings changed (2026-11): averaged as they were."""
         readings = self.readings or []
         self.avg_moisture = average(readings, "moisture_content")
         self.avg_density = average(readings, "product_density")

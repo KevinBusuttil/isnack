@@ -292,6 +292,11 @@ def create_qc_record(doctype, payload=None, submit=False):
             frappe.throw(f"{frappe.bold(fieldname)} must be a list of rows.")
         child_rows[fieldname] = rows
 
+    # rows for a table the dialog no longer fills (Puffs' earlier readings): a
+    # page loaded before it changed. Say so, rather than drop them and ask for rows
+    if any(df.fieldtype == "Table" and df.fieldname not in child_rows and data.get(df.fieldname) for df in meta.fields):
+        frappe.throw("This page is out of date. Reload it and enter the record again.")
+
     allowed_parent_fields = {
         df.fieldname: df.fieldtype for df in meta.fields if df.fieldtype != "Table" and df.fieldname
     }

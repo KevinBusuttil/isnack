@@ -173,11 +173,13 @@ class TestPuffsReadings(unittest.TestCase):
 			("avg_puffs_oven_moisture", "puffs_oven_readings"),
 		):
 			self.assertEqual(fields[fieldname].get("read_only"), 1, fieldname)
-			# no 0 average on a record without such readings (an earlier one)
+			# no 0 average on a record without such readings (an earlier one),
+			# on the form nor in print (which ignores depends_on)
 			self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
+			self.assertEqual(fields[fieldname].get("print_hide_if_no_value"), 1, fieldname)
 		self.assertLess(order.index("avg_puffs_oven_moisture"), order.index("earlier_readings_section"))
 
-	def test_earlier_readings_are_kept_read_only(self):
+	def test_earlier_readings_are_kept(self):
 		doc = _doctype("QC Puffs Extruder Record")
 		fields = _fields(doc)
 		order = doc["field_order"]
@@ -193,12 +195,33 @@ class TestPuffsReadings(unittest.TestCase):
 			"oven_readings": ("oven_readings", "avg_oven_zone1_temp", "avg_oven_zone2_temp", "avg_oven_moisture"),
 		}
 		for table, fieldnames in earlier.items():
-			self.assertEqual(fields[table]["read_only"], 1, table)
+			# corrected on a draft or an amendment; a duplicate starts without them
+			self.assertFalse(fields[table].get("read_only"), table)
+			self.assertEqual(fields[table].get("no_copy"), 1, table)
 			for fieldname in fieldnames:
 				# shown only on a record that has rows in them
 				self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", fieldname)
 				self.assertLess(order.index("earlier_readings_section"), order.index(fieldname), fieldname)
 				self.assertLess(order.index(fieldname), order.index("result_section"), fieldname)
+				if fieldname != table:
+					self.assertEqual(fields[fieldname].get("print_hide_if_no_value"), 1, fieldname)
+
+	def test_no_new_rows_in_the_earlier_tables(self):
+		folder = os.path.join(DOCTYPE_DIR, "qc_puffs_extruder_record")
+		with open(os.path.join(folder, "qc_puffs_extruder_record.js")) as fh:
+			script = fh.read()
+		self.assertIn('frappe.ui.form.on("QC Puffs Extruder Record"', script)
+		self.assertIn('for (const fieldname of ["readings", "oven_readings"])', script)
+		self.assertIn('frm.set_df_property(fieldname, "cannot_add_rows", 1)', script)
+
+	def test_labels_tell_the_layouts_apart(self):
+		# as report columns, filters and print lines name them
+		labels = [
+			f["label"]
+			for f in _doctype("QC Puffs Extruder Record")["fields"]
+			if f.get("label") and f["fieldtype"] not in ("Section Break", "Column Break")
+		]
+		self.assertEqual(len(labels), len(set(labels)), [l for l in labels if labels.count(l) > 1])
 
 	def test_rice_keeps_the_shared_readings(self):
 		self.assertIn("screw_speed_rpm", _fields(_doctype("QC Extruder Reading")))
@@ -460,18 +483,27 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")
-	def test_puffs_rows_in_the_earlier_tables_are_not_taken(self, get_meta, get_doc):
-		# a page loaded before the change sends the earlier tables: read only now
-		get_meta.side_effect = lambda doctype: self._meta(["record_date", "time_slot", "moisture_content"])
+	def test_a_page_from_before_the_puffs_change_is_told_to_reload(self, get_meta, get_doc):
+		# a page loaded before the change sends the earlier tables
+		meta = self._meta(["record_date", "time_slot", "moisture_content"])
+		meta.fields += [frappe._dict(fieldname=f, fieldtype="Table") for f in ("puffs_readings", "readings")]
+		get_meta.return_value = meta
 		doc = get_doc.return_value = MagicMock(docstatus=0)
 
-		with self.assertRaises(frappe.ValidationError):
+		with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
 			qh.create_qc_record(
 				"QC Puffs Extruder Record",
 				payload={"record_date": "2026-11-10", "readings": [{"time_slot": "08:00", "moisture_content": 12.0}]},
 			)
 		doc.append.assert_not_called()
 		doc.insert.assert_not_called()
+
+		# an empty earlier table is no sign of an old page
+		qh.create_qc_record(
+			"QC Puffs Extruder Record",
+			payload={"record_date": "2026-11-10", "readings": [], "puffs_readings": [{"time_slot": "08:00"}]},
+		)
+		doc.insert.assert_called_once()
 
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")

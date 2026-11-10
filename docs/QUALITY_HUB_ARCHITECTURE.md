@@ -58,7 +58,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings. QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
 
-**Puffs readings changed (2026-11).** The Puffs Extruder (QCB) takes its own readings (QC Puffs Extruder Reading) and oven readings (QC Puffs Oven Reading), in `puffs_readings` and `puffs_oven_readings`. Its earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay: they are read only, in an **Earlier Readings** section shown only on a record that has such rows. Rice Extruder (QCC) keeps the shared tables.
+**Puffs readings changed (2026-11).** The Puffs Extruder (QCB) takes its own readings (QC Puffs Extruder Reading) and oven readings (QC Puffs Oven Reading), in `puffs_readings` and `puffs_oven_readings`. Its earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added (`cannot_add_rows`, set by `qc_puffs_extruder_record.js`), and Duplicate does not copy them (`no_copy`). Rice Extruder (QCC) keeps the shared tables.
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -100,7 +100,7 @@ Access is restricted to the **Quality Controller**, **Quality Manager**, and **S
 
 ## 3. DocType Inventory
 
-All 15 DocTypes (9 parent + 6 child) registered under the **Isnack** module:
+All 17 DocTypes (9 parent + 8 child) registered under the **Isnack** module:
 
 | DocType Name | Type | Code | Child Table Of | File Path |
 |---|---|---|---|---|
@@ -189,24 +189,24 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `puffs_readings` | Table → QC Puffs Extruder Reading | Readings | Child table (since 2026-11) |
-| `avg_moisture_corn_content` | Float | Avg Moisture Corn Content (%) | `read_only: 1` — auto-calculated; shown when there are readings |
+| `avg_moisture_corn_content` | Float | Avg Moisture Corn Content (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are readings |
 | `oven_readings_section` | Section Break | Oven Readings | — |
 | `puffs_oven_readings` | Table → QC Puffs Oven Reading | Oven Readings | Child table, optional (since 2026-11) |
-| `avg_oven_temp` | Float | Avg Oven Temp (°C) | `read_only: 1` — auto-calculated; shown when there are oven readings |
-| `avg_puffs_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated; shown when there are oven readings |
+| `avg_oven_temp` | Float | Avg Oven Temp (°C) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
+| `avg_puffs_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
 | `earlier_readings_section` | Section Break | Earlier Readings | shown only when `readings` or `oven_readings` has rows |
-| `readings` | Table → QC Extruder Reading | Readings (Earlier Layout) | `read_only: 1`; shown only when it has rows |
+| `readings` | Table → QC Extruder Reading | Readings (Earlier Layout) | `no_copy: 1`, no new rows; shown only when it has rows |
 | `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated from `readings` |
 | `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated from `readings` |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — `readings` with moisture > 14% |
-| `oven_readings` | Table → QC Oven Reading | Oven Readings (Earlier Layout) | `read_only: 1`; shown only when it has rows |
+| `oven_readings` | Table → QC Oven Reading | Oven Readings (Earlier Layout) | `no_copy: 1`, no new rows; shown only when it has rows |
 | `avg_oven_zone1_temp` | Float | Avg Oven Zone 1 Temp (°C) | `read_only: 1` — auto-calculated from `oven_readings` |
 | `avg_oven_zone2_temp` | Float | Avg Oven Zone 2 Temp (°C) | `read_only: 1` — auto-calculated from `oven_readings` |
-| `avg_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated from `oven_readings` |
+| `avg_oven_moisture` | Float | Avg Oven Moisture (%) (Earlier Layout) | `read_only: 1` — auto-calculated from `oven_readings` |
 | `result_section` | Section Break | — | — |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
-The averages and the out-of-range count of the earlier layout are kept with its rows, in the Earlier Readings section. No out-of-range rule is set for the new readings yet.
+The averages and the out-of-range count of the earlier layout are kept with its rows, in the Earlier Readings section. No out-of-range rule is set for the new readings yet. Every average has `print_hide_if_no_value`, since the standard print does not evaluate `depends_on`.
 
 ---
 
@@ -252,7 +252,7 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 
 ### QCE — QC Oven Record
 
-**Retired 2026-10:** oven readings are taken on QCB and QCC now (`oven_readings`). Kept so old records stay readable.
+**Retired 2026-10:** oven readings are taken on QCC (`oven_readings`) and QCB (`puffs_oven_readings` since 2026-11; its earlier `oven_readings` take no new rows) now. Kept so old records stay readable.
 
 **Naming:** `QCE-.YYYY.-.#####`  
 **Purpose:** Records oven zone temperatures, belt speed, and product moisture per time slot.
@@ -534,9 +534,10 @@ No calculation. The arrival temperature is recorded as read; the acceptable rang
 
 ```
 validate():
-    avg_moisture_corn_content = average(puffs_readings, "moisture_corn_content")
-    avg_oven_temp             = average(puffs_oven_readings, "oven_temp")
-    avg_puffs_oven_moisture   = average(puffs_oven_readings, "moisture")
+    # zero_is_blank: Frappe saves a blank Float as 0, and none of these is ever 0
+    avg_moisture_corn_content = average(puffs_readings, "moisture_corn_content", zero_is_blank)
+    avg_oven_temp             = average(puffs_oven_readings, "oven_temp", zero_is_blank)
+    avg_puffs_oven_moisture   = average(puffs_oven_readings, "moisture", zero_is_blank)
     average_earlier_readings()   # the earlier layout, as QCC below
 
 average_earlier_readings():
@@ -591,7 +592,7 @@ validate():
     out_of_range_count = 0   # placeholder — spec-based logic to be added
 ```
 
-`average(readings, fieldname)` (in `qc_oven_reading.py`) averages a field over the readings that have it, 0 when none does; `oven_averages` uses it for zone 1 temperature, zone 2 temperature and moisture. QCC and QCB's earlier readings use `oven_averages` on their `oven_readings`.
+`average(readings, fieldname, zero_is_blank=False)` (in `qc_oven_reading.py`) averages a field over the readings that have it, 0 when none does (with `zero_is_blank`, a 0 counts as not recorded); `oven_averages` uses it for zone 1 temperature, zone 2 temperature and moisture. QCC and QCB's earlier readings use `oven_averages` on their `oven_readings`.
 
 ---
 
@@ -978,6 +979,7 @@ isnack/
         │   └── __init__.py
         │
         ├── qc_puffs_extruder_record/         ── QCB
+        │   ├── qc_puffs_extruder_record.js   ── no new rows in the earlier tables
         │   ├── qc_puffs_extruder_record.json
         │   ├── qc_puffs_extruder_record.py
         │   ├── test_qc_puffs_extruder_record.py
