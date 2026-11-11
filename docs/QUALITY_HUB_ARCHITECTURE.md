@@ -486,11 +486,13 @@ The per-reading Remarks (`reading_remarks`) was removed in 2026-11: remarks go i
 | `taster_name` | Data | Taster Name | ✅ |
 | `appearance_score` | Rating | Shape (was "Appearance") | ✅ |
 | `colour_score` | Rating | Colour | ✅ |
-| `aroma_score` | Rating | Smell (was "Aroma") | — |
+| `aroma_score` | Rating | Smell (was "Aroma") | ✅ (since 2026-11, as it makes the Overall %) |
 | `taste_score` | Rating | Taste | ✅ |
-| `texture_score` | Rating | Texture | — |
+| `texture_score` | Rating | Texture | ✅ (since 2026-11, as it makes the Overall %) |
 | `overall_percent` | Percent | Overall % | ✅ — `read_only: 1`, worked out from the five scores (since 2026-11) |
-| `overall_score` | Rating | Overall (stars, before 2026-11) | — `hidden: 1`, `read_only: 1`: the taster's own Overall rating on tastings scored before |
+| `overall_score` | Rating | Overall (stars, before 2026-11) | — `hidden: 1`, `read_only: 1`, `print_hide: 1`, `no_copy: 1`: the taster's own Overall rating on tastings scored before |
+
+The desk grid shows the taster, all five scores and the Overall % (`columns`: taster 2, the others 1, within the grid's 10 units).
 | `comments` | Small Text | Comments | — |
 
 ---
@@ -639,7 +641,7 @@ validate():
 
 Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save.
 
-**Since 2026-11** each taster's **Overall %** is worked out from their five scores (Shape, Colour, Smell, Taste, Texture): the stars given over full marks, 5 × 5, a score left blank counting as 0. It replaces the Overall rating the taster gave; the record's average and lowest read in % and a tasting passes at an average of 60 % (`PASS_THRESHOLD_PERCENT`, 3 of 5 stars). The patch `isnack.patches.v1_0.qc_tasting_overall_percent` keeps the result of the tastings scored before: their Overall % is the taster's own Overall rating as a percentage (`overall_score` × 100; it stays, hidden), their average and lowest are worked out from those, and each says so in a comment. The Quality Hub dialog and the desk form (`qc_tasting_record.js`) show the Overall % as the scores are given.
+**Since 2026-11** each taster's **Overall %** is worked out from their five scores (Shape, Colour, Smell, Taste, Texture): the stars given over full marks, 5 × 5, a score left blank counting as 0. It replaces the Overall rating the taster gave; the record's average and lowest read in % and a tasting passes at an average of 60 % (`PASS_THRESHOLD_PERCENT`, 3 of 5 stars). The patch `isnack.patches.v1_0.qc_tasting_overall_percent` keeps the result of the tastings scored before: their Overall % is the taster's own Overall rating as a percentage (`overall_score` × 100; it stays, hidden), their average and lowest are worked out from those, and each says so in a comment. The result read in % is the result read in stars (3 stars is 60 %), except on a tasting never judged in stars (cancelled before 2026-10, its average still a fraction), which gets the result its scores give. A tasting whose ratings `recompute_qc_tasting_results` could not trust (all stored as full stars by the old dialog, its average still a fraction) gets no Overall % from them: its average and lowest read 0, its result stays, and its comment asks QC to check and re-enter the scores. The Quality Hub dialog and the desk form (`qc_tasting_record.js`) show the Overall % as the scores are given.
 
 ```
 validate():

@@ -142,3 +142,18 @@
         animation: none !important;
     }
 }
+
+/* QC Tasting Record: the five scores side by side in the Scores grid, one
+   grid unit each; Frappe's 16px stars would show three and a half */
+.qc-tasting-scores .grid-row .rating {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 1px;
+}
+
+.qc-tasting-scores .grid-row .rating svg.icon {
+    width: 12px;
+    height: 12px;
+    margin: 0;
+    flex: none;
+}

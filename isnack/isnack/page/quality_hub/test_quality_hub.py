@@ -321,9 +321,20 @@ class TestTastingRecordSchema(unittest.TestCase):
 			("Percent", "Overall %", 1, 1, "0"),
 		)
 		self.assertEqual(order.index("overall_percent"), order.index("texture_score") + 1)
-		# the taster's own rating, before 2026-11: kept, out of sight
+		# the taster's own rating, before 2026-11: kept, out of sight, out of print and of copies
 		old = fields["overall_score"]
-		self.assertEqual((old["fieldtype"], old.get("hidden"), old.get("in_list_view")), ("Rating", 1, None))
+		self.assertEqual(
+			(old["fieldtype"], old.get("hidden"), old.get("in_list_view"), old.get("print_hide"), old.get("no_copy")),
+			("Rating", 1, None, 1, 1),
+		)
+		# every score the Overall % is made of shows in the desk grid beside it,
+		# within the grid's 10 units for columns
+		listed = [f["fieldname"] for f in score["fields"] if f.get("in_list_view")]
+		self.assertEqual(
+			listed,
+			["taster_name", "appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score", "overall_percent"],
+		)
+		self.assertLessEqual(sum(f.get("columns") or 2 for f in score["fields"] if f.get("in_list_view")), 10)
 		# the record's figures read in % too
 		for fieldname, label in (("avg_overall", "Avg Overall %"), ("min_score", "Min Overall %")):
 			f = self.fields[fieldname]
@@ -357,6 +368,11 @@ class TestTastingRecordSchema(unittest.TestCase):
 		self.assertIn('frappe.ui.form.on("QC Tasting Score"', script)
 		self.assertIn('["appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score"]', script)
 		self.assertIn('frappe.model.set_value(cdt, cdn, "overall_percent"', script)
+		# five star scores side by side, one grid unit each: smaller stars, in this grid only
+		self.assertIn('frm.fields_dict.scores.$wrapper.addClass("qc-tasting-scores")', script)
+		with open(os.path.join(DOCTYPE_DIR, "..", "..", "public", "css", "isnack.css")) as fh:
+			css = fh.read()
+		self.assertIn(".qc-tasting-scores .grid-row .rating svg.icon {", css)
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):

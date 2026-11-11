@@ -159,22 +159,33 @@ class TestRecomputePatch(unittest.TestCase):
 		doc.add_comment.assert_not_called()
 
 
+def _db_row(name, parent, overall_score, *criteria, overall_percent=0):
+	"""A score row as the database holds it: Ratings as fractions of stars."""
+	row = frappe._dict(name=name, parent=parent, overall_percent=overall_percent, overall_score=overall_score)
+	row.update(zip(CRITERIA, criteria))
+	return row
+
+
 @patch("frappe.get_doc")
-@patch("frappe.get_all")
+@patch("frappe.db.get_value")
 @patch("frappe.db.set_value")
 @patch("frappe.db.sql")
+@patch("frappe.get_meta", return_value=_score_meta())
 @patch("frappe.db.has_column", return_value=True)
 class TestOverallPercentPatch(unittest.TestCase):
 	"""Tastings scored on the taster's own Overall rating keep their result, in %."""
 
-	def test_the_overall_rating_becomes_the_overall_percent(self, _has_column, sql, set_value, get_all, get_doc):
+	def _records(self, get_value, stored):
+		get_value.side_effect = lambda doctype, name, fields: stored[name]
+
+	def test_the_overall_rating_becomes_the_overall_percent(self, _has, _meta, sql, set_value, get_value, get_doc):
 		sql.return_value = [
-			frappe._dict(name="r1", parent="QCF-1", overall_score=0.8),
-			frappe._dict(name="r2", parent="QCF-1", overall_score=0.6),
-			frappe._dict(name="r3", parent="QCF-2", overall_score=1.0),
+			_db_row("r1", "QCF-1", 0.8, 0.8, 0.6),
+			_db_row("r2", "QCF-1", 0.6, 0.6),
+			_db_row("r3", "QCF-2", 1.0, 0.8, 1.0),
 		]
-		# the rows of each record with an Overall % once converted
-		get_all.side_effect = lambda doctype, filters, pluck: {"QCF-1": [80, 60], "QCF-2": [100]}[filters["parent"]]
+		# judged in stars: 3.5 and 5 on average
+		self._records(get_value, {"QCF-1": (3.5, "Pass"), "QCF-2": (5.0, "Pass")})
 
 		percent_patch.execute()
 
@@ -183,26 +194,57 @@ class TestOverallPercentPatch(unittest.TestCase):
 			[
 				call("QC Tasting Score", "r1", "overall_percent", 80, update_modified=False),
 				call("QC Tasting Score", "r2", "overall_percent", 60, update_modified=False),
-				# 3.5 stars on average, 3 at the lowest: the result is not judged again
-				call("QC Tasting Record", "QCF-1", {"avg_overall": 70, "min_score": 60}, update_modified=False),
+				call("QC Tasting Record", "QCF-1", {"avg_overall": 70, "min_score": 60, "overall_status": "Pass"}, update_modified=False),
 				call("QC Tasting Score", "r3", "overall_percent", 100, update_modified=False),
-				call("QC Tasting Record", "QCF-2", {"avg_overall": 100, "min_score": 100}, update_modified=False),
+				call("QC Tasting Record", "QCF-2", {"avg_overall": 100, "min_score": 100, "overall_status": "Pass"}, update_modified=False),
 			],
 		)
-		# only the rows still without an Overall %: a second run changes nothing
-		self.assertIn("ifnull(overall_percent, 0) = 0", sql.call_args.args[0])
-		self.assertIn("ifnull(overall_score, 0) > 0", sql.call_args.args[0])
 		# set_value keeps no version: each record says what changed
 		self.assertEqual(get_doc.return_value.add_comment.call_count, 2)
-		self.assertIn("the result stands", get_doc.return_value.add_comment.call_args.args[1])
+		self.assertIn("and the result stands.", get_doc.return_value.add_comment.call_args.args[1])
 
-	def test_nothing_to_convert(self, _has_column, sql, set_value, get_all, get_doc):
-		sql.return_value = []
+	def test_rows_already_converted_are_left_alone(self, _has, _meta, sql, set_value, _get_value, get_doc):
+		sql.return_value = [_db_row("r1", "QCF-1", 0.8, 0.8, overall_percent=76)]
 		percent_patch.execute()
 		set_value.assert_not_called()
-		get_doc.assert_not_called()
+		get_doc.return_value.add_comment.assert_not_called()
 
-	def test_before_the_column_exists(self, has_column, sql, set_value, _get_all, _get_doc):
+	def test_a_tasting_never_judged_in_stars_gets_the_result_its_scores_give(self, _has, _meta, sql, set_value, get_value, get_doc):
+		# cancelled before the October patch: its average still a fraction, "Fail" whatever the scores
+		sql.return_value = [_db_row("r1", "QCF-1", 0.8, 0.8), _db_row("r2", "QCF-1", 0.6, 0.6)]
+		self._records(get_value, {"QCF-1": (0.7, "Fail")})
+
+		percent_patch.execute()
+
+		self.assertEqual(
+			set_value.call_args_list[-1],
+			call("QC Tasting Record", "QCF-1", {"avg_overall": 70, "min_score": 60, "overall_status": "Pass"}, update_modified=False),
+		)
+		self.assertIn("Fail → Pass", get_doc.return_value.add_comment.call_args.args[1])
+
+	def test_ratings_that_could_not_be_read_get_no_overall_percent(self, _has, _meta, sql, set_value, get_value, get_doc):
+		# entered through the old dialog: every rating stored as full stars, left as it was in October
+		sql.return_value = [_db_row("r1", "QCF-1", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0), _db_row("r2", "QCF-1", 0.8, 0.8)]
+		self._records(get_value, {"QCF-1": (0.9, "Fail")})
+
+		percent_patch.execute()
+
+		set_value.assert_called_once_with("QC Tasting Record", "QCF-1", {"avg_overall": 0, "min_score": 0}, update_modified=False)
+		self.assertIn("check its scores", get_doc.return_value.add_comment.call_args.args[1])
+
+	def test_full_marks_judged_in_stars_are_read(self, _has, _meta, sql, set_value, get_value, get_doc):
+		# all 5 stars, entered in the desk form and judged in stars since: not one to doubt
+		sql.return_value = [_db_row("r1", "QCF-1", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)]
+		self._records(get_value, {"QCF-1": (5.0, "Pass")})
+
+		percent_patch.execute()
+
+		self.assertEqual(
+			set_value.call_args_list[-1],
+			call("QC Tasting Record", "QCF-1", {"avg_overall": 100, "min_score": 100, "overall_status": "Pass"}, update_modified=False),
+		)
+
+	def test_before_the_column_exists(self, has_column, _meta, sql, set_value, _get_value, _get_doc):
 		has_column.return_value = False
 		percent_patch.execute()
 		sql.assert_not_called()

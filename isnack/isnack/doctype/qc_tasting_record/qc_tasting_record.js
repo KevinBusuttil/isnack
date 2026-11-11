@@ -11,4 +11,12 @@
 	};
 
 	frappe.ui.form.on("QC Tasting Score", Object.fromEntries(CRITERIA.map((fieldname) => [fieldname, set_overall_percent])));
+
+	// the five scores sit side by side in the grid, one unit each: smaller
+	// stars so all five show (isnack.css, .qc-tasting-scores)
+	frappe.ui.form.on("QC Tasting Record", {
+		refresh(frm) {
+			frm.fields_dict.scores.$wrapper.addClass("qc-tasting-scores");
+		},
+	});
 })();
