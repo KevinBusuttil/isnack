@@ -92,6 +92,19 @@ class TestFryingReadings(unittest.TestCase):
 			_fields(_doctype("QC Frying Line Record"))["avg_product_moisture"]["label"], "Avg Moisture Content (%)"
 		)
 
+	def test_remarks_on_the_record_not_on_each_reading(self):
+		self.assertNotIn("reading_remarks", _fields(_doctype("QC Frying Reading")))
+		self.assertEqual(_fields(_doctype("QC Frying Line Record"))["remarks"]["fieldtype"], "Small Text")
+		# the Quality Hub dialog: Remarks under Product & Outcome, none in the readings
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		start = script.index('"QC Frying Line Record": {')
+		block = script[start : script.index('"QC Tasting Record": {', start)]
+		parent, child = block.split("child_fields: [")
+		self.assertIn('{ fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") }', parent)
+		self.assertLess(parent.index('label: __("Product & Outcome")'), parent.index('fieldname: "remarks"'))
+		self.assertNotIn("remarks", child)
+
 
 class TestExtruderReadings(unittest.TestCase):
 	"""Puffs and Rice have their own readings since 2026-11; their earlier ones are kept."""
