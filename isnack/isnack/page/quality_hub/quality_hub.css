@@ -650,6 +650,97 @@
     color: #111827;
 }
 
+/* Add Row stays at the right when a legend sits beside the label */
+.qh-child-toolbar {
+    flex-wrap: wrap;
+}
+
+.qh-child-toolbar .qh-child-add {
+    margin-left: auto;
+}
+
+/* What each score means, from the lowest (rose) to the highest (teal), in the
+   dialog theme's own tones */
+.qh-child-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.qh-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.65rem 0.15rem 0.2rem;
+    border: 1px solid;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.qh-legend-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.3rem;
+    height: 1.3rem;
+    border-radius: 50%;
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.qh-legend-1 {
+    background: var(--isn-dialog-danger-bg, #fff5f5);
+    border-color: var(--isn-dialog-danger-border, #fca5a5);
+    color: var(--isn-dialog-danger-text, #9f1239);
+}
+.qh-legend-1 .qh-legend-value { background: var(--isn-dialog-danger-text, #9f1239); }
+
+.qh-legend-2 {
+    background: var(--isn-dialog-warning-bg, #fff3d6);
+    border-color: var(--isn-dialog-warning-border, #fbbf24);
+    color: var(--isn-dialog-warning-text, #78350f);
+}
+.qh-legend-2 .qh-legend-value { background: #b45309; }
+
+.qh-legend-3 {
+    background: var(--isn-dialog-info-bg, #e8f1ff);
+    border-color: var(--isn-dialog-info-border, #93c5fd);
+    color: var(--isn-dialog-info-text, #1e3a8a);
+}
+.qh-legend-3 .qh-legend-value { background: #1d4ed8; }
+
+.qh-legend-4 {
+    background: var(--isn-dialog-success-bg, #f0fdf4);
+    border-color: var(--isn-dialog-success-border, #86efac);
+    color: var(--isn-dialog-success-text, #166534);
+}
+.qh-legend-4 .qh-legend-value { background: #15803d; }
+
+.qh-legend-5 {
+    background: #ffffff;
+    border-color: var(--isn-dialog-primary, #0f766e);
+    color: var(--isn-dialog-title, #0f5b56);
+}
+.qh-legend-5 .qh-legend-value { background: var(--isn-dialog-primary, #0f766e); }
+
+/* a column worked out from the others: read, not typed in */
+.qh-child-computed {
+    display: inline-block;
+    min-width: 3.5rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.5rem;
+    background: var(--isn-dialog-primary-soft, #e7fbf7);
+    color: var(--isn-dialog-title, #0f5b56);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
 .qh-child-table-wrap {
     max-height: 420px;
     overflow: auto;

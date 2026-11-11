@@ -306,6 +306,58 @@ class TestTastingRecordSchema(unittest.TestCase):
 		self.assertEqual((item.get("read_only"), item.get("fetch_from")), (1, "batch_no.item"))
 		self.assertEqual(order, [f["fieldname"] for f in self.doc["fields"]])
 
+	def test_batch_no_is_mandatory(self):
+		self.assertEqual(self.fields["batch_no"].get("reqd"), 1)
+
+	def test_overall_percent_worked_out_for_each_taster(self):
+		score = _doctype("QC Tasting Score")
+		fields = _fields(score)
+		order = score["field_order"]
+		self.assertEqual(order, [f["fieldname"] for f in score["fields"]])
+		overall = fields["overall_percent"]
+		# whole stars on five scores: a whole percentage, shown as one ("80%")
+		self.assertEqual(
+			(overall["fieldtype"], overall["label"], overall.get("read_only"), overall.get("in_list_view"), overall.get("precision")),
+			("Percent", "Overall %", 1, 1, "0"),
+		)
+		self.assertEqual(order.index("overall_percent"), order.index("texture_score") + 1)
+		# the taster's own rating, before 2026-11: kept, out of sight
+		old = fields["overall_score"]
+		self.assertEqual((old["fieldtype"], old.get("hidden"), old.get("in_list_view")), ("Rating", 1, None))
+		# the record's figures read in % too
+		for fieldname, label in (("avg_overall", "Avg Overall %"), ("min_score", "Min Overall %")):
+			f = self.fields[fieldname]
+			self.assertEqual((f["fieldtype"], f["label"], f.get("read_only"), f.get("precision")), ("Percent", label, 1, "1"))
+
+	def _dialog(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		start = script.index('"QC Tasting Record": {')
+		return script[start : script.index('"QC Packaging Check": {', start)]
+
+	def test_the_dialog(self):
+		block = self._dialog()
+		self.assertIn('{ fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") }', block)
+		self.assertNotIn("Product & Scoring", block)
+		self.assertIn('{ fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch", reqd: 1 }', block)
+		# Overall % worked out, not entered; the taster's own Overall rating gone
+		self.assertIn(
+			'{ fieldname: "overall_percent", fieldtype: "Percent", label: __("Overall %"), read_only: 1, '
+			"compute: isnack.quality_hub.tasting_overall_percent }",
+			block,
+		)
+		self.assertNotIn("overall_score", block)
+		# what the stars mean, in the Scores toolbar
+		legend = re.findall(r'\[(\d), __\("([^"]+)"\)\]', block[block.index("child_legend") :])
+		self.assertEqual(legend[:5], [("1", "Poor"), ("2", "Fair"), ("3", "Good"), ("4", "Very good"), ("5", "Excellent")])
+
+	def test_the_desk_form_works_it_out_as_scores_are_given(self):
+		with open(os.path.join(DOCTYPE_DIR, "qc_tasting_record", "qc_tasting_record.js")) as fh:
+			script = fh.read()
+		self.assertIn('frappe.ui.form.on("QC Tasting Score"', script)
+		self.assertIn('["appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score"]', script)
+		self.assertIn('frappe.model.set_value(cdt, cdn, "overall_percent"', script)
+
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):

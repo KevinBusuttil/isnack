@@ -89,7 +89,8 @@
    "fieldname": "batch_no",
    "fieldtype": "Link",
    "label": "Batch No",
-   "options": "Batch"
+   "options": "Batch",
+   "reqd": 1
   },
   {
    "fetch_from": "batch_no.item",
@@ -114,17 +115,19 @@
   },
   {
    "fieldname": "avg_overall",
-   "fieldtype": "Float",
-   "label": "Avg Overall Score",
+   "fieldtype": "Percent",
+   "label": "Avg Overall %",
+   "precision": "1",
    "read_only": 1,
-   "description": "Average of the tasters' overall scores, in stars."
+   "description": "Average of the tasters' Overall %. A tasting passes at 60 % (3 of 5 stars)."
   },
   {
    "fieldname": "min_score",
-   "fieldtype": "Float",
-   "label": "Min Score",
+   "fieldtype": "Percent",
+   "label": "Min Overall %",
+   "precision": "1",
    "read_only": 1,
-   "description": "Lowest overall score, in stars."
+   "description": "Lowest of the tasters' Overall %."
   },
   {
    "fieldname": "overall_status",
@@ -137,7 +140,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-10 12:00:00.000000",
+ "modified": "2026-11-11 22:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Tasting Record",

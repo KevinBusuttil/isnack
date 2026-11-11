@@ -1,7 +1,7 @@
 import frappe
 from frappe.utils import flt
 
-from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import QCTastingRecord, stars_out_of
+from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import stars_out_of
 
 
 def execute():
@@ -41,7 +41,7 @@ def execute():
             continue
 
         before = (flt(doc.avg_overall, 6), flt(doc.min_score, 6), doc.overall_status)
-        QCTastingRecord.validate(doc)
+        doc.avg_overall, doc.min_score, doc.overall_status = _star_result(doc, top)
         if (flt(doc.avg_overall, 6), flt(doc.min_score, 6), doc.overall_status) == before:
             continue
         doc.db_set(
@@ -61,6 +61,17 @@ def execute():
 
     if unclear:
         print(f"QC Tasting Records left as they were, a taster's ratings all {top} stars (check them): {', '.join(unclear)}")
+
+
+def _star_result(doc, top):
+    """Average and lowest overall score in stars, and the result, as the record
+    worked them out until 2026-11: on each taster's own Overall rating
+    (overall_score), passing at an average of 3 stars. Since then the record
+    works out an Overall % from the five scores; kept here so this patch does
+    what it did whenever a site runs it."""
+    overall = [flt(row.get("overall_score")) * top for row in doc.scores or [] if flt(row.get("overall_score")) > 0]
+    avg = sum(overall) / len(overall) if overall else 0
+    return avg, (min(overall) if overall else 0), ("Pass" if overall and avg >= 3.0 else "Fail")
 
 
 def _may_be_clamped(row, rating_fields):

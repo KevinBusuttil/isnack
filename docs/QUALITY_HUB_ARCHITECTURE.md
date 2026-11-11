@@ -279,12 +279,12 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `batch_no` | Link → Batch | Batch No | — |
+| `batch_no` | Link → Batch | Batch No | `reqd: 1` |
 | `item_code` | Link → Item | Item Code | `fetch_from: batch_no.item`, `read_only: 1` |
 | `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `scores` | Table → QC Tasting Score | Scores | Child table |
-| `avg_overall` | Float | Avg Overall Score | `read_only: 1` — auto-calculated, in stars |
-| `min_score` | Float | Min Score | `read_only: 1` — auto-calculated, in stars |
+| `avg_overall` | Percent | Avg Overall % | `read_only: 1` — average of the tasters' Overall % |
+| `min_score` | Percent | Min Overall % | `read_only: 1` — lowest Overall % |
 | `overall_status` | Select | Overall Status | auto-set to Pass/Fail by `validate()` |
 
 ---
@@ -489,7 +489,8 @@ The per-reading Remarks (`reading_remarks`) was removed in 2026-11: remarks go i
 | `aroma_score` | Rating | Smell (was "Aroma") | — |
 | `taste_score` | Rating | Taste | ✅ |
 | `texture_score` | Rating | Texture | — |
-| `overall_score` | Rating | Overall | ✅ |
+| `overall_percent` | Percent | Overall % | ✅ — `read_only: 1`, worked out from the five scores (since 2026-11) |
+| `overall_score` | Rating | Overall (stars, before 2026-11) | — `hidden: 1`, `read_only: 1`: the taster's own Overall rating on tastings scored before |
 | `comments` | Small Text | Comments | — |
 
 ---
@@ -636,16 +637,21 @@ validate():
 
 **File:** `isnack/isnack/doctype/qc_tasting_record/qc_tasting_record.py`
 
-Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save, so scores are turned into stars before they are compared with the pass threshold, a fixed 3 stars (`PASS_THRESHOLD_STARS`; the per-record Pass Threshold field was removed in 2026-11). Until 2026-10 they were not, and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: the patch leaves a record with a taster whose every rating is 1.0 as it was (a dialog draft may have had rows added in the desk form since), with a comment asking QC to check its scores, and lists it in the migrate output. The dialog now picks stars (1–5) and sends the fraction.
+Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) and clamps it to 0..1 on save.
+
+**Since 2026-11** each taster's **Overall %** is worked out from their five scores (Shape, Colour, Smell, Taste, Texture): the stars given over full marks, 5 × 5, a score left blank counting as 0. It replaces the Overall rating the taster gave; the record's average and lowest read in % and a tasting passes at an average of 60 % (`PASS_THRESHOLD_PERCENT`, 3 of 5 stars). The patch `isnack.patches.v1_0.qc_tasting_overall_percent` keeps the result of the tastings scored before: their Overall % is the taster's own Overall rating as a percentage (`overall_score` × 100; it stays, hidden), their average and lowest are worked out from those, and each says so in a comment. The Quality Hub dialog and the desk form (`qc_tasting_record.js`) show the Overall % as the scores are given.
 
 ```
 validate():
-    out_of = QC Tasting Score.overall_score options or 5        # stars per rating
-    overall_scores = [s.overall_score * out_of for s in scores if s.overall_score > 0]   # 0 = not rated
-    avg_overall = mean(overall_scores) if overall_scores else 0
-    min_score   = min(overall_scores)  if overall_scores else 0
-    overall_status = "Pass" if overall_scores and avg_overall >= PASS_THRESHOLD_STARS else "Fail"   # 3.0 stars
+    for each taster row:
+        overall_percent = sum(min(score, 1) for the five scores) / 5 * 100     # blank = 0
+    scored = [overall_percent of rows with any score]                          # no score at all: left out
+    avg_overall = mean(scored) if scored else 0
+    min_score   = min(scored)  if scored else 0
+    overall_status = "Pass" if scored and avg_overall >= PASS_THRESHOLD_PERCENT else "Fail"   # 60 %
 ```
+
+**Until 2026-11** the result was worked out in stars from each taster's own Overall rating, passing at a 3-star average. Before 2026-10 the scores were not turned into stars and every tasting read "Fail"; the patch `isnack.patches.v1_0.recompute_qc_tasting_results` recomputed the stored results on the star scale (it keeps that calculation in itself, `_star_result`) and left a comment on each record whose result it changed. The Quality Hub dialog used to send the stars themselves, which Frappe clamped to 1.0, so 1 star and 5 stars were stored alike: that patch leaves a record with a taster whose every rating is 1.0 as it was, with a comment asking QC to check its scores, and lists it in the migrate output. The dialog picks stars (1–5) and sends the fraction.
 
 ---
 
@@ -859,6 +865,7 @@ new QualityHub(wrapper)
 **Tasting (`tasting`)**
 - Filter bar: date · factory_line · docstatus · Filter button · New Record button
 - Single panel with record list datatable
+- The New Record dialog: Batch No is mandatory, in the **Product** section; the Scores toolbar shows what the stars mean (1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent, `child_legend`), and each taster's **Overall %** is worked out as the scores are picked (a column with `compute`, not sent: the record works it out on save)
 
 **Pkg & Weight (`pkg_weight`)**
 - Sub-nav pills: Packaging Checks (QCG) · Weight Checks (QCI)
@@ -1045,9 +1052,11 @@ isnack/
         │   └── __init__.py
         │
         ├── qc_tasting_record/                ── QCF
+        │   ├── qc_tasting_record.js          ── Overall % as the scores are given
         │   ├── qc_tasting_record.json
-        │   ├── qc_tasting_record.py
+        │   ├── qc_tasting_record.py          ── overall_percent(), PASS_THRESHOLD_PERCENT
         │   ├── test_qc_tasting_record.py
+        │   ├── test_tasting_scores.py
         │   └── __init__.py
         │
         ├── qc_packaging_check/               ── QCG
