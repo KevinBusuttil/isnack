@@ -455,7 +455,8 @@ Seven columns in the desk grid's 10 units: four are narrow (the full label shows
 | `oil_anv` | Float | Oil (ANV) | — |
 | `product_moisture` | Float | Moisture Content (%) (was "Product Moisture (%)") | ✅ |
 | `oil_change_flag` | Check | Oil Changed | — |
-| `reading_remarks` | Small Text | Remarks | — |
+
+The per-reading Remarks (`reading_remarks`) was removed in 2026-11: remarks go in the record's own Remarks field (Product & Outcome). Values entered before stay in the table's column, no longer shown.
 
 ---
 

@@ -164,7 +164,6 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "oil_anv", fieldtype: "Float", label: __("Oil (ANV)") },
             { fieldname: "product_moisture", fieldtype: "Float", label: __("Moisture Content (%)") },
             { fieldname: "oil_change_flag", fieldtype: "Check", label: __("Oil Changed") },
-            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
     },
     "QC Tasting Record": {
