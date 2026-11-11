@@ -103,17 +103,17 @@ RETIRED_QC_CODES = {"QCE"}
 
 QC_DIALOG_CONFIG = {
     "QC Receiving Record": {},
-    # Puffs has its own readings since 2026-11; its earlier tables (readings,
-    # oven_readings) are read only
+    # Puffs and Rice have their own readings since 2026-11; their earlier
+    # tables (readings, oven_readings) take no new rows
     "QC Puffs Extruder Record": {
         "child_table_field": "puffs_readings",
         "child_doctype": "QC Puffs Extruder Reading",
         "optional_child_tables": {"puffs_oven_readings": "QC Puffs Oven Reading"},
     },
     "QC Rice Extruder Record": {
-        "child_table_field": "readings",
-        "child_doctype": "QC Extruder Reading",
-        "optional_child_tables": {"oven_readings": "QC Oven Reading"},
+        "child_table_field": "rice_readings",
+        "child_doctype": "QC Rice Extruder Reading",
+        "optional_child_tables": {"rice_oven_readings": "QC Rice Oven Reading"},
     },
     "QC Frying Line Record": {
         "child_table_field": "readings",
@@ -292,7 +292,7 @@ def create_qc_record(doctype, payload=None, submit=False):
             frappe.throw(f"{frappe.bold(fieldname)} must be a list of rows.")
         child_rows[fieldname] = rows
 
-    # rows for a table the dialog no longer fills (Puffs' earlier readings): a
+    # rows for a table the dialog no longer fills (the extruders' earlier readings): a
     # page loaded before it changed. Say so, rather than drop them and ask for rows
     if any(df.fieldtype == "Table" and df.fieldname not in child_rows and data.get(df.fieldname) for df in meta.fields):
         frappe.throw("This page is out of date. Reload it and enter the record again.")
