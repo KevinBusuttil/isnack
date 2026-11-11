@@ -1,25 +1,5 @@
 frappe.provide("isnack.quality_hub");
 
-// Oven readings are taken on the extruder records (QCB, QCC); the Oven record
-// (QCE) is retired. An extra table of a dialog, described by the same keys as
-// a record's own table. Puffs (QCB) has its own since 2026-11, below.
-isnack.quality_hub.OVEN_READINGS_TABLE = {
-    child_table_field: "oven_readings",
-    child_label: __("Oven Readings"),
-    child_in_dedicated_section: true,
-    min_rows: 0,
-    child_fields: [
-        { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
-        { fieldname: "zone_1_temp", fieldtype: "Float", label: __("Zone 1 Temp (°C)") },
-        { fieldname: "zone_2_temp", fieldtype: "Float", label: __("Zone 2 Temp (°C)") },
-        { fieldname: "zone_3_temp", fieldtype: "Float", label: __("Zone 3 Temp (°C)") },
-        { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed") },
-        { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
-        { fieldname: "colour_value", fieldtype: "Float", label: __("Colour Value") },
-        { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
-    ],
-};
-
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Receiving Record": {
         parent_fields: [
@@ -106,11 +86,27 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
     },
     "QC Rice Extruder Record": {
-        child_table_field: "readings",
+        child_table_field: "rice_readings",
         child_label: __("Readings"),
         child_in_dedicated_section: true,
         min_rows: 1,
-        extra_child_tables: [isnack.quality_hub.OVEN_READINGS_TABLE],
+        extra_child_tables: [
+            {
+                child_table_field: "rice_oven_readings",
+                child_label: __("Oven / Slurry Readings"),
+                child_in_dedicated_section: true,
+                min_rows: 0,
+                child_fields: [
+                    { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
+                    { fieldname: "oven_temp", fieldtype: "Float", label: __("Oven Temp (°C)") },
+                    { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed (Hz)") },
+                    { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
+                    { fieldname: "tank_temp", fieldtype: "Float", label: __("Tank Temp (°C)") },
+                    { fieldname: "motor_speed", fieldtype: "Float", label: __("Motor Speed (Hz)") },
+                    { fieldname: "flavour_speed", fieldtype: "Float", label: __("Flavour Speed (Hz)") },
+                ],
+            },
+        ],
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
             { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
@@ -130,14 +126,11 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
         child_fields: [
             { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
-            { fieldname: "screw_speed_rpm", fieldtype: "Float", label: __("Screw Speed (RPM)") },
-            { fieldname: "barrel_temp_zone_1", fieldtype: "Float", label: __("Barrel Temp Zone 1 (°C)") },
-            { fieldname: "barrel_temp_zone_2", fieldtype: "Float", label: __("Barrel Temp Zone 2 (°C)") },
-            { fieldname: "barrel_temp_zone_3", fieldtype: "Float", label: __("Barrel Temp Zone 3 (°C)") },
-            { fieldname: "die_pressure", fieldtype: "Float", label: __("Die Pressure (bar)") },
-            { fieldname: "moisture_content", fieldtype: "Float", label: __("Moisture Content (%)") },
-            { fieldname: "product_density", fieldtype: "Float", label: __("Product Density") },
-            { fieldname: "reading_remarks", fieldtype: "Small Text", label: __("Remarks") },
+            { fieldname: "moisture_corn_content", fieldtype: "Float", label: __("Moisture Corn Content (%)") },
+            { fieldname: "start_temp", fieldtype: "Float", label: __("Start Temp (°C)") },
+            { fieldname: "motor_speed", fieldtype: "Float", label: __("Motor Speed (Hz)") },
+            { fieldname: "feed_motor", fieldtype: "Float", label: __("Feed Motor (Hz)") },
+            { fieldname: "cutter_speed", fieldtype: "Float", label: __("Cutter Speed (Hz)") },
         ],
     },
     "QC Frying Line Record": {

@@ -31,83 +31,87 @@ class TestOvenAverages(unittest.TestCase):
 		self.assertEqual(average([_oven(moisture=0.0)], "moisture", zero_is_blank=True), 0)
 
 
-class TestRiceExtruderRecord(unittest.TestCase):
-	def _record(self, oven_readings):
-		return SimpleNamespace(
-			readings=[SimpleNamespace(moisture_content=15.0, product_density=0.2)], oven_readings=oven_readings
-		)
-
-	def test_averages_its_oven_readings(self):
-		rec = self._record([_oven(180, 170, 3.0), _oven(200, 190, 5.0)])
-		QCRiceExtruderRecord.validate(rec)
-		self.assertEqual((rec.avg_oven_zone1_temp, rec.avg_oven_zone2_temp, rec.avg_oven_moisture), (190, 180, 4.0))
-		# the extruder's own readings are summed apart from the oven's
-		self.assertEqual((rec.avg_moisture, rec.out_of_range_count), (15.0, 1))
-
-	def test_without_oven_readings(self):
-		rec = self._record(None)
-		QCRiceExtruderRecord.validate(rec)
-		self.assertEqual((rec.avg_oven_zone1_temp, rec.avg_oven_zone2_temp, rec.avg_oven_moisture), (0, 0, 0))
-
-
-def _puffs(moisture_corn_content=None):
+def _reading(moisture_corn_content=None):
 	return SimpleNamespace(moisture_corn_content=moisture_corn_content)
 
 
-def _puffs_oven(oven_temp=None, moisture=None):
+def _oven_now(oven_temp=None, moisture=None):
 	return SimpleNamespace(oven_temp=oven_temp, moisture=moisture)
 
 
-class TestPuffsExtruderRecord(unittest.TestCase):
-	"""Puffs has its own readings since 2026-11; the earlier ones are kept."""
+# Each extruder's own tables since 2026-11, and its oven moisture average
+EXTRUDERS = {
+	QCPuffsExtruderRecord: ("puffs_readings", "puffs_oven_readings", "avg_puffs_oven_moisture"),
+	QCRiceExtruderRecord: ("rice_readings", "rice_oven_readings", "avg_rice_oven_moisture"),
+}
 
-	def _record(self, **tables):
-		rec = SimpleNamespace(puffs_readings=None, puffs_oven_readings=None, readings=None, oven_readings=None)
-		rec.average_earlier_readings = lambda: QCPuffsExtruderRecord.average_earlier_readings(rec)
-		rec.close_earlier_tables = lambda: None  # test_earlier_readings
-		vars(rec).update(tables)
+
+class TestExtruderRecords(unittest.TestCase):
+	"""Puffs and Rice have their own readings since 2026-11; the earlier ones are kept."""
+
+	def _record(self, record_type, readings=None, oven_readings=None, **earlier):
+		table, oven_table, _moisture = EXTRUDERS[record_type]
+		rec = SimpleNamespace(readings=None, oven_readings=None, **{table: readings, oven_table: oven_readings})
+		rec.average_earlier_readings = lambda: record_type.average_earlier_readings(rec)
+		rec.close_earlier_tables = lambda: None  # isnack/utils/test_earlier_readings.py
+		vars(rec).update(earlier)
 		return rec
 
+	def _new_averages(self, record_type, rec):
+		return (rec.avg_moisture_corn_content, rec.avg_oven_temp, getattr(rec, EXTRUDERS[record_type][2]))
+
 	def test_averages_its_readings_and_oven_readings(self):
-		rec = self._record(
-			puffs_readings=[_puffs(13.0), _puffs(15.0), _puffs(None)],
-			puffs_oven_readings=[_puffs_oven(180, 3.0), _puffs_oven(200, None), _puffs_oven(None, 5.0)],
-		)
-		QCPuffsExtruderRecord.validate(rec)
-		self.assertEqual(rec.avg_moisture_corn_content, 14.0)
-		self.assertEqual((rec.avg_oven_temp, rec.avg_puffs_oven_moisture), (190, 4.0))
-		# nothing in the earlier layout
-		self.assertEqual(
-			(rec.avg_moisture, rec.avg_density, rec.out_of_range_count, rec.avg_oven_zone1_temp, rec.avg_oven_moisture),
-			(0, 0, 0, 0, 0),
-		)
+		for record_type in EXTRUDERS:
+			rec = self._record(
+				record_type,
+				readings=[_reading(13.0), _reading(15.0), _reading(None)],
+				oven_readings=[_oven_now(180, 3.0), _oven_now(200, None), _oven_now(None, 5.0)],
+			)
+			record_type.validate(rec)
+			self.assertEqual(self._new_averages(record_type, rec), (14.0, 190, 4.0), record_type.__name__)
+			# nothing in the earlier layout
+			self.assertEqual(
+				(rec.avg_moisture, rec.avg_density, rec.out_of_range_count, rec.avg_oven_zone1_temp, rec.avg_oven_moisture),
+				(0, 0, 0, 0, 0),
+				record_type.__name__,
+			)
 
 	def test_earlier_readings_average_as_before(self):
-		rec = self._record(
-			readings=[SimpleNamespace(moisture_content=15.0, product_density=0.2)],
-			oven_readings=[_oven(180, 170, 3.0), _oven(200, 190, 5.0)],
-		)
-		QCPuffsExtruderRecord.validate(rec)
-		self.assertEqual((rec.avg_moisture, rec.avg_density, rec.out_of_range_count), (15.0, 0.2, 1))
-		self.assertEqual((rec.avg_oven_zone1_temp, rec.avg_oven_zone2_temp, rec.avg_oven_moisture), (190, 180, 4.0))
-		self.assertEqual((rec.avg_moisture_corn_content, rec.avg_oven_temp, rec.avg_puffs_oven_moisture), (0, 0, 0))
+		for record_type in EXTRUDERS:
+			rec = self._record(
+				record_type,
+				readings=[SimpleNamespace(moisture_content=15.0, product_density=0.2)],
+				oven_readings=[_oven(180, 170, 3.0), _oven(200, 190, 5.0)],
+			)
+			# the earlier tables are readings / oven_readings; the new ones stay empty
+			table, oven_table, _moisture = EXTRUDERS[record_type]
+			rec.readings, rec.oven_readings = getattr(rec, table), getattr(rec, oven_table)
+			setattr(rec, table, None)
+			setattr(rec, oven_table, None)
+			record_type.validate(rec)
+			self.assertEqual((rec.avg_moisture, rec.avg_density, rec.out_of_range_count), (15.0, 0.2, 1), record_type.__name__)
+			self.assertEqual(
+				(rec.avg_oven_zone1_temp, rec.avg_oven_zone2_temp, rec.avg_oven_moisture), (190, 180, 4.0), record_type.__name__
+			)
+			self.assertEqual(self._new_averages(record_type, rec), (0, 0, 0), record_type.__name__)
 
 	def test_no_readings(self):
-		rec = self._record()
-		QCPuffsExtruderRecord.validate(rec)
-		self.assertEqual((rec.avg_moisture_corn_content, rec.avg_oven_temp, rec.avg_puffs_oven_moisture), (0, 0, 0))
+		for record_type in EXTRUDERS:
+			rec = self._record(record_type)
+			record_type.validate(rec)
+			self.assertEqual(self._new_averages(record_type, rec), (0, 0, 0), record_type.__name__)
 
 	def test_a_blank_reading_is_left_out_once_saved_as_0(self):
 		# blank in the dialog: None on the first save, 0.0 when saved again or submitted
-		for blank in (None, 0.0):
-			rec = self._record(
-				puffs_readings=[_puffs(13.0), _puffs(15.0), _puffs(blank)],
-				puffs_oven_readings=[_puffs_oven(180, blank), _puffs_oven(blank, 4.0)],
-			)
-			QCPuffsExtruderRecord.validate(rec)
-			self.assertEqual(
-				(rec.avg_moisture_corn_content, rec.avg_oven_temp, rec.avg_puffs_oven_moisture), (14.0, 180, 4.0), blank
-			)
+		for record_type in EXTRUDERS:
+			for blank in (None, 0.0):
+				rec = self._record(
+					record_type,
+					readings=[_reading(13.0), _reading(15.0), _reading(blank)],
+					oven_readings=[_oven_now(180, blank), _oven_now(blank, 4.0)],
+				)
+				record_type.validate(rec)
+				self.assertEqual(self._new_averages(record_type, rec), (14.0, 180, 4.0), (record_type.__name__, blank))
 
 
 class TestOvenRecord(unittest.TestCase):
