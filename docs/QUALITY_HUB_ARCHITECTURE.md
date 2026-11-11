@@ -58,7 +58,7 @@ The **Quality Hub** is isnack's third specialist interface, sitting alongside th
 
 Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces the DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations on submission.
 
-**Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings. QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
+**Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings (on QCC, **Oven / Slurry Readings** since 2026-11). QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
 
 **Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading, shown as **Oven / Slurry Readings**). Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
 
@@ -230,21 +230,6 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 | `avg_oven_temp` | Float | Avg Oven Temp (°C) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
 | `avg_rice_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
 | `earlier_readings_section` … `avg_oven_moisture` | | | the Earlier Readings section, as QCB's |
-| `result_section` | Section Break | — | — |
-| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
-
----|---|---|---|
-| `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
-| `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
-| `readings` | Table → QC Extruder Reading | Readings | Child table (QCB's earlier readings use it too) |
-| `avg_moisture` | Float | Avg Moisture (%) | `read_only: 1` — auto-calculated |
-| `avg_density` | Float | Avg Density | `read_only: 1` — auto-calculated |
-| `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — moisture > 14% |
-| `oven_readings_section` | Section Break | Oven Readings | — |
-| `oven_readings` | Table → QC Oven Reading | Oven Readings | Child table, optional (was the Oven record, QCE) |
-| `avg_oven_zone1_temp` | Float | Avg Oven Zone 1 Temp (°C) | `read_only: 1` — auto-calculated |
-| `avg_oven_zone2_temp` | Float | Avg Oven Zone 2 Temp (°C) | `read_only: 1` — auto-calculated |
-| `avg_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated |
 | `result_section` | Section Break | — | — |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
@@ -865,7 +850,7 @@ new QualityHub(wrapper)
 
 **Process (`process`)**
 - Sub-nav pills: Puffs Extruder (QCB) · Rice Extruder (QCC) · Frying Line (QCD)
-- The New Record dialog for QCB and QCC has two row editors, each in its own section: **Readings** (at least one row) and **Oven Readings** (optional). A dialog config lists extra tables under `extra_child_tables`; `create_qc_record` takes them through `optional_child_tables` in `QC_DIALOG_CONFIG`. QCB's are `puffs_readings` and `puffs_oven_readings`; QCC's are `rice_readings` and `rice_oven_readings`, the latter labelled **Oven / Slurry Readings**
+- The New Record dialog for QCB and QCC has two row editors, each in its own section: **Readings** (at least one row) and **Oven Readings** (optional; **Oven / Slurry Readings** on QCC). A dialog config lists extra tables under `extra_child_tables`; `create_qc_record` takes them through `optional_child_tables` in `QC_DIALOG_CONFIG`. QCB's are `puffs_readings` and `puffs_oven_readings`; QCC's are `rice_readings` and `rice_oven_readings`, the latter labelled **Oven / Slurry Readings**
 - Filter bar: date · work_order · factory_line · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 - Active sub-nav pill updates `active_process_sub` and re-loads records
@@ -1011,6 +996,10 @@ Paper Sheet                   Digital Entry
 ```
 isnack/
 ├── hooks.py                                  ← doc_events for all 9 QC DocTypes
+│
+├── utils/
+│   ├── earlier_readings.py                   ← QCB/QCC earlier tables: no new rows, print, averages
+│   └── test_earlier_readings.py
 │
 └── isnack/
     ├── page/

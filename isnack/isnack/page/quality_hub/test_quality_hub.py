@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -199,6 +200,19 @@ class TestExtruderReadings(unittest.TestCase):
 					self.assertEqual(fields[fieldname]["depends_on"], f"eval:(doc.{table} || []).length", (doctype, fieldname))
 					self.assertLess(order.index("earlier_readings_section"), order.index(fieldname), (doctype, fieldname))
 					self.assertLess(order.index(fieldname), order.index("result_section"), (doctype, fieldname))
+
+	def test_print_leaves_out_what_the_form_hides(self):
+		# before_print blanks each table's summary (SUMMARIES) as depends_on hides it
+		import importlib
+
+		for doctype, (*_tables, script) in self.RECORDS.items():
+			shown_by = {}
+			for f in _doctype(doctype)["fields"]:
+				m = re.fullmatch(r"eval:\(doc\.(\w+) \|\| \[\]\)\.length", f.get("depends_on") or "")
+				if m and f["fieldtype"] not in ("Table", "Section Break"):
+					shown_by.setdefault(m.group(1), set()).add(f["fieldname"])
+			module = importlib.import_module(f"isnack.isnack.doctype.{script}.{script}")
+			self.assertEqual({t: set(f) for t, f in module.SUMMARIES.items()}, shown_by, doctype)
 
 	def test_no_new_rows_in_the_earlier_tables(self):
 		for doctype, (*_tables, script) in self.RECORDS.items():
