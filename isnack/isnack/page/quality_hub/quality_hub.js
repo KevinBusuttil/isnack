@@ -1,5 +1,16 @@
 frappe.provide("isnack.quality_hub");
 
+// A taster's Overall %: the stars given on Shape, Colour, Smell, Taste and
+// Texture over full marks (5 x 5); a score left blank counts as 0. Shown as
+// the scores are picked; the record works it out again on save.
+isnack.quality_hub.TASTING_CRITERIA = ["appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score"];
+isnack.quality_hub.tasting_overall_percent = (row) => {
+    const stars = isnack.quality_hub.TASTING_CRITERIA.map((fieldname) => Number(row[fieldname]) || 0);
+    if (!stars.some(Boolean)) return "";
+    const full_marks = stars.length * 5;
+    return Math.round((stars.reduce((sum, value) => sum + value, 0) / full_marks) * 1000) / 10;
+};
+
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Receiving Record": {
         parent_fields: [
@@ -171,6 +182,14 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         child_label: __("Scores"),
         child_in_dedicated_section: true,
         min_rows: 1,
+        // what the stars mean, shown in the Scores toolbar
+        child_legend: [
+            [1, __("Poor")],
+            [2, __("Fair")],
+            [3, __("Good")],
+            [4, __("Very good")],
+            [5, __("Excellent")],
+        ],
         parent_fields: [
             // ── Section: Record Details ──────────────────────────────────────
             { fieldname: "sb_record", fieldtype: "Section Break", label: __("Record Details") },
@@ -181,9 +200,9 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
-            // ── Section: Product & Scoring ───────────────────────────────────
-            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Scoring") },
-            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
+            // ── Section: Product ─────────────────────────────────────────────
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") },
+            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch", reqd: 1 },
             // filled from the batch, as on the form
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item", read_only: 1, fetch_from: "batch_no.item" },
             { fieldname: "cb_product", fieldtype: "Column Break" },
@@ -196,7 +215,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "aroma_score", fieldtype: "Rating", label: __("Smell") },
             { fieldname: "taste_score", fieldtype: "Rating", label: __("Taste") },
             { fieldname: "texture_score", fieldtype: "Rating", label: __("Texture") },
-            { fieldname: "overall_score", fieldtype: "Rating", label: __("Overall") },
+            // worked out from the five scores, not entered
+            { fieldname: "overall_percent", fieldtype: "Percent", label: __("Overall %"), read_only: 1, compute: isnack.quality_hub.tasting_overall_percent },
             { fieldname: "comments", fieldtype: "Small Text", label: __("Comments") },
         ],
     },
@@ -843,7 +863,10 @@ isnack.quality_hub.QualityHub = class {
         const row_html = rows
             .map((row, index) => {
                 const cells = table.child_fields
-                    .map((field) => `<td>${this.render_child_input(field, row[field.fieldname], index)}</td>`)
+                    .map((field) => {
+                        const value = field.compute ? field.compute(row) : row[field.fieldname];
+                        return `<td>${this.render_child_input(field, value, index)}</td>`;
+                    })
                     .join("");
 
                 return `
@@ -866,6 +889,7 @@ isnack.quality_hub.QualityHub = class {
             <div class="qh-child-editor">
                 <div class="qh-child-toolbar">
                     <div class="qh-child-toolbar-label">${frappe.utils.escape_html(table.child_label)}</div>
+                    ${this.render_child_legend(table)}
                     <button type="button" class="btn btn-sm btn-default qh-child-add">
                         <i class="fa fa-plus"></i> ${__("Add Row")}
                     </button>
@@ -918,12 +942,48 @@ isnack.quality_hub.QualityHub = class {
             const field = table.child_fields.find((item) => item.fieldname === fieldname);
             if (!field) return;
             rows[row_index][fieldname] = this.get_input_value($input, field);
+            // columns worked out from the others follow at once
+            table.child_fields
+                .filter((item) => item.compute)
+                .forEach((item) => {
+                    $wrapper
+                        .find(`.qh-child-computed[data-row-index="${row_index}"][data-fieldname="${item.fieldname}"]`)
+                        .text(this.format_computed(item, item.compute(rows[row_index])));
+                });
         });
+    }
+
+    /** A row of what each score means (``child_legend``: [[value, label], ...]),
+     *  coloured from the lowest to the highest. */
+    render_child_legend(table) {
+        if (!(table.child_legend || []).length) return "";
+        const items = table.child_legend
+            .map(([value, label], index) => `
+                <span class="qh-legend-item qh-legend-${index + 1}">
+                    <span class="qh-legend-value">${frappe.utils.escape_html(String(value))}</span>
+                    ${frappe.utils.escape_html(label)}
+                </span>`)
+            .join("");
+        return `<div class="qh-child-legend" role="note" aria-label="${frappe.utils.escape_html(__("Score guide"))}">${items}</div>`;
+    }
+
+    format_computed(field, value) {
+        if (value === "" || value === null || value === undefined) return "–";
+        return field.fieldtype === "Percent" ? `${value}%` : `${value}`;
     }
 
     render_child_input(field, value, row_index) {
         const escaped_fieldname = frappe.utils.escape_html(field.fieldname);
         const escaped_label = frappe.utils.escape_html(field.label);
+
+        if (field.compute) {
+            return `
+                <span
+                    class="qh-child-computed"
+                    data-row-index="${row_index}"
+                    data-fieldname="${escaped_fieldname}">${frappe.utils.escape_html(this.format_computed(field, value))}</span>
+            `;
+        }
 
         if (field.fieldtype === "Check") {
             return `
@@ -1022,17 +1082,19 @@ isnack.quality_hub.QualityHub = class {
     }
 
     get_non_empty_child_rows(dialog, table) {
+        // a column worked out from the others is the server's to work out
+        const entered = table.child_fields.filter((field) => !field.compute);
         return (dialog.__child_rows[table.child_table_field] || [])
             .map((row) => {
                 const clean_row = {};
-                table.child_fields.forEach((field) => {
+                entered.forEach((field) => {
                     clean_row[field.fieldname] = field.fieldtype === "Rating"
                         ? this.rating_fraction(row[field.fieldname], field)
                         : row[field.fieldname];
                 });
                 return clean_row;
             })
-            .filter((row) => this.child_row_has_values(row, table.child_fields));
+            .filter((row) => this.child_row_has_values(row, entered));
     }
 
     /** The dialog picks a Rating in stars (1-5); Frappe stores the fraction of
