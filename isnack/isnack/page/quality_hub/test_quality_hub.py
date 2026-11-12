@@ -397,7 +397,7 @@ class TestPackagingCheckSchema(unittest.TestCase):
 			self.assertLess(self.order.index(fieldname), section, fieldname)
 
 	def test_the_earlier_layout(self):
-		from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import EARLIER_FIELDS
+		from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import EARLIER_FIELDS, RETIRED_FIELDS
 
 		section = self.fields["earlier_layout_section"]
 		self.assertEqual((section["fieldtype"], section.get("depends_on")), ("Section Break", "eval:doc.earlier_layout"))
@@ -407,6 +407,7 @@ class TestPackagingCheckSchema(unittest.TestCase):
 			self.assertGreater(self.order.index(fieldname), start, fieldname)
 			self.assertEqual(self.fields[fieldname].get("no_copy"), 1, fieldname)
 			self.assertFalse(self.fields[fieldname].get("reqd"), fieldname)
+		self.assertEqual(RETIRED_FIELDS, self.RETIRED)
 		self.assertEqual(set(EARLIER_FIELDS), set(self.RETIRED) | {"variance", "variance_acceptable"})
 		# the variance still worked out, not entered
 		for fieldname in ("variance", "variance_acceptable"):
@@ -416,7 +417,6 @@ class TestPackagingCheckSchema(unittest.TestCase):
 			(marker["fieldtype"], marker.get("hidden"), marker.get("read_only"), marker.get("no_copy"), marker.get("print_hide")),
 			("Check", 1, 1, 1, 1),
 		)
-		self.assertEqual(qh.QC_DIALOG_CONFIG["QC Packaging Check"]["retired_fields"], self.RETIRED)
 
 	def test_the_dialog(self):
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
@@ -649,28 +649,6 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 		qh.create_qc_record(
 			"QC Puffs Extruder Record",
 			payload={"record_date": "2026-11-10", "readings": [], "puffs_readings": [{"time_slot": "08:00"}]},
-		)
-		doc.insert.assert_called_once()
-
-	@patch("frappe.get_doc")
-	@patch("frappe.get_meta")
-	def test_a_page_from_before_the_packaging_change_is_told_to_reload(self, get_meta, get_doc):
-		get_meta.return_value = self._meta(["record_date", "qty_wasted", "film_type", "film_batch", "qty_issued", "qty_used", "qty_returned"])
-		doc = get_doc.return_value = MagicMock(docstatus=0)
-
-		# a page loaded before the change still asks for the film and the reconciliation
-		for retired in ({"film_batch": "F-12"}, {"qty_issued": 100.0}, {"qty_returned": 0}):
-			with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
-				qh.create_qc_record("QC Packaging Check", payload={"record_date": "2026-11-12", "qty_wasted": 3.0, **retired})
-		doc.insert.assert_not_called()
-
-		# left blank, they are no sign of an old page
-		qh.create_qc_record(
-			"QC Packaging Check", payload={"record_date": "2026-11-12", "qty_wasted": 3.0, "film_type": "", "qty_used": None}
-		)
-		self.assertEqual(
-			get_doc.call_args.args[0],
-			{"doctype": "QC Packaging Check", "record_date": "2026-11-12", "qty_wasted": 3.0, "status": "Draft"},
 		)
 		doc.insert.assert_called_once()
 

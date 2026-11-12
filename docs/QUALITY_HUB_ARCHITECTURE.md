@@ -62,7 +62,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading, shown as **Oven / Slurry Readings**). Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
 
-**Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden). A check made since has no variance, so the Quality Explorer shows it with no result.
+**Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer shows it with no result.
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -311,7 +311,7 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 | `qty_returned` | Float | Qty Returned | `no_copy: 1`; earlier layout |
 | `variance` | Float | Variance | `read_only: 1`, `no_copy: 1` — auto-calculated on a check made before: `issued − used − wasted − returned`; 0 on one made since |
 | `variance_acceptable` | Check | Variance Acceptable | `read_only: 1`, `no_copy: 1` — auto-set on a check made before: `1` if `abs(variance) ≤ 0.5`; 0 on one made since |
-| `earlier_layout` | Check | Earlier Layout | `hidden`, `read_only`, `no_copy`, `print_hide` — set by the patch `qc_packaging_check_earlier_layout` on every check made before 2026-11; Amend keeps it |
+| `earlier_layout` | Check | Earlier Layout | `hidden`, `read_only`, `no_copy`, `print_hide` — set by the patch `qc_packaging_check_earlier_layout` on the checks made before 2026-11 that keep the earlier layout (submitted or cancelled, or a draft holding film or reconciliation); Amend carries it, and `validate` never lets it go |
 
 ---
 
@@ -667,7 +667,11 @@ validate():
 
 ```
 validate():
+    keep_earlier_layout()               # a form loaded before the migrate sends no mark:
+                                        # keep the saved check's, or the amended one's
     if not earlier_layout:              # a check made since 2026-11: no reconciliation
+        if any RETIRED_FIELDS holds a value:
+            throw "This page is out of date"   # a form, Duplicate or hub page from before
         variance, variance_acceptable = 0, 0
         return
     issued   = qty_issued   or 0
@@ -682,7 +686,7 @@ before_print():
         blank EARLIER_FIELDS            # film, reconciliation, variance (in memory)
 ```
 
-The checks made before 2026-11 (`earlier_layout`, set by the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout`) keep their film, their reconciliation and the variance result worked out from it, in the Earlier Layout section; those can be corrected on a draft or an amendment. A check made since records neither: its variance is 0 and the Quality Explorer gives it no result (`_result` in `quality_explorer.py`).
+The checks made before 2026-11 that keep the earlier layout (`earlier_layout`, set by the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout`: every submitted or cancelled check, and each draft holding film or reconciliation, `belongs_to_earlier_layout`) keep their film, their reconciliation and the variance result worked out from it, in the Earlier Layout section; those can be corrected on a draft or an amendment. The patch marks a check deleted before in its Deleted Document too, so a restore brings it back as it was. A check made since records neither: its variance is 0, a value in a retired field is refused (a form loaded before the change), and the Quality Explorer gives it no result (`_result` in `quality_explorer.py`). Until the migrate adds the mark, every check is treated as one made before.
 
 ---
 
@@ -884,7 +888,7 @@ new QualityHub(wrapper)
 
 **Pkg & Weight (`pkg_weight`)**
 - Sub-nav pills: Packaging Checks (QCG) · Weight Checks (QCI)
-- The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: `create_qc_record` refuses a value in any of its `retired_fields` (`QC_DIALOG_CONFIG`) with "This page is out of date"
+- The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
 - Filter bar: date · work_order · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 
