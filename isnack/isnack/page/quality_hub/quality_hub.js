@@ -298,23 +298,20 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Limits ────────────────────────────────────
+            // (the TU1 and TU2 limits came off the check in 2026-11)
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Limits") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
             { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
-            { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)") },
             { fieldname: "cb_product", fieldtype: "Column Break" },
-            { fieldname: "tu1_limit", fieldtype: "Float", label: __("TU1 Limit (g)") },
-            { fieldname: "tu2_limit", fieldtype: "Float", label: __("TU2 Limit (g)") },
-            // ── Section: Outcome ─────────────────────────────────────────────
-            { fieldname: "sb_outcome", fieldtype: "Section Break", label: __("Outcome") },
-            { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
-            { fieldname: "cb_outcome", fieldtype: "Column Break" },
-            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+            { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)") },
+            // (so did the Outcome section, Overall Status and Remarks, and each
+            // sample's tare: a sample has a Status and Remarks of its own)
         ],
         child_fields: [
             { fieldname: "sample_no", fieldtype: "Int", label: __("Sample No") },
             { fieldname: "gross_weight", fieldtype: "Float", label: __("Gross Weight (g)") },
-            { fieldname: "tare_weight", fieldtype: "Float", label: __("Tare Weight (g)") },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+            { fieldname: "status", fieldtype: "Select", label: __("Status"), options: "\nPass\nFail", reqd: 1 },
         ],
     },
 };
@@ -784,6 +781,13 @@ isnack.quality_hub.QualityHub = class {
                 frappe.msgprint(__("Add at least one row in {0}.", [table.child_label]));
                 return;
             }
+            const missing = this.missing_child_values(dialog, table);
+            if (missing.length) {
+                frappe.msgprint(missing.map(({ label, rows }) =>
+                    __("{0} is required in {1} (row {2}).", [label, table.child_label, rows.join(", ")])
+                ).join("<br>"));
+                return;
+            }
             payload[table.child_table_field] = child_rows;
         }
 
@@ -855,7 +859,10 @@ isnack.quality_hub.QualityHub = class {
         const $wrapper = $(dialog.get_field(`${table.child_table_field}_editor`).wrapper);
         const rows = dialog.__child_rows[table.child_table_field];
         const headers = (table.child_fields || [])
-            .map((field) => `<th>${frappe.utils.escape_html(field.label)}</th>`)
+            .map((field) => {
+                const reqd = field.reqd ? `<span class="qh-child-reqd" title="${frappe.utils.escape_html(__("Required"))}">*</span>` : "";
+                return `<th>${frappe.utils.escape_html(field.label)}${reqd}</th>`;
+            })
             .join("");
         const row_html = rows
             .map((row, index) => {
@@ -1099,6 +1106,22 @@ isnack.quality_hub.QualityHub = class {
     rating_fraction(stars, field) {
         if (stars === "" || stars === null || stars === undefined) return "";
         return Number(stars) / (Number(field.options) || 5);
+    }
+
+    /** The required columns (``reqd``) left blank in a row that has values:
+     *  [{label, rows}], rows numbered as the editor shows them. */
+    missing_child_values(dialog, table) {
+        const entered = table.child_fields.filter((field) => !field.compute);
+        const rows = dialog.__child_rows[table.child_table_field] || [];
+        return entered
+            .filter((field) => field.reqd)
+            .map((field) => ({
+                label: field.label,
+                rows: rows
+                    .map((row, index) => (this.child_row_has_values(row, entered) && !this.child_row_has_values(row, [field]) ? index + 1 : null))
+                    .filter(Boolean),
+            }))
+            .filter(({ rows: missing_rows }) => missing_rows.length);
     }
 
     child_row_has_values(row, fields) {

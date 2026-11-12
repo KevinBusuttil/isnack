@@ -728,6 +728,12 @@
 }
 .qh-legend-5 .qh-legend-value { background: var(--isn-dialog-primary, #0f766e); }
 
+/* a column every row with values needs (reqd), marked as Frappe marks a field */
+.qh-child-reqd {
+    margin-left: 0.2rem;
+    color: var(--red-400, #f87171);
+}
+
 /* a column worked out from the others: read, not typed in */
 .qh-child-computed {
     display: inline-block;

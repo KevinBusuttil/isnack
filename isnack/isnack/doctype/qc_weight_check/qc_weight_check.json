@@ -13,23 +13,26 @@
   "operator_name",
   "qc_inspector",
   "status",
-  "remarks",
   "amended_from",
   "item_code",
   "item_name",
   "batch_no",
   "nominal_weight",
-  "tu1_limit",
-  "tu2_limit",
   "samples",
   "sample_count",
   "average_weight",
   "std_deviation",
   "min_weight",
   "max_weight",
+  "earlier_layout_section",
+  "tu1_limit",
+  "tu2_limit",
   "tu1_failures",
   "tu2_failures",
-  "overall_status"
+  "earlier_layout_column",
+  "overall_status",
+  "remarks",
+  "earlier_layout"
  ],
  "fields": [
   {
@@ -81,11 +84,6 @@
    "options": "Draft\nSubmitted\nRejected\nClosed"
   },
   {
-   "fieldname": "remarks",
-   "fieldtype": "Small Text",
-   "label": "Remarks"
-  },
-  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "label": "Amended From",
@@ -116,16 +114,6 @@
    "fieldname": "nominal_weight",
    "fieldtype": "Float",
    "label": "Nominal Weight (g)"
-  },
-  {
-   "fieldname": "tu1_limit",
-   "fieldtype": "Float",
-   "label": "TU1 Limit (g)"
-  },
-  {
-   "fieldname": "tu2_limit",
-   "fieldtype": "Float",
-   "label": "TU2 Limit (g)"
   },
   {
    "fieldname": "samples",
@@ -164,29 +152,73 @@
    "read_only": 1
   },
   {
+   "fieldname": "earlier_layout_section",
+   "fieldtype": "Section Break",
+   "label": "Earlier Layout",
+   "depends_on": "eval:doc.earlier_layout",
+   "description": "Recorded on checks made before 2026-11: the TU1 and TU2 limits with the samples under each, the Overall Status and the Remarks. They can be corrected on a draft; checks made since record a Status and Remarks for each sample instead."
+  },
+  {
+   "fieldname": "tu1_limit",
+   "fieldtype": "Float",
+   "label": "TU1 Limit (g)",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "tu2_limit",
+   "fieldtype": "Float",
+   "label": "TU2 Limit (g)",
+   "no_copy": 1
+  },
+  {
    "fieldname": "tu1_failures",
    "fieldtype": "Int",
    "label": "TU1 Failures",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "tu2_failures",
    "fieldtype": "Int",
    "label": "TU2 Failures",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "earlier_layout_column",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "overall_status",
    "fieldtype": "Select",
    "label": "Overall Status",
-   "options": "\nPass\nFail\nMarginal"
+   "options": "\nPass\nFail\nMarginal",
+   "no_copy": 1,
+   "description": "Entered on a check made before 2026-11. On a check made since it is worked out from the samples' Status (Fail when any sample failed) and is not shown here."
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "earlier_layout",
+   "fieldtype": "Check",
+   "label": "Earlier Layout",
+   "description": "A check made before 2026-11 that keeps its TU limits, Overall Status and Remarks: submitted or cancelled, or a draft holding any of them or a tare. Set by a patch; Amend carries it.",
+   "default": "0",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-10 12:00:00.000000",
+ "modified": "2026-11-12 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Weight Check",

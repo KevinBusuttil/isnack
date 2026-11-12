@@ -20,3 +20,4 @@ isnack.patches.v1_0.qc_receiving_yes_no_checks
 isnack.patches.v1_0.recompute_qc_tasting_results
 isnack.patches.v1_0.qc_tasting_overall_percent
 isnack.patches.v1_0.qc_packaging_check_earlier_layout
+isnack.patches.v1_0.qc_weight_check_earlier_layout

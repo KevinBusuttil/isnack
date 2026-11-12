@@ -1,8 +1,7 @@
-import json
-
 import frappe
 
 from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import RETIRED_FIELDS, belongs_to_earlier_layout
+from isnack.utils import earlier_layout
 
 
 def execute():
@@ -22,16 +21,5 @@ def execute():
         return
 
     checks = frappe.get_all("QC Packaging Check", fields=["name", "docstatus", *RETIRED_FIELDS])
-    names = [c.name for c in checks if belongs_to_earlier_layout(c)]
-    if names:
-        frappe.db.sql(
-            "update `tabQC Packaging Check` set earlier_layout = 1 where name in %(names)s", {"names": tuple(names)}
-        )
-
-    for deleted in frappe.get_all(
-        "Deleted Document", filters={"deleted_doctype": "QC Packaging Check", "restored": 0}, fields=["name", "data"]
-    ):
-        data = json.loads(deleted.data)
-        if belongs_to_earlier_layout(data):
-            data["earlier_layout"] = 1
-            frappe.db.set_value("Deleted Document", deleted.name, "data", frappe.as_json(data), update_modified=False)
+    earlier_layout.mark_records("QC Packaging Check", [c.name for c in checks if belongs_to_earlier_layout(c)])
+    earlier_layout.mark_deleted_documents("QC Packaging Check", belongs_to_earlier_layout)
