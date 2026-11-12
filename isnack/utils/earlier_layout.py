@@ -59,3 +59,27 @@ def mark_deleted_documents(doctype, belongs):
         if belongs(data):
             data["earlier_layout"] = 1
             frappe.db.set_value("Deleted Document", deleted.name, "data", frappe.as_json(data), update_modified=False)
+
+
+def forget_grid_columns(doctype, child_doctype):
+    """Forget the columns users chose (the grid's Configure Columns) for
+    ``child_doctype`` in ``doctype``'s form: chosen before fields came off, they
+    would keep the new ones out of the grid."""
+    from frappe.model.utils.user_settings import sync_user_settings
+
+    sync_user_settings()  # the cache holds the latest choices; the table, what was synced
+    for row in frappe.db.sql(
+        "select user, data from `__UserSettings` where doctype = %s", (doctype,), as_dict=True
+    ):
+        data = json.loads(row.data or "{}")
+        grid = data.get("GridView") or {}
+        if child_doctype not in grid:
+            continue
+        grid.pop(child_doctype)
+        if not grid:
+            data.pop("GridView")
+        frappe.db.sql(
+            "update `__UserSettings` set data = %s where user = %s and doctype = %s",
+            (json.dumps(data), row.user, doctype),
+        )
+        frappe.cache.hdel("_user_settings", f"{doctype}::{row.user}")

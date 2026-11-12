@@ -35,6 +35,7 @@ class _Check(_Row):
 	before_print = QCWeightCheck.before_print
 	refuse_retired_values = QCWeightCheck.refuse_retired_values
 	require_sample_status = QCWeightCheck.require_sample_status
+	on_trash = QCWeightCheck.on_trash
 
 	def is_new(self):
 		return not self.saved
@@ -94,8 +95,16 @@ class TestJudgedSampleBySample(unittest.TestCase):
 
 	def test_each_sample_needs_a_status(self):
 		doc = _check(_sample(100, "Pass", idx=1), _sample(99, None, idx=2), _sample(98, "", idx=3))
-		with self.assertRaisesRegex(frappe.ValidationError, r"Status is required in Samples \(row 2, 3\)"):
+		with self.assertRaisesRegex(frappe.ValidationError, r"Status is required in Samples \(row 2, 3\)") as raised:
 			doc.validate()
+		# a form from before the change has no Status column: it is told so
+		self.assertIn("If the Samples table has no Status column, this page is out of date", str(raised.exception))
+
+	def test_remarks_of_nothing_but_spaces_are_no_remarks(self):
+		# an old draft left unmarked whose Remarks is a stray line break: nothing hidden to refuse
+		doc = _check(_sample(100, "Pass"), remarks=" \n ")
+		doc.validate()
+		self.assertIsNone(doc.remarks)
 
 	def test_an_entered_overall_status_gives_way_to_the_samples(self):
 		# a page from before the change sends the Overall Status it offered
@@ -180,12 +189,29 @@ def _row(name, docstatus=0, **values):
 	return frappe._dict(name=name, docstatus=docstatus, **values)
 
 
+class TestDeleted(unittest.TestCase):
+	def test_an_unmarked_draft_from_before_keeps_the_earlier_layout_in_its_snapshot(self):
+		# its samples have no Status, which a restore could not give them
+		doc = _check(_sample(100), _sample(99), saved=_check())
+		doc.on_trash()
+		self.assertEqual(doc.earlier_layout, 1)
+
+	def test_a_check_made_since_is_deleted_as_it_is(self):
+		doc = _check(_sample(100, "Pass"), saved=_check())
+		doc.on_trash()
+		self.assertEqual(doc.earlier_layout, 0)
+		doc = _check(saved=_check())
+		doc.on_trash()
+		self.assertEqual(doc.earlier_layout, 0)
+
+
+@patch("isnack.utils.earlier_layout.forget_grid_columns")
 @patch("frappe.db.set_value")
 @patch("frappe.db.sql")
 @patch("frappe.get_all")
 @patch("frappe.db.has_column", return_value=True)
 class TestPatch(unittest.TestCase):
-	def test_the_checks_made_before_are_marked(self, _has, get_all, sql, set_value):
+	def test_the_checks_made_before_are_marked(self, _has, get_all, sql, set_value, forget):
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Weight Sample": [frappe._dict(parent="QCI-6", tare_weight=2.0)],
 			"QC Weight Check": [
@@ -209,31 +235,38 @@ class TestPatch(unittest.TestCase):
 			{"names": ("QCI-1", "QCI-2", "QCI-3", "QCI-4", "QCI-6")},
 		)
 		set_value.assert_not_called()
+		# the samples grid's columns users chose before would keep the Status and Remarks out
+		forget.assert_called_once_with("QC Weight Check", "QC Weight Sample")
 
-	def test_a_check_deleted_before_is_restored_as_it_was(self, _has, get_all, sql, set_value):
+	def test_a_check_deleted_before_is_restored_as_it_was(self, _has, get_all, sql, set_value, _forget):
 		with_tare = {"doctype": "QC Weight Check", "name": "QCI-7", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 2}]}
+		# gross weights only: its samples have no Status, which a restore could not give them
 		blank = {"doctype": "QC Weight Check", "name": "QCI-8", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 0}]}
+		no_samples = {"doctype": "QC Weight Check", "name": "QCI-9", "docstatus": 0, "samples": []}
+		judged = {"doctype": "QC Weight Check", "name": "QCI-10", "docstatus": 0, "samples": [{"gross_weight": 100, "status": "Pass"}]}
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Weight Sample": [],
 			"QC Weight Check": [],
-			"Deleted Document": [_row("DD-1", data=json.dumps(with_tare)), _row("DD-2", data=json.dumps(blank))],
+			"Deleted Document": [_row(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate((with_tare, blank, no_samples, judged), 1)],
 		}[doctype]
 
 		patch_module.execute()
 
 		self.assertEqual(get_all.call_args.kwargs["filters"], {"deleted_doctype": "QC Weight Check", "restored": 0})
 		sql.assert_not_called()
-		set_value.assert_called_once()
-		args, kwargs = set_value.call_args
-		self.assertEqual(args[:3], ("Deleted Document", "DD-1", "data"))
+		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2"])
+		args, kwargs = set_value.call_args_list[0]
+		self.assertEqual(args[0::2], ("Deleted Document", "data"))
 		self.assertEqual(json.loads(args[3]), {**with_tare, "earlier_layout": 1})
+		self.assertEqual(json.loads(set_value.call_args_list[1].args[3]), {**blank, "earlier_layout": 1})
 		self.assertEqual(kwargs, {"update_modified": False})
 
-	def test_before_the_column_exists(self, has_column, get_all, sql, set_value):
+	def test_before_the_column_exists(self, has_column, get_all, sql, set_value, forget):
 		has_column.return_value = False
 		patch_module.execute()
 		get_all.assert_not_called()
 		sql.assert_not_called()
+		forget.assert_not_called()
 
 
 class TestMarkRecords(unittest.TestCase):
@@ -241,3 +274,30 @@ class TestMarkRecords(unittest.TestCase):
 	def test_nothing_to_mark(self, sql):
 		earlier_layout.mark_records("QC Weight Check", [])
 		sql.assert_not_called()
+
+
+@patch("frappe.cache")
+@patch("frappe.model.utils.user_settings.sync_user_settings")
+@patch("frappe.db.sql")
+class TestForgetGridColumns(unittest.TestCase):
+	def test_the_samples_grid_columns_users_chose_are_forgotten(self, sql, sync, cache):
+		chose = {"GridView": {"QC Weight Sample": [{"fieldname": "tare_weight"}]}, "List": {"filters": []}}
+		only_grid = {"GridView": {"QC Weight Sample": [{"fieldname": "gross_weight"}]}}
+		other = {"GridView": {"Some Other Child": []}}
+		sql.side_effect = [
+			[frappe._dict(user="a@x", data=json.dumps(chose)), frappe._dict(user="b@x", data=json.dumps(only_grid)), frappe._dict(user="c@x", data=json.dumps(other))],
+			None,
+			None,
+		]
+
+		earlier_layout.forget_grid_columns("QC Weight Check", "QC Weight Sample")
+
+		sync.assert_called_once()
+		updates = sql.call_args_list[1:]
+		self.assertEqual([c.args[1][1:] for c in updates], [("a@x", "QC Weight Check"), ("b@x", "QC Weight Check")])
+		self.assertEqual(json.loads(updates[0].args[1][0]), {"List": {"filters": []}})
+		self.assertEqual(json.loads(updates[1].args[1][0]), {})
+		self.assertEqual(
+			[c.args for c in cache.hdel.call_args_list],
+			[("_user_settings", "QC Weight Check::a@x"), ("_user_settings", "QC Weight Check::b@x")],
+		)

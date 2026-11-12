@@ -64,7 +64,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer shows it with no result.
 
-**Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section (and in each sample's own Earlier Layout): the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
+**Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section; their Samples grid keeps the columns it was made with (Gross, Tare, Net Weight, In Range; no Status or Remarks), set by the form script: the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -531,12 +531,14 @@ The desk grid shows the taster, all five scores and the Overall % (`columns`: ta
 |---|---|---|---|---|
 | `sample_no` | Int | Sample No | ✅ | — |
 | `gross_weight` | Float | Gross Weight (g) | ✅ | — |
-| `remarks` | Small Text | Remarks | ✅ | `columns: 4` |
-| `status` | Select | Status | ✅ | options: (blank) / Pass / Fail; mandatory on a check made since 2026-11 (`QCWeightCheck.require_sample_status`; the form script `qc_weight_check.js` marks the column with `grid.toggle_reqd`), not on one made before |
+| `remarks` | Small Text | Remarks | ✅ | `columns: 4`; `depends_on: eval:!parent.earlier_layout` |
+| `status` | Select | Status | ✅ | options: (blank) / Pass / Fail; `depends_on: eval:!parent.earlier_layout`; mandatory on a check made since 2026-11 (`QCWeightCheck.require_sample_status`; the form script `qc_weight_check.js` marks the column with `grid.toggle_reqd`), not on one made before |
 | `earlier_layout_section` | Section Break | Earlier Layout | — | in the row's form, shown only on a check made before 2026-11 (`eval:parent.earlier_layout`) |
 | `tare_weight` | Float | Tare Weight (g) | — | `no_copy`, `print_hide_if_no_value`; earlier layout |
 | `net_weight` | Float | Net Weight (g) | — | `read_only: 1`, `no_copy`, `print_hide_if_no_value` — Gross − Tare, calculated by parent `validate()` (the gross weight since 2026-11) |
 | `in_range` | Check | In Range | — | `read_only: 1`, `no_copy`, `print_hide_if_no_value` — on a check made before, 1 if `net_weight >= tu2_limit` |
+
+The grid's columns follow the check: on one made since, Sample No, Gross Weight, Remarks and Status (the doctype's `in_list_view`); on one made before, Sample No, Gross Weight, Tare Weight, Net Weight and In Range, as it was made. The form script `qc_weight_check.js` sets them (`grid.update_docfield_property(…, "in_list_view", …)`, `grid.reset_grid()`); the doctype cannot say either per check.
 
 ---
 
@@ -724,10 +726,13 @@ Note: `corrective_action` is mandatory when `all_tests_passed = 0`, enforced via
 validate():
     earlier_layout.keep_mark(self)      # a form loaded before the migrate sends no mark
     earlier = earlier_layout.in_earlier_layout(self)
-    if not earlier and (tu1_limit or tu2_limit or remarks or any sample's tare_weight):
-        throw "This page is out of date"   # a form, Duplicate or hub page from before
-    if not earlier and any sample has no Status:
-        throw "Status is required in Samples (row …)"
+    if not earlier:
+        remarks = None if only whitespace
+        if tu1_limit or tu2_limit or remarks or any sample's tare_weight:
+            throw "This page is out of date"   # a form, Duplicate or hub page from before
+        if any sample has no Status:
+            throw "Status is required in Samples (row …). If the Samples table has
+                   no Status column, this page is out of date: reload it …"
 
     tu1 = tu1_limit or 0
     tu2 = tu2_limit or 0
@@ -756,9 +761,13 @@ validate():
 before_print():
     if not earlier_layout:              # print ignores depends_on
         blank EARLIER_FIELDS and each sample's EARLIER_SAMPLE_FIELDS (in memory)
+
+on_trash():
+    if not earlier_layout and a sample has no Status:   # an unmarked draft from before
+        earlier_layout = 1              # in memory: its Deleted Document can be restored
 ```
 
-The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a TU limit, an Overall Status, Remarks or a tare; marked by the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout`, which marks a check deleted before in its Deleted Document too) keep their limits, tares and the Overall Status they were given, reckoned as before. Each sample's Status is mandatory on a check made since, not on one made before: a draft finished now, an amendment or a restore of one keeps the Overall Status it was given. The doctype cannot say that per check, so the Status field is not `reqd`; the controller requires it, and the form script `qc_weight_check.js` marks the column required on the checks that need it (`grid.toggle_reqd`).
+The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a TU limit, an Overall Status, Remarks or a tare; marked by the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout`, which also marks a check deleted before in its Deleted Document when it keeps the earlier layout or its samples have no Status, which a restore could not give them, and forgets the Samples grid columns users had chosen, which would keep Status and Remarks out of the grid: `earlier_layout.forget_grid_columns`) keep their limits, tares and the Overall Status they were given, reckoned as before. Each sample's Status is mandatory on a check made since, not on one made before: a draft finished now, an amendment or a restore of one keeps the Overall Status it was given. The doctype cannot say that per check, so the Status field is not `reqd`; the controller requires it, and the form script `qc_weight_check.js` marks the column required on the checks that need it (`grid.toggle_reqd`).
 
 ---
 
@@ -917,7 +926,7 @@ new QualityHub(wrapper)
 **Pkg & Weight (`pkg_weight`)**
 - Sub-nav pills: Packaging Checks (QCG) · Weight Checks (QCI)
 - The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
-- The Weight Check dialog: Record Details, Product & Limits (Item Code, Batch No, Nominal Weight; no TU limits since 2026-11) and the Samples editor (Sample No, Gross Weight, Remarks, Status); no Outcome section. Status is a required column (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
+- The Weight Check dialog: Record Details, Product (Item Code, Batch No, Nominal Weight; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Remarks, Status); no Outcome section. Status is a required column (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
 - Filter bar: date · work_order · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 
@@ -1055,7 +1064,7 @@ isnack/
 ├── hooks.py                                  ← doc_events for all 9 QC DocTypes
 │
 ├── utils/
-│   ├── earlier_layout.py                     ← QCG/QCI earlier layout: the mark, kept; the patches' marking
+│   ├── earlier_layout.py                     ← QCG/QCI earlier layout: the mark, kept; the patches' marking; grid columns forgotten
 │   ├── earlier_readings.py                   ← QCB/QCC earlier tables: no new rows, print, averages
 │   └── test_earlier_readings.py
 │

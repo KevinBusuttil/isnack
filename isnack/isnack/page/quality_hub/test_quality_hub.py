@@ -456,7 +456,12 @@ class TestWeightCheckSchema(unittest.TestCase):
 		# amendment, a restore): the check and the form see to it, not the doctype
 		self.assertIsNone(status.get("reqd"))
 		with open(os.path.join(DOCTYPE_DIR, "qc_weight_check", "qc_weight_check.js")) as fh:
-			self.assertIn('frm.fields_dict.samples.grid.toggle_reqd("status", !frm.doc.earlier_layout)', fh.read())
+			script = fh.read()
+		self.assertIn('grid.toggle_reqd("status", !earlier)', script)
+		# a check made before keeps the samples' columns it was made with
+		self.assertIn("const columns = { remarks: !earlier, status: !earlier, tare_weight: earlier, net_weight: earlier, in_range: earlier };", script)
+		for fieldname in ("remarks", "status"):
+			self.assertEqual(self.sample_fields[fieldname].get("depends_on"), "eval:!parent.earlier_layout", fieldname)
 		self.assertEqual((self.sample_fields["remarks"]["fieldtype"], self.sample_fields["remarks"]["label"]), ("Small Text", "Remarks"))
 		# the desk grid: those four, within its 10 units for columns
 		listed = [f for f in self.sample["fields"] if f.get("in_list_view")]
@@ -507,6 +512,8 @@ class TestWeightCheckSchema(unittest.TestCase):
 		for fieldname in ("tu1_limit", "tu2_limit", "overall_status", "remarks", "sb_outcome"):
 			self.assertNotIn(f'fieldname: "{fieldname}"', parent)
 		self.assertNotIn('label: __("Outcome")', parent)
+		# no limits left in it: the section reads Product
+		self.assertIn('{ fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") }', parent)
 		self.assertNotIn("tare_weight", child)
 		self.assertEqual(
 			re.findall(r'fieldname: "(\w+)"', child), ["sample_no", "gross_weight", "remarks", "status"]

@@ -16,7 +16,10 @@ def execute():
     version history), a plain update.
 
     A check deleted before is marked in its Deleted Document too, so a restore
-    brings it back as it was.
+    brings it back as it was: one that keeps the earlier layout, or whose
+    samples have no Status (a restore could not give them one). The columns
+    users chose for the Samples grid before are forgotten, so the grid shows
+    the Status and Remarks.
     """
     if not frappe.db.has_column("QC Weight Check", "earlier_layout"):
         return
@@ -34,6 +37,12 @@ def execute():
     earlier_layout.mark_records(
         "QC Weight Check", [c.name for c in checks if belongs_to_earlier_layout(c, with_tare.get(c.name, ()))]
     )
+    # a restore cannot give a sample the Status it never had
     earlier_layout.mark_deleted_documents(
-        "QC Weight Check", lambda data: belongs_to_earlier_layout(data, data.get("samples") or ())
+        "QC Weight Check",
+        lambda data: belongs_to_earlier_layout(data, data.get("samples") or ())
+        or any(not s.get("status") for s in data.get("samples") or ()),
     )
+    # columns a user chose for the samples grid before (Tare, Net Weight, In
+    # Range) would keep the Status and Remarks out of it
+    earlier_layout.forget_grid_columns("QC Weight Check", "QC Weight Sample")

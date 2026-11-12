@@ -297,9 +297,10 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "cb_record", fieldtype: "Column Break" },
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
-            // ── Section: Product & Limits ────────────────────────────────────
-            // (the TU1 and TU2 limits came off the check in 2026-11)
-            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Limits") },
+            // ── Section: Product ─────────────────────────────────────────────
+            // (Product & Limits until the TU1 and TU2 limits came off the
+            // check, in 2026-11)
+            { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") },
             { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
             { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
             { fieldname: "cb_product", fieldtype: "Column Break" },

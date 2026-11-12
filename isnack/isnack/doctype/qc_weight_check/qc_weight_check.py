@@ -6,7 +6,7 @@ import math
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, flt
+from frappe.utils import cint, cstr, flt
 
 from isnack.utils import earlier_layout
 
@@ -68,6 +68,9 @@ class QCWeightCheck(Document):
         """A form loaded before the change (desk, Duplicate, Quality Hub) still
         offers the TU limits, the record's Remarks and the tare; a check made
         since would keep them out of sight."""
+        if not cstr(self.remarks).strip():
+            # nothing said (a stray space or line break): none kept out of sight
+            self.remarks = None
         if any(self.get(fieldname) for fieldname in RETIRED_FIELDS) or any(
             s.get(fieldname) for s in self.samples or [] for fieldname in RETIRED_SAMPLE_FIELDS
         ):
@@ -80,7 +83,20 @@ class QCWeightCheck(Document):
         the form script marks it so on the checks that need it."""
         missing = [str(s.idx or i) for i, s in enumerate(self.samples or [], 1) if not s.get("status")]
         if missing:
-            frappe.throw(_("Status is required in Samples (row {0}).").format(", ".join(missing)))
+            frappe.throw(
+                _(
+                    "Status is required in Samples (row {0}). If the Samples table has no Status column, "
+                    "this page is out of date: reload it and enter the check again."
+                ).format(", ".join(missing))
+            )
+
+    def on_trash(self):
+        """A draft from before the change, unmarked (it held no limit, Overall
+        Status, Remarks or tare), whose samples have no Status, could not be
+        restored once deleted: a restore cannot give them one. Its snapshot
+        (taken after this, from the document) keeps the earlier layout."""
+        if not earlier_layout.in_earlier_layout(self) and any(not s.get("status") for s in self.samples or []):
+            self.earlier_layout = 1
 
     def before_print(self, settings=None):
         # the standard print does not evaluate depends_on, which hides the
