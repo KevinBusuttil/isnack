@@ -375,6 +375,64 @@ class TestTastingRecordSchema(unittest.TestCase):
 		self.assertIn(".qc-tasting-scores .grid-row .rating svg.icon {", css)
 
 
+class TestPackagingCheckSchema(unittest.TestCase):
+	"""Film Type, Film Batch and Qty Issued, Used and Returned came off the check
+	in 2026-11; the checks made before keep them, in an Earlier Layout."""
+
+	RETIRED = ("film_type", "film_batch", "qty_issued", "qty_used", "qty_returned")
+
+	def setUp(self):
+		self.doc = _doctype("QC Packaging Check")
+		self.fields = _fields(self.doc)
+		self.order = self.doc["field_order"]
+
+	def test_the_check(self):
+		self.assertEqual(self.order, [f["fieldname"] for f in self.doc["fields"]])
+		self.assertEqual(self.fields["label_correct"]["label"], "Packet Label Correct (Best Before / Batch Ref)")
+		wasted = self.fields["qty_wasted"]
+		self.assertEqual((wasted["fieldtype"], wasted["label"], wasted.get("reqd")), ("Float", "Qty Wasted", 1))
+		# what a check records now comes before the earlier layout
+		section = self.order.index("earlier_layout_section")
+		for fieldname in ("print_quality_ok", "seal_integrity_ok", "label_correct", "artwork_matches", "qty_wasted", "remarks"):
+			self.assertLess(self.order.index(fieldname), section, fieldname)
+
+	def test_the_earlier_layout(self):
+		from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import EARLIER_FIELDS, RETIRED_FIELDS
+
+		section = self.fields["earlier_layout_section"]
+		self.assertEqual((section["fieldtype"], section.get("depends_on")), ("Section Break", "eval:doc.earlier_layout"))
+		start = self.order.index("earlier_layout_section")
+		for fieldname in EARLIER_FIELDS:
+			# shown on the checks made before, and never carried into a new one by Duplicate
+			self.assertGreater(self.order.index(fieldname), start, fieldname)
+			self.assertEqual(self.fields[fieldname].get("no_copy"), 1, fieldname)
+			self.assertFalse(self.fields[fieldname].get("reqd"), fieldname)
+		self.assertEqual(RETIRED_FIELDS, self.RETIRED)
+		self.assertEqual(set(EARLIER_FIELDS), set(self.RETIRED) | {"variance", "variance_acceptable"})
+		# the variance still worked out, not entered
+		for fieldname in ("variance", "variance_acceptable"):
+			self.assertEqual(self.fields[fieldname].get("read_only"), 1, fieldname)
+		marker = self.fields["earlier_layout"]
+		self.assertEqual(
+			(marker["fieldtype"], marker.get("hidden"), marker.get("read_only"), marker.get("no_copy"), marker.get("print_hide")),
+			("Check", 1, 1, 1, 1),
+		)
+
+	def test_the_dialog(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		start = script.index('"QC Packaging Check": {')
+		block = script[start : script.index('"QC Metal Detector Log": {', start)]
+		for fieldname in self.RETIRED:
+			self.assertNotIn(f'fieldname: "{fieldname}"', block)
+		self.assertIn(
+			'{ fieldname: "label_correct", fieldtype: "Check", label: __("Packet Label Correct (Best Before / Batch Ref)") }',
+			block,
+		)
+		self.assertIn('{ fieldname: "qty_wasted", fieldtype: "Float", label: __("Qty Wasted"), reqd: 1 }', block)
+		self.assertLess(block.index('label: __("Usage & Outcome")'), block.index('fieldname: "qty_wasted"'))
+
+
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):
 		for doctype in QC_DOCTYPES.values():

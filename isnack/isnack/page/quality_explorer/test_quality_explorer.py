@@ -17,7 +17,7 @@ LINK_FIELDS = {
 	"QC Frying Line Record": {"work_order", "product_item", "overall_status"},
 	"QC Oven Record": {"work_order", "product_item", "overall_status"},
 	"QC Tasting Record": {"work_order", "batch_no", "item_code", "overall_status"},
-	"QC Packaging Check": {"work_order", "variance_acceptable"},
+	"QC Packaging Check": {"work_order", "variance_acceptable", "earlier_layout"},
 	"QC Metal Detector Log": {"work_order", "all_tests_passed"},
 	"QC Weight Check": {"work_order", "batch_no", "item_code", "overall_status"},
 }
@@ -71,8 +71,15 @@ class TestResult(unittest.TestCase):
 	def test_pass_flags_stand_in_for_overall_status(self):
 		self.assertEqual(qe._result(_rec("H", all_tests_passed=1))[1], "pass")
 		self.assertEqual(qe._result(_rec("H", all_tests_passed=0))[1], "fail")
+		# a packaging check made before 2026-11: its material reconciliation
+		self.assertEqual(qe._result(_rec("G", variance_acceptable=1, earlier_layout=1))[1], "pass")
+		self.assertEqual(qe._result(_rec("G", variance_acceptable=0, earlier_layout=1))[1], "fail")
+
+	def test_a_packaging_check_made_since_has_no_result(self):
+		# Qty Issued, Used and Returned came off the check: no variance to judge
+		self.assertEqual(qe._result(_rec("G", variance_acceptable=0, earlier_layout=0)), (None, None))
+		# before migrate adds the mark, every check is one made before
 		self.assertEqual(qe._result(_rec("G", variance_acceptable=1))[1], "pass")
-		self.assertEqual(qe._result(_rec("G", variance_acceptable=0))[1], "fail")
 
 	def test_no_result_yet(self):
 		# a process record whose Overall Status nobody set has no result, not a pass

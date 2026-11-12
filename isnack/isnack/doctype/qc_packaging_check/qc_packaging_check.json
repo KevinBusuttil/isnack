@@ -15,18 +15,21 @@
   "status",
   "remarks",
   "amended_from",
-  "film_type",
-  "film_batch",
   "print_quality_ok",
   "seal_integrity_ok",
   "label_correct",
   "artwork_matches",
+  "qty_wasted",
+  "earlier_layout_section",
+  "film_type",
+  "film_batch",
+  "earlier_layout_column",
   "qty_issued",
   "qty_used",
-  "qty_wasted",
   "qty_returned",
   "variance",
-  "variance_acceptable"
+  "variance_acceptable",
+  "earlier_layout"
  ],
  "fields": [
   {
@@ -91,16 +94,6 @@
    "no_copy": 1
   },
   {
-   "fieldname": "film_type",
-   "fieldtype": "Data",
-   "label": "Film Type"
-  },
-  {
-   "fieldname": "film_batch",
-   "fieldtype": "Data",
-   "label": "Film Batch"
-  },
-  {
    "fieldname": "print_quality_ok",
    "fieldtype": "Check",
    "label": "Print Quality OK"
@@ -113,7 +106,7 @@
   {
    "fieldname": "label_correct",
    "fieldtype": "Check",
-   "label": "Label Correct"
+   "label": "Packet Label Correct (Best Before / Batch Ref)"
   },
   {
    "fieldname": "artwork_matches",
@@ -121,43 +114,83 @@
    "label": "Artwork Matches"
   },
   {
+   "fieldname": "qty_wasted",
+   "fieldtype": "Float",
+   "label": "Qty Wasted",
+   "reqd": 1
+  },
+  {
+   "fieldname": "earlier_layout_section",
+   "fieldtype": "Section Break",
+   "label": "Earlier Layout",
+   "description": "Recorded on checks made before 2026-11: the film used and the material reconciliation (Variance = Qty Issued \u2212 Qty Used \u2212 Qty Wasted \u2212 Qty Returned, acceptable within \u00b10.5). They can be corrected on a draft; checks made since record neither.",
+   "depends_on": "eval:doc.earlier_layout"
+  },
+  {
+   "fieldname": "film_type",
+   "fieldtype": "Data",
+   "label": "Film Type",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "film_batch",
+   "fieldtype": "Data",
+   "label": "Film Batch",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "earlier_layout_column",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "qty_issued",
    "fieldtype": "Float",
-   "label": "Qty Issued"
+   "label": "Qty Issued",
+   "no_copy": 1
   },
   {
    "fieldname": "qty_used",
    "fieldtype": "Float",
-   "label": "Qty Used"
-  },
-  {
-   "fieldname": "qty_wasted",
-   "fieldtype": "Float",
-   "label": "Qty Wasted"
+   "label": "Qty Used",
+   "no_copy": 1
   },
   {
    "fieldname": "qty_returned",
    "fieldtype": "Float",
-   "label": "Qty Returned"
+   "label": "Qty Returned",
+   "no_copy": 1
   },
   {
    "fieldname": "variance",
    "fieldtype": "Float",
    "label": "Variance",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "variance_acceptable",
    "fieldtype": "Check",
    "label": "Variance Acceptable",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "earlier_layout",
+   "fieldtype": "Check",
+   "label": "Earlier Layout",
+   "description": "A check made before 2026-11 that keeps Film Type, Film Batch and the material reconciliation, with its variance result: submitted or cancelled, or a draft holding any of them. Set by a patch; Amend carries it.",
+   "default": "0",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-10 12:00:00.000000",
+ "modified": "2026-11-12 18:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Packaging Check",

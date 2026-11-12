@@ -62,6 +62,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading, shown as **Oven / Slurry Readings**). Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
 
+**Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer shows it with no result.
+
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
 ### Position Within the isnack MES Architecture
@@ -292,22 +294,24 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 ### QCG — QC Packaging Check
 
 **Naming:** `QCG-.YYYY.-.#####`  
-**Purpose:** Checks packaging film quality, seal integrity, label accuracy, and accounts for film material reconciliation (issued vs used/wasted/returned).
+**Purpose:** Checks print quality, seal integrity, the packet label (best before, batch reference) and artwork, and records the packaging wasted. Until 2026-11 it also recorded the film and accounted for the film material (issued vs used/wasted/returned); the checks made before keep those, in an Earlier Layout section.
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `film_type` | Data | Film Type | — |
-| `film_batch` | Data | Film Batch | — |
 | `print_quality_ok` | Check | Print Quality OK | — |
 | `seal_integrity_ok` | Check | Seal Integrity OK | — |
-| `label_correct` | Check | Label Correct | — |
+| `label_correct` | Check | Packet Label Correct (Best Before / Batch Ref) | — |
 | `artwork_matches` | Check | Artwork Matches | — |
-| `qty_issued` | Float | Qty Issued | — |
-| `qty_used` | Float | Qty Used | — |
-| `qty_wasted` | Float | Qty Wasted | — |
-| `qty_returned` | Float | Qty Returned | — |
-| `variance` | Float | Variance | `read_only: 1` — auto-calculated: `issued − used − wasted − returned` |
-| `variance_acceptable` | Check | Variance Acceptable | `read_only: 1` — auto-set: `1` if `abs(variance) ≤ 0.5` |
+| `qty_wasted` | Float | Qty Wasted | `reqd: 1` (a check made before keeps the 0 Frappe saved for a blank) |
+| `earlier_layout_section` | Section Break | Earlier Layout | shown only on a check made before 2026-11 (`earlier_layout`) |
+| `film_type` | Data | Film Type | `no_copy: 1`; earlier layout |
+| `film_batch` | Data | Film Batch | `no_copy: 1`; earlier layout |
+| `qty_issued` | Float | Qty Issued | `no_copy: 1`; earlier layout |
+| `qty_used` | Float | Qty Used | `no_copy: 1`; earlier layout |
+| `qty_returned` | Float | Qty Returned | `no_copy: 1`; earlier layout |
+| `variance` | Float | Variance | `read_only: 1`, `no_copy: 1` — auto-calculated on a check made before: `issued − used − wasted − returned`; 0 on one made since |
+| `variance_acceptable` | Check | Variance Acceptable | `read_only: 1`, `no_copy: 1` — auto-set on a check made before: `1` if `abs(variance) ≤ 0.5`; 0 on one made since |
+| `earlier_layout` | Check | Earlier Layout | `hidden`, `read_only`, `no_copy`, `print_hide` — set by the patch `qc_packaging_check_earlier_layout` on the checks made before 2026-11 that keep the earlier layout (submitted or cancelled, or a draft holding film or reconciliation); Amend carries it, and `validate` never lets it go |
 
 ---
 
@@ -663,13 +667,26 @@ validate():
 
 ```
 validate():
+    keep_earlier_layout()               # a form loaded before the migrate sends no mark:
+                                        # keep the saved check's, or the amended one's
+    if not earlier_layout:              # a check made since 2026-11: no reconciliation
+        if any RETIRED_FIELDS holds a value:
+            throw "This page is out of date"   # a form, Duplicate or hub page from before
+        variance, variance_acceptable = 0, 0
+        return
     issued   = qty_issued   or 0
     used     = qty_used     or 0
     wasted   = qty_wasted   or 0
     returned = qty_returned or 0
     variance             = issued - used - wasted - returned
     variance_acceptable  = 1 if abs(variance) ≤ 0.5 else 0
+
+before_print():
+    if not earlier_layout:              # print ignores depends_on
+        blank EARLIER_FIELDS            # film, reconciliation, variance (in memory)
 ```
+
+The checks made before 2026-11 that keep the earlier layout (`earlier_layout`, set by the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout`: every submitted or cancelled check, and each draft holding film or reconciliation, `belongs_to_earlier_layout`) keep their film, their reconciliation and the variance result worked out from it, in the Earlier Layout section; those can be corrected on a draft or an amendment. The patch marks a check deleted before in its Deleted Document too, so a restore brings it back as it was. A check made since records neither: its variance is 0, a value in a retired field is refused (a form loaded before the change), and the Quality Explorer gives it no result (`_result` in `quality_explorer.py`). Until the migrate adds the mark, every check is treated as one made before.
 
 ---
 
@@ -871,6 +888,7 @@ new QualityHub(wrapper)
 
 **Pkg & Weight (`pkg_weight`)**
 - Sub-nav pills: Packaging Checks (QCG) · Weight Checks (QCI)
+- The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
 - Filter bar: date · work_order · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 
@@ -1064,6 +1082,7 @@ isnack/
         ├── qc_packaging_check/               ── QCG
         │   ├── qc_packaging_check.json
         │   ├── qc_packaging_check.py
+        │   ├── test_packaging_layout.py      ── variance, print, earlier-layout patch
         │   ├── test_qc_packaging_check.py
         │   └── __init__.py
         │
@@ -1233,7 +1252,7 @@ https://<site>/app/quality-hub
 
 The following enhancements have been identified during the initial implementation but are deferred for future development cycles:
 
-- **Configurable Thresholds** — Currently the out-of-range threshold for extruder moisture (> 14%) and the packaging variance limit (≤ 0.5) are hard-coded in the Python controllers. Moving these to the **Factory Settings** DocType or a dedicated `QC Specification` DocType would allow quality managers to adjust limits without code changes.
+- **Configurable Thresholds** — Currently the out-of-range threshold for extruder moisture (> 14%) and the packaging variance limit (≤ 0.5, on the checks made before 2026-11) are hard-coded in the Python controllers. Moving these to the **Factory Settings** DocType or a dedicated `QC Specification` DocType would allow quality managers to adjust limits without code changes.
 
 - **SPC / Trend Charts** — The time-series data already captured in the extruder, frying, and oven child tables is well-suited for Statistical Process Control (SPC) control charts. A future Reports tab enhancement could render X-bar and R charts using Frappe's Chart library.
 
