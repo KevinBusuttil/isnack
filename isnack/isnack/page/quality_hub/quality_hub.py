@@ -123,7 +123,11 @@ QC_DIALOG_CONFIG = {
         "child_table_field": "scores",
         "child_doctype": "QC Tasting Score",
     },
-    "QC Packaging Check": {},
+    # Film Type, Film Batch and the material reconciliation came off the check
+    # in 2026-11: the checks made before keep them (earlier_layout)
+    "QC Packaging Check": {
+        "retired_fields": ("film_type", "film_batch", "qty_issued", "qty_used", "qty_returned"),
+    },
     "QC Metal Detector Log": {
         "child_table_field": "tests",
         "child_doctype": "QC Metal Detector Test",
@@ -294,7 +298,11 @@ def create_qc_record(doctype, payload=None, submit=False):
 
     # rows for a table the dialog no longer fills (the extruders' earlier readings): a
     # page loaded before it changed. Say so, rather than drop them and ask for rows
-    if any(df.fieldtype == "Table" and df.fieldname not in child_rows and data.get(df.fieldname) for df in meta.fields):
+    stale = any(df.fieldtype == "Table" and df.fieldname not in child_rows and data.get(df.fieldname) for df in meta.fields)
+    # so is a value in a field it no longer has (the packaging check's film and
+    # reconciliation), which a record made since would keep out of sight
+    stale = stale or any(not _is_blank(data.get(fieldname)) for fieldname in config.get("retired_fields", ()))
+    if stale:
         frappe.throw("This page is out of date. Reload it and enter the record again.")
 
     allowed_parent_fields = {

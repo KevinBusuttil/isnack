@@ -106,6 +106,7 @@ _RECORD_FIELDS = [
 	"overall_status",
 	"all_tests_passed",
 	"variance_acceptable",
+	"earlier_layout",
 ]
 
 _RESULT_LEVEL = {
@@ -410,7 +411,9 @@ def _result(row) -> tuple[str | None, str | None]:
 	"""The record's outcome and how it reads: ``pass``, ``warn`` or ``fail``.
 
 	Metal detector logs and packaging checks have no Overall Status; their
-	computed pass flags stand in for it.
+	computed pass flags stand in for it. A packaging check made since 2026-11
+	has none: it no longer records the material reconciliation its variance
+	was judged on.
 	"""
 	if row.get("overall_status"):
 		return row.overall_status, _RESULT_LEVEL.get(row.overall_status, "warn")
@@ -419,6 +422,8 @@ def _result(row) -> tuple[str | None, str | None]:
 			return _("All tests passed"), "pass"
 		return _("Not all tests passed"), "fail"
 	if "variance_acceptable" in row:
+		if "earlier_layout" in row and not cint(row.earlier_layout):
+			return None, None
 		if cint(row.variance_acceptable):
 			return _("Variance acceptable"), "pass"
 		return _("Variance out of tolerance"), "fail"

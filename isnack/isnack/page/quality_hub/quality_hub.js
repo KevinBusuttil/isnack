@@ -232,20 +232,17 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Packaging Material & Checks ─────────────────────────
+            // (Film Type, Film Batch and the material reconciliation, Qty
+            // Issued, Used and Returned, came off the check in 2026-11)
             { fieldname: "sb_packaging", fieldtype: "Section Break", label: __("Packaging Material & Checks") },
-            { fieldname: "film_type", fieldtype: "Data", label: __("Film Type") },
-            { fieldname: "film_batch", fieldtype: "Data", label: __("Film Batch") },
             { fieldname: "print_quality_ok", fieldtype: "Check", label: __("Print Quality OK") },
             { fieldname: "seal_integrity_ok", fieldtype: "Check", label: __("Seal Integrity OK") },
             { fieldname: "cb_packaging", fieldtype: "Column Break" },
-            { fieldname: "label_correct", fieldtype: "Check", label: __("Label Correct") },
+            { fieldname: "label_correct", fieldtype: "Check", label: __("Packet Label Correct (Best Before / Batch Ref)") },
             { fieldname: "artwork_matches", fieldtype: "Check", label: __("Artwork Matches") },
             // ── Section: Usage & Outcome ─────────────────────────────────────
             { fieldname: "sb_usage", fieldtype: "Section Break", label: __("Usage & Outcome") },
-            { fieldname: "qty_issued", fieldtype: "Float", label: __("Qty Issued") },
-            { fieldname: "qty_used", fieldtype: "Float", label: __("Qty Used") },
-            { fieldname: "qty_wasted", fieldtype: "Float", label: __("Qty Wasted") },
-            { fieldname: "qty_returned", fieldtype: "Float", label: __("Qty Returned") },
+            { fieldname: "qty_wasted", fieldtype: "Float", label: __("Qty Wasted"), reqd: 1 },
             { fieldname: "cb_usage", fieldtype: "Column Break" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],

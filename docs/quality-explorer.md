@@ -31,7 +31,7 @@ Batch · AAO-007
                                        RAB-220 [No receiving record] · 0 QC records
 ```
 
-Each record shows its result (Overall Status; "All tests passed" for a metal detector log, "Variance acceptable" for a packaging check), Draft or Submitted, the operator and the QC inspector. Clicking a record opens it; clicking a Work Order or an ingredient batch explores that one in turn.
+Each record shows its result (Overall Status; "All tests passed" for a metal detector log, "Variance acceptable" for a packaging check made before 2026-11; one made since has no result, as it no longer records the material reconciliation), Draft or Submitted, the operator and the QC inspector. Clicking a record opens it; clicking a Work Order or an ingredient batch explores that one in turn.
 
 ## Which records belong
 
