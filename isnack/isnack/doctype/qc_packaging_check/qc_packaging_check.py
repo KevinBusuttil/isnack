@@ -6,6 +6,8 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
+from isnack.utils import earlier_layout
+
 # Taken off the check in 2026-11: the film used and the material reconciliation.
 RETIRED_FIELDS = ("film_type", "film_batch", "qty_issued", "qty_used", "qty_returned")
 
@@ -35,22 +37,10 @@ class QCPackagingCheck(Document):
         self.variance_acceptable = 1 if abs(self.variance) <= 0.5 else 0
 
     def in_earlier_layout(self) -> bool:
-        # until the migrate adds the mark, every check is one made before
-        return bool(cint(self.get("earlier_layout"))) if self.meta.has_field("earlier_layout") else True
+        return earlier_layout.in_earlier_layout(self)
 
     def keep_earlier_layout(self):
-        """The mark is set by the patch and carried by Amend, never cleared. A
-        form loaded before the migrate does not know it and sends none: keep the
-        one the saved check, or the check amended, has."""
-        if self.get("earlier_layout") or not self.meta.has_field("earlier_layout"):
-            return
-        if self.is_new():
-            kept = self.amended_from and frappe.db.get_value(self.doctype, self.amended_from, "earlier_layout")
-        else:
-            before = self.get_doc_before_save()
-            kept = before and before.get("earlier_layout")
-        if cint(kept):
-            self.earlier_layout = 1
+        earlier_layout.keep_mark(self)
 
     def before_print(self, settings=None):
         # the standard print does not evaluate depends_on, which hides the

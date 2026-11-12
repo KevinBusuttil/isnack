@@ -8,6 +8,9 @@
  "field_order": [
   "sample_no",
   "gross_weight",
+  "remarks",
+  "status",
+  "earlier_layout_section",
   "tare_weight",
   "net_weight",
   "in_range"
@@ -26,31 +29,60 @@
    "label": "Gross Weight (g)"
   },
   {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks",
+   "in_list_view": 1,
+   "columns": 4,
+   "depends_on": "eval:!parent.earlier_layout"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "\nPass\nFail",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Mandatory on a check made since 2026-11 (the check and its form script see to it). A check made before keeps the Overall Status it was given and its samples as they were: no Status or Remarks.",
+   "depends_on": "eval:!parent.earlier_layout"
+  },
+  {
+   "fieldname": "earlier_layout_section",
+   "fieldtype": "Section Break",
+   "label": "Earlier Layout",
+   "depends_on": "eval:parent.earlier_layout",
+   "description": "Recorded on checks made before 2026-11: the tare, the net weight worked out from it (Gross \u2212 Tare) and whether it met the TU2 limit."
+  },
+  {
    "fieldname": "tare_weight",
    "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Tare Weight (g)"
+   "label": "Tare Weight (g)",
+   "no_copy": 1,
+   "print_hide_if_no_value": 1
   },
   {
    "fieldname": "net_weight",
    "fieldtype": "Float",
-   "in_list_view": 1,
    "label": "Net Weight (g)",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide_if_no_value": 1,
+   "description": "Gross Weight \u2212 Tare Weight; the gross weight on a check made since 2026-11."
   },
   {
    "fieldname": "in_range",
    "fieldtype": "Check",
-   "in_list_view": 1,
    "label": "In Range",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide_if_no_value": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-04-15 10:00:00.000000",
+ "modified": "2026-11-12 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Weight Sample",

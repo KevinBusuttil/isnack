@@ -433,6 +433,103 @@ class TestPackagingCheckSchema(unittest.TestCase):
 		self.assertLess(block.index('label: __("Usage & Outcome")'), block.index('fieldname: "qty_wasted"'))
 
 
+class TestWeightCheckSchema(unittest.TestCase):
+	"""Since 2026-11 each sample has a Status and Remarks; the TU limits, the tare
+	and the Outcome section (Overall Status, Remarks) came off the check. The
+	checks made before keep them, in an Earlier Layout."""
+
+	def setUp(self):
+		self.doc = _doctype("QC Weight Check")
+		self.fields = _fields(self.doc)
+		self.order = self.doc["field_order"]
+		self.sample = _doctype("QC Weight Sample")
+		self.sample_fields = _fields(self.sample)
+
+	def test_each_sample_has_a_status_and_remarks(self):
+		self.assertEqual(self.sample["field_order"], [f["fieldname"] for f in self.sample["fields"]])
+		order = self.sample["field_order"]
+		# Remarks next to the Gross Weight, then the Status
+		self.assertEqual(order[:4], ["sample_no", "gross_weight", "remarks", "status"])
+		status = self.sample_fields["status"]
+		self.assertEqual((status["fieldtype"], status["label"], status["options"]), ("Select", "Status", "\nPass\nFail"))
+		# mandatory on a check made since, not on one made before (a draft, an
+		# amendment, a restore): the check and the form see to it, not the doctype
+		self.assertIsNone(status.get("reqd"))
+		with open(os.path.join(DOCTYPE_DIR, "qc_weight_check", "qc_weight_check.js")) as fh:
+			script = fh.read()
+		self.assertIn('grid.toggle_reqd("status", !earlier)', script)
+		# a check made before keeps the samples' columns it was made with
+		self.assertIn("const columns = { remarks: !earlier, status: !earlier, tare_weight: earlier, net_weight: earlier, in_range: earlier };", script)
+		for fieldname in ("remarks", "status"):
+			self.assertEqual(self.sample_fields[fieldname].get("depends_on"), "eval:!parent.earlier_layout", fieldname)
+		self.assertEqual((self.sample_fields["remarks"]["fieldtype"], self.sample_fields["remarks"]["label"]), ("Small Text", "Remarks"))
+		# the desk grid: those four, within its 10 units for columns
+		listed = [f for f in self.sample["fields"] if f.get("in_list_view")]
+		self.assertEqual([f["fieldname"] for f in listed], ["sample_no", "gross_weight", "remarks", "status"])
+		self.assertLessEqual(sum(f.get("columns") or 2 for f in listed), 10)
+
+	def test_a_samples_earlier_layout(self):
+		from isnack.isnack.doctype.qc_weight_check.qc_weight_check import EARLIER_SAMPLE_FIELDS
+
+		order = self.sample["field_order"]
+		section = self.sample_fields["earlier_layout_section"]
+		self.assertEqual(section.get("depends_on"), "eval:parent.earlier_layout")
+		for fieldname in EARLIER_SAMPLE_FIELDS:
+			f = self.sample_fields[fieldname]
+			self.assertGreater(order.index(fieldname), order.index("earlier_layout_section"), fieldname)
+			# out of the grid, of a Duplicate, and of a print without them
+			self.assertEqual((f.get("in_list_view"), f.get("no_copy"), f.get("print_hide_if_no_value")), (None, 1, 1), fieldname)
+		for fieldname in ("net_weight", "in_range"):
+			self.assertEqual(self.sample_fields[fieldname].get("read_only"), 1, fieldname)
+
+	def test_the_check(self):
+		from isnack.isnack.doctype.qc_weight_check.qc_weight_check import EARLIER_FIELDS
+
+		self.assertEqual(self.order, [f["fieldname"] for f in self.doc["fields"]])
+		section = self.fields["earlier_layout_section"]
+		self.assertEqual((section["fieldtype"], section.get("depends_on")), ("Section Break", "eval:doc.earlier_layout"))
+		start = self.order.index("earlier_layout_section")
+		for fieldname in ("item_code", "batch_no", "nominal_weight", "samples", "sample_count", "average_weight", "std_deviation", "min_weight", "max_weight"):
+			self.assertLess(self.order.index(fieldname), start, fieldname)
+		for fieldname in EARLIER_FIELDS:
+			self.assertGreater(self.order.index(fieldname), start, fieldname)
+			self.assertEqual(self.fields[fieldname].get("no_copy"), 1, fieldname)
+		marker = self.fields["earlier_layout"]
+		self.assertEqual(
+			(marker["fieldtype"], marker.get("hidden"), marker.get("read_only"), marker.get("no_copy"), marker.get("print_hide")),
+			("Check", 1, 1, 1, 1),
+		)
+
+	def _dialog(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		start = script.index('"QC Weight Check": {')
+		return script[start : script.index("\n};", start)]
+
+	def test_the_dialog(self):
+		block = self._dialog()
+		parent, child = block.split("child_fields: [")
+		for fieldname in ("tu1_limit", "tu2_limit", "overall_status", "remarks", "sb_outcome"):
+			self.assertNotIn(f'fieldname: "{fieldname}"', parent)
+		self.assertNotIn('label: __("Outcome")', parent)
+		# no limits left in it: the section reads Product
+		self.assertIn('{ fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") }', parent)
+		self.assertNotIn("tare_weight", child)
+		self.assertEqual(
+			re.findall(r'fieldname: "(\w+)"', child), ["sample_no", "gross_weight", "remarks", "status"]
+		)
+		self.assertIn('{ fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") }', child)
+		self.assertIn('{ fieldname: "status", fieldtype: "Select", label: __("Status"), options: "\\nPass\\nFail", reqd: 1 }', child)
+
+	def test_the_dialog_asks_for_a_required_column(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		self.assertIn("missing_child_values(dialog, table)", script)
+		self.assertIn('class="qh-child-reqd"', script)
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.css")) as fh:
+			self.assertIn(".qh-child-reqd {", fh.read())
+
+
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):
 		for doctype in QC_DOCTYPES.values():
