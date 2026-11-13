@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 from frappe.utils import cint
 from frappe.utils import now_datetime, add_to_date, today
 
@@ -269,6 +270,84 @@ def get_qc_records(doctype, filters=None, limit=20):
 @frappe.whitelist()
 def create_qc_record(doctype, payload=None, submit=False):
     """Create supported QC records, including child-table rows, from Quality Hub dialogs."""
+    doc = _new_qc_record(doctype, payload, submit)
+    doc.insert()
+    if cint(submit):
+        doc.submit()
+
+    return _record_summary(doc)
+
+
+# The Packaging and Weight tab's form records a packaging check and a weight
+# check together (or either on its own).
+COMBINED_DOCTYPES = ("QC Packaging Check", "QC Weight Check")
+
+
+@frappe.whitelist()
+def create_qc_records(details=None, records=None, submit=False):
+    """Create the records of the Packaging and Weight tab's form: the Record
+    Details they share (``details``, written to each) and each record's own
+    values (``records``: ``[{"doctype": ..., "payload": {...}}]``, at most one
+    packaging check and one weight check).
+
+    All are inserted before any is submitted. If one fails, none is kept: the
+    request rolls back, and so does the savepoint when called from elsewhere.
+    """
+    details = frappe.parse_json(details) if details else {}
+    records = frappe.parse_json(records) if records else []
+    if not isinstance(details, dict):
+        frappe.throw("Record Details must be a JSON object.")
+    if not isinstance(records, list) or not records:
+        frappe.throw(_("Tick the Packaging Check, the Weight Check or both."))
+    doctypes = [record.get("doctype") if isinstance(record, dict) else None for record in records]
+    if any(doctype not in COMBINED_DOCTYPES for doctype in doctypes) or len(set(doctypes)) != len(doctypes):
+        frappe.throw(_("This form records one packaging check and one weight check at most."))
+
+    savepoint = "create_qc_records"
+    frappe.db.savepoint(savepoint)
+    try:
+        docs = []
+        for record in records:
+            payload = frappe.parse_json(record.get("payload")) if record.get("payload") else {}
+            if not isinstance(payload, dict):
+                frappe.throw("Payload must be a JSON object.")
+            docs.append(_new_qc_record(record["doctype"], {**payload, **details}, submit))
+        for doc in docs:
+            doc.insert()
+        if cint(submit):
+            for doc in docs:
+                doc.submit()
+    except Exception:
+        frappe.db.rollback(save_point=savepoint)
+        raise
+
+    return [_record_summary(doc) for doc in docs]
+
+
+@frappe.whitelist()
+def get_work_order_product(work_order=None):
+    """The item a Work Order makes, which the Packaging and Weight form fills
+    in as the weight check's Item Code. None when the user may not read the
+    Work Order: they pick the item themselves."""
+    if not work_order or not frappe.has_permission("Work Order", "read", doc=work_order):
+        return None
+    return frappe.db.get_value("Work Order", work_order, "production_item")
+
+
+def _record_summary(doc):
+    return {
+        "name": doc.name,
+        "doctype": doc.doctype,
+        "docstatus": doc.docstatus,
+        "record_date": getattr(doc, "record_date", None),
+        "shift": getattr(doc, "shift", None),
+        "overall_status": getattr(doc, "overall_status", None),
+    }
+
+
+def _new_qc_record(doctype, payload, submit):
+    """A QC record of ``doctype`` built from a Quality Hub dialog's ``payload``,
+    its child rows appended; not yet saved."""
     if doctype not in QC_DIALOG_CONFIG:
         frappe.throw(f"Dialog creation is not supported for {doctype}.")
 
@@ -318,18 +397,7 @@ def create_qc_record(doctype, payload=None, submit=False):
             label = meta.get_label(fieldname) or fieldname.replace("_", " ").title()
             frappe.throw(f"At least one row is required in {frappe.bold(label)}.")
 
-    doc.insert()
-    if cint(submit):
-        doc.submit()
-
-    return {
-        "name": doc.name,
-        "doctype": doc.doctype,
-        "docstatus": doc.docstatus,
-        "record_date": getattr(doc, "record_date", None),
-        "shift": getattr(doc, "shift", None),
-        "overall_status": getattr(doc, "overall_status", None),
-    }
+    return doc
 
 
 def _append_child_rows(doc, fieldname, child_doctype, rows):

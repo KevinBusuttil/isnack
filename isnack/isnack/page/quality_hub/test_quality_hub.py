@@ -794,3 +794,184 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 
 		self.assertEqual(get_doc.call_args.args[0]["shift"], "")
 		doc.append.assert_called_once_with("tests", {"test_time": "10:00", "test_piece_type": "", "detected": 1})
+
+
+class TestPackagingAndWeightForm(unittest.TestCase):
+	"""The Packaging and Weight tab's form records a packaging check and a weight
+	check together, the Record Details they share asked for once."""
+
+	DETAILS = {
+		"record_date": "2026-11-13",
+		"shift": "Morning",
+		"factory_line": "PACKING LINE 2",
+		"work_order": "MFG-WO-2026-00412",
+		"operator_name": "J. Borg",
+		"qc_inspector": "qc@example.com",
+	}
+
+	@staticmethod
+	def _meta(fieldnames):
+		meta = MagicMock()
+		meta.fields = [frappe._dict(fieldname=f, fieldtype="Data") for f in fieldnames]
+		meta.get_label.return_value = "Samples"
+		return meta
+
+	def _metas(self, doctype):
+		return {
+			"QC Packaging Check": self._meta([*self.DETAILS, "print_quality_ok", "qty_wasted", "remarks", "status"]),
+			"QC Weight Check": self._meta([*self.DETAILS, "item_code", "batch_no", "nominal_weight", "remarks", "status"]),
+			"QC Weight Sample": self._meta(["sample_no", "gross_weight", "remarks", "status"]),
+		}[doctype]
+
+	def _records(self):
+		return [
+			{"doctype": "QC Packaging Check", "payload": {"print_quality_ok": 1, "qty_wasted": 0.8, "remarks": "Film changed"}},
+			{
+				"doctype": "QC Weight Check",
+				"payload": {"item_code": "SP-40", "nominal_weight": 40, "samples": [{"sample_no": 1, "gross_weight": 40.6, "status": "Pass"}]},
+			},
+		]
+
+	def _docs(self, get_doc):
+		"""A doc per doctype, recording the order of their inserts and submits."""
+		calls = []
+		docs = {}
+		for doctype, code in (("QC Packaging Check", "QCG"), ("QC Weight Check", "QCI")):
+			doc = MagicMock(docstatus=0, doctype=doctype)
+			doc.name = f"{code}-2026-00001"
+			doc.insert.side_effect = lambda code=code: calls.append(f"insert {code}")
+			doc.submit.side_effect = lambda code=code: calls.append(f"submit {code}")
+			docs[doctype] = doc
+		get_doc.side_effect = lambda data: docs[data["doctype"]]
+		return docs, calls
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_both_inserted_before_either_is_submitted(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		docs, calls = self._docs(get_doc)
+
+		with patch.object(frappe.local, "db", MagicMock()):
+			result = qh.create_qc_records(details=self.DETAILS, records=self._records(), submit=1)
+
+		self.assertEqual(calls, ["insert QCG", "insert QCI", "submit QCG", "submit QCI"])
+		self.assertEqual([r["name"] for r in result], ["QCG-2026-00001", "QCI-2026-00001"])
+		# the Record Details on each, and each record's own fields on it alone
+		packaging, weight = (c.args[0] for c in get_doc.call_args_list)
+		for data in (packaging, weight):
+			self.assertEqual({k: data[k] for k in self.DETAILS}, self.DETAILS)
+		self.assertEqual(packaging["remarks"], "Film changed")
+		self.assertNotIn("remarks", weight)
+		self.assertNotIn("item_code", packaging)
+		docs["QC Weight Check"].append.assert_called_once_with("samples", {"sample_no": 1, "gross_weight": 40.6, "status": "Pass"})
+		docs["QC Packaging Check"].append.assert_not_called()
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_drafts_are_not_submitted(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		_docs, calls = self._docs(get_doc)
+
+		with patch.object(frappe.local, "db", MagicMock()):
+			qh.create_qc_records(details=json.dumps(self.DETAILS), records=json.dumps(self._records()), submit=0)
+
+		self.assertEqual(calls, ["insert QCG", "insert QCI"])
+		self.assertEqual([c.args[0]["status"] for c in get_doc.call_args_list], ["Draft", "Draft"])
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_the_details_are_the_same_on_both(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		self._docs(get_doc)
+		records = self._records()
+		records[1]["payload"]["shift"] = "Night"
+
+		with patch.object(frappe.local, "db", MagicMock()):
+			qh.create_qc_records(details=self.DETAILS, records=records)
+
+		self.assertEqual([c.args[0]["shift"] for c in get_doc.call_args_list], ["Morning", "Morning"])
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_one_failing_keeps_neither(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		docs, calls = self._docs(get_doc)
+		docs["QC Weight Check"].insert.side_effect = frappe.ValidationError("Status is required in Samples (row 1).")
+
+		with patch.object(frappe.local, "db", MagicMock()) as db, self.assertRaises(frappe.ValidationError):
+			qh.create_qc_records(details=self.DETAILS, records=self._records(), submit=1)
+
+		self.assertEqual(calls, ["insert QCG"])
+		db.savepoint.assert_called_once_with("create_qc_records")
+		db.rollback.assert_called_once_with(save_point="create_qc_records")
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_either_on_its_own(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		_docs, calls = self._docs(get_doc)
+
+		with patch.object(frappe.local, "db", MagicMock()):
+			qh.create_qc_records(details=self.DETAILS, records=self._records()[1:], submit=1)
+
+		self.assertEqual(calls, ["insert QCI", "submit QCI"])
+
+	@patch("frappe.get_doc")
+	def test_only_a_packaging_check_and_a_weight_check(self, get_doc):
+		for records in (
+			[],
+			[{"doctype": "QC Tasting Record", "payload": {}}],
+			[{"doctype": "QC Weight Check", "payload": {}}, {"doctype": "QC Weight Check", "payload": {}}],
+			["QC Weight Check"],
+		):
+			with self.subTest(records=records), self.assertRaises(frappe.ValidationError):
+				qh.create_qc_records(details=self.DETAILS, records=records)
+		get_doc.assert_not_called()
+
+	def test_the_work_orders_product(self):
+		with patch("frappe.has_permission", return_value=False), patch.object(frappe.local, "db", MagicMock()) as db:
+			self.assertIsNone(qh.get_work_order_product("MFG-WO-2026-00412"))
+			db.get_value.assert_not_called()
+		with patch("frappe.has_permission", return_value=True) as perm, patch.object(frappe.local, "db", MagicMock()) as db:
+			db.get_value.return_value = "SP-40"
+			self.assertEqual(qh.get_work_order_product("MFG-WO-2026-00412"), "SP-40")
+			perm.assert_called_once_with("Work Order", "read", doc="MFG-WO-2026-00412")
+			db.get_value.assert_called_once_with("Work Order", "MFG-WO-2026-00412", "production_item")
+		self.assertIsNone(qh.get_work_order_product(""))
+
+	@staticmethod
+	def _script():
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			return fh.read()
+
+	def _dialog_fields(self, doctype, next_block):
+		script = self._script()
+		start = script.index(f'"{doctype}": {{')
+		block = script[start : script.index(next_block, start)]
+		parent = block.split("child_fields: [")[0]
+		return re.findall(r'fieldname: "(\w+)"', parent)
+
+	def test_the_two_dialogs_share_their_record_details(self):
+		packaging = self._dialog_fields("QC Packaging Check", '"QC Metal Detector Log": {')
+		weight = self._dialog_fields("QC Weight Check", "\n};")
+		details = packaging[: packaging.index("sb_packaging")]
+		# asked for once, so they must be the same fields on both
+		self.assertEqual(details, weight[: weight.index("sb_product")])
+		self.assertEqual(
+			[f for f in details if not f.startswith(("sb_", "cb_"))],
+			list(self.DETAILS),
+		)
+		# and the rest of each record's fields can sit in one form
+		self.assertFalse(set(packaging[len(details) :]) & set(weight[len(details) :]))
+
+	def test_the_tab_opens_the_form(self):
+		script = self._script()
+		self.assertIn('data-tab="pkg_weight">${__("Packaging and Weight Checks (QCG/QCI)")}', script)
+		tab = script[script.index('<!-- TAB: Packaging & Weight -->') : script.index("<!-- TAB: CCP & Metal Detector -->")]
+		self.assertIn('class="btn btn-sm btn-primary qh-new-packaging-and-weight"', tab)
+		self.assertIn('__("New Packaging and Weight Check")', tab)
+		self.assertNotIn("qh-new-record", tab)
+		form = script[script.index("isnack.quality_hub.PACKAGING_AND_WEIGHT = {") :]
+		form = form[: form.index("\n};")]
+		self.assertEqual(re.findall(r'doctype: "([^"]+)"', form), ["QC Packaging Check", "QC Weight Check"])
+		self.assertIn("isnack.isnack.page.quality_hub.quality_hub.create_qc_records", script)
