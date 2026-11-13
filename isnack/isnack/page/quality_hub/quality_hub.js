@@ -317,6 +317,40 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     },
 };
 
+// The Packaging and Weight tab's form: a packaging check (QCG) and a weight
+// check (QCI) in one. The Record Details they share are asked for once and
+// written to both; each record takes the rest of its own dialog's fields
+// above, under the headings given here. Either can be unticked, to record the
+// other on its own. One save creates both, or neither (create_qc_records).
+isnack.quality_hub.PACKAGING_AND_WEIGHT = {
+    title: __("New Packaging and Weight Check"),
+    records: [
+        {
+            doctype: "QC Packaging Check",
+            toggle: "record_packaging",
+            list: "packaging",
+            label: __("Packaging Check (QCG)"),
+            sections: {
+                sb_packaging: {
+                    label: __("Packaging Check (QCG)"),
+                    description: __("Before starting production and after each change of product: confirm the correct packaging material and label are in use, and the line has been cleared of the previous product's packaging."),
+                },
+                // Qty Wasted and Remarks, in the same section
+                sb_usage: { label: "" },
+            },
+        },
+        {
+            doctype: "QC Weight Check",
+            toggle: "record_weight",
+            list: "weight",
+            label: __("Weight Check (QCI)"),
+            sections: {
+                sb_product: { label: __("Weight Check (QCI)") },
+            },
+        },
+    ],
+};
+
 frappe.pages["quality-hub"].on_page_load = function (wrapper) {
     isnack.quality_hub.page = new isnack.quality_hub.QualityHub(wrapper);
 };
@@ -368,7 +402,7 @@ isnack.quality_hub.QualityHub = class {
                     <button class="qh-tab" data-tab="receiving">${__("Receiving (QCA)")}</button>
                     <button class="qh-tab" data-tab="process">${__("Process (QCB–QCD)")}</button>
                     <button class="qh-tab" data-tab="tasting">${__("Tasting (QCF)")}</button>
-                    <button class="qh-tab" data-tab="pkg_weight">${__("Pkg & Weight (QCG/QCI)")}</button>
+                    <button class="qh-tab" data-tab="pkg_weight">${__("Packaging and Weight Checks (QCG/QCI)")}</button>
                     <button class="qh-tab" data-tab="metal">${__("CCP & Metal (QCH)")}</button>
                     <button class="qh-tab" data-tab="reports">${__("Reports & Trends")}</button>
                 </div>
@@ -481,8 +515,8 @@ isnack.quality_hub.QualityHub = class {
                             <option value="1">${__("Submitted")}</option>
                         </select>
                         <button class="btn btn-sm btn-default qh-filter-apply" data-target="pkg_weight">${__("Filter")}</button>
-                        <button class="btn btn-sm btn-primary qh-new-record" data-doctype="QC Packaging Check">
-                            <i class="fa fa-plus"></i> ${__("New Record")}
+                        <button class="btn btn-sm btn-primary qh-new-packaging-and-weight">
+                            <i class="fa fa-plus"></i> ${__("New Packaging and Weight Check")}
                         </button>
                     </div>
                     <div class="qh-panel">
@@ -570,13 +604,8 @@ isnack.quality_hub.QualityHub = class {
                     .find(".qh-new-record").data("doctype", dtmap[sub]);
                 this.load_records("process", {});
             } else if (tab === "pkg_weight") {
+                // the lists stay two; the New button opens the one form for both
                 this.active_pkg_sub = sub;
-                const dtmap = {
-                    packaging: "QC Packaging Check",
-                    weight: "QC Weight Check",
-                };
-                this.$container.find("[data-target='pkg_weight']").closest(".qh-filter-bar")
-                    .find(".qh-new-record").data("doctype", dtmap[sub]);
                 this.load_records("pkg_weight", {});
             }
         });
@@ -586,6 +615,7 @@ isnack.quality_hub.QualityHub = class {
             const doctype = $(e.currentTarget).data("doctype");
             this.open_new_record(doctype);
         });
+        this.$container.on("click", ".qh-new-packaging-and-weight", () => this.open_packaging_and_weight());
 
         // Quick links
         this.$container.on("click", ".qh-quick-link", (e) => {
@@ -638,26 +668,14 @@ isnack.quality_hub.QualityHub = class {
         // from, and the receiving dialog wraps df.onchange, which would
         // otherwise pile up on the shared config, one wrapper per opening
         const fields = config.parent_fields.map((df) => ({ ...df }));
-        tables.forEach((table) => {
-            if (table.child_in_dedicated_section) {
-                fields.push({
-                    fieldtype: "Section Break",
-                    fieldname: `section_break_${table.child_table_field}`,
-                    label: table.child_label,
-                });
-            }
-            fields.push({
-                fieldtype: "HTML",
-                fieldname: `${table.child_table_field}_editor`,
-            });
-        });
+        tables.forEach((table) => fields.push(...this.child_table_fields(table)));
 
         const dialog = new frappe.ui.Dialog({
             title: __("New {0}", [doctype]),
             size: "extra-large",
             fields,
             primary_action_label: __("Save Draft"),
-            primary_action: () => this.handle_dialog_save(dialog, doctype, false),
+            primary_action: (values) => this.handle_dialog_save(dialog, doctype, false, values),
         });
 
         dialog.__config = config;
@@ -679,6 +697,252 @@ isnack.quality_hub.QualityHub = class {
         return [config, ...(config.extra_child_tables || [])].filter(
             (table) => table.child_table_field && (table.child_fields || []).length
         );
+    }
+
+    /** A child table's place in a dialog: its section, if it has one of its
+     *  own, and the HTML field its row editor is drawn in. */
+    child_table_fields(table) {
+        const fields = [];
+        if (table.child_in_dedicated_section) {
+            fields.push({
+                fieldtype: "Section Break",
+                fieldname: `section_break_${table.child_table_field}`,
+                label: table.child_label,
+            });
+        }
+        fields.push({
+            fieldtype: "HTML",
+            fieldname: `${table.child_table_field}_editor`,
+        });
+        return fields;
+    }
+
+    /** The Packaging and Weight tab's form (PACKAGING_AND_WEIGHT): which records
+     *  to make, the Record Details once, then each record's own sections. */
+    open_packaging_and_weight() {
+        const form = isnack.quality_hub.PACKAGING_AND_WEIGHT;
+        const records = form.records.map((record) => {
+            const config = isnack.quality_hub.DIALOG_RECORD_CONFIG[record.doctype];
+            return {
+                ...record,
+                ...this.split_record_details(config),
+                config,
+                can_create: frappe.model.can_create(record.doctype),
+            };
+        });
+        if (!records.some((record) => record.can_create)) {
+            frappe.msgprint(__("You may not create packaging or weight checks."));
+            return;
+        }
+
+        let dialog;
+        const fields = [
+            { fieldname: "sb_records", fieldtype: "Section Break", description: __("Untick one to record just the other.") },
+        ];
+        records.forEach((record, index) => {
+            if (index) fields.push({ fieldname: `cb_records_${index}`, fieldtype: "Column Break" });
+            // a record the user may not create is left out, and cannot be ticked
+            fields.push({
+                fieldname: record.toggle,
+                fieldtype: "Check",
+                label: record.label,
+                default: record.can_create ? 1 : 0,
+                read_only: record.can_create ? 0 : 1,
+                onchange: () => this.toggle_combined_record(dialog, records, record),
+            });
+        });
+        // the Record Details are the same fields on both records: asked for once
+        fields.push(...records[0].details.map((df) => ({ ...df })));
+        records.forEach((record) => {
+            fields.push(...record.own.map((df) => ({ ...df, ...(record.sections[df.fieldname] || {}) })));
+            this.child_tables(record.config).forEach((table) => fields.push(...this.child_table_fields(table)));
+        });
+
+        dialog = new frappe.ui.Dialog({
+            title: form.title,
+            size: "extra-large",
+            fields,
+            primary_action_label: __("Save Draft"),
+            primary_action: (values) => this.handle_combined_save(dialog, records, false, values),
+        });
+        dialog.__child_rows = {};
+        records.forEach((record) => {
+            this.child_tables(record.config).forEach((table) => {
+                dialog.__child_rows[table.child_table_field] = this.make_initial_child_rows(table);
+            });
+        });
+        dialog.show();
+        dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
+        dialog.get_secondary_btn()
+            .removeClass("hide")
+            .text(__("Save & Submit"))
+            .off("click")
+            .on("click", () => this.handle_combined_save(dialog, records, true));
+        records.forEach((record) => {
+            this.child_tables(record.config).forEach((table) => this.render_child_editor(dialog, table));
+            if (!record.can_create) this.toggle_combined_record(dialog, records, record);
+        });
+        this.setup_packaging_and_weight(dialog);
+    }
+
+    /** A dialog config's Record Details (its first section) and the rest. */
+    split_record_details(config) {
+        const end = config.parent_fields.findIndex((df, index) => index && df.fieldtype === "Section Break");
+        return { details: config.parent_fields.slice(0, end), own: config.parent_fields.slice(end) };
+    }
+
+    /** Show a record's sections, or (unticked) hide them and stop asking for
+     *  their required fields: a dialog asks for a required field even hidden.
+     *  One of the two stays ticked. */
+    toggle_combined_record(dialog, records, record) {
+        const on = !!dialog.get_value(record.toggle);
+        if (!on && !records.some((other) => dialog.get_value(other.toggle))) {
+            frappe.show_alert({ message: __("Tick the Packaging Check, the Weight Check or both."), indicator: "orange" });
+            dialog.set_value(record.toggle, 1);
+            return;
+        }
+        record.own.forEach((df) => {
+            if (df.fieldtype === "Section Break") {
+                dialog.set_df_property(df.fieldname, "hidden", on ? 0 : 1);
+            } else if (df.reqd) {
+                this.set_dialog_df_property(dialog, df.fieldname, "reqd", on ? 1 : 0);
+            }
+        });
+        this.child_tables(record.config).forEach((table) => {
+            dialog.set_df_property(`section_break_${table.child_table_field}`, "hidden", on ? 0 : 1);
+        });
+    }
+
+    /** Fill the weight check's Item Code from the Work Order's product, and
+     *  offer only that item's batches. */
+    setup_packaging_and_weight(dialog) {
+        const on_change = (fieldname, handler) => {
+            const field = dialog.get_field(fieldname);
+            if (!field) return;
+            const orig = field.df.onchange;
+            field.df.onchange = (...args) => {
+                const result = orig ? orig.apply(field, args) : undefined;
+                handler();
+                return result;
+            };
+        };
+
+        // a Link runs its change again when it is left with the same value
+        let work_order_was = dialog.get_value("work_order");
+        let item_code_was = dialog.get_value("item_code");
+        on_change("work_order", () => {
+            const work_order = dialog.get_value("work_order");
+            if (work_order === work_order_was) return;
+            work_order_was = work_order;
+            if (!work_order) return;
+            frappe.call({
+                method: "isnack.isnack.page.quality_hub.quality_hub.get_work_order_product",
+                args: { work_order },
+                callback: (r) => {
+                    // the Work Order may have changed again while this was on its way
+                    if (r.message && dialog.get_value("work_order") === work_order && dialog.get_value("item_code") !== r.message) {
+                        dialog.set_value("item_code", r.message);
+                    }
+                },
+            });
+        });
+        // another item: its batch is picked again
+        on_change("item_code", () => {
+            const item_code = dialog.get_value("item_code");
+            if (item_code === item_code_was) return;
+            item_code_was = item_code;
+            dialog.set_value("batch_no", "");
+        });
+
+        const batch = dialog.get_field("batch_no");
+        if (batch) {
+            batch.get_query = () => {
+                const item_code = dialog.get_value("item_code");
+                return { filters: item_code ? { item: item_code, disabled: 0 } : { disabled: 0 } };
+            };
+        }
+    }
+
+    /** Show the Packaging and Weight tab's ``list`` (packaging, weight). */
+    show_pkg_list(list) {
+        this.active_pkg_sub = list;
+        this.$container.find("[data-content='pkg_weight'] .qh-pill-nav")
+            .removeClass("qh-pill-active")
+            .filter(`[data-sub="${list}"]`)
+            .addClass("qh-pill-active");
+    }
+
+    /** A dialog redraws a field it has no document for as ``value || null``,
+     *  so a 0 entered in it is lost: when its property changes, and when
+     *  get_values reads it while it is required (a dialog redraws a required
+     *  field without a value as it reads it, and 0 counts as none there). */
+    set_dialog_df_property(dialog, fieldname, prop, value) {
+        const field = dialog.get_field(fieldname);
+        const kept = field.get_value ? field.get_value() : null;
+        dialog.set_df_property(fieldname, prop, value);
+        if (kept === 0) field.set_input(0);
+    }
+
+    /** The dialog's values, once: those its primary button already read, or
+     *  read now. A required field holding 0 is drawn again with its 0, so a
+     *  save refused with a message can be made again as it is. */
+    read_dialog_values(dialog, values) {
+        values = values || dialog.get_values();
+        if (!values) return values;
+        Object.entries(values).forEach(([fieldname, value]) => {
+            const field = dialog.fields_dict[fieldname];
+            if (value === 0 && field && field.df.reqd && field.set_input) field.set_input(0);
+        });
+        return values;
+    }
+
+    /** Save the ticked records of the Packaging and Weight form together: the
+     *  Record Details once, each record's own fields and rows to it alone. */
+    handle_combined_save(dialog, records, submit, values) {
+        values = this.read_dialog_values(dialog, values);
+        if (!values) return;
+
+        const chosen = records.filter((record) => values[record.toggle]);
+        if (!chosen.length) {
+            frappe.msgprint(__("Tick the Packaging Check, the Weight Check or both."));
+            return;
+        }
+        const pick = (fields) => {
+            const picked = {};
+            fields.forEach((df) => {
+                if (df.fieldname in values) picked[df.fieldname] = values[df.fieldname];
+            });
+            return picked;
+        };
+        const details = pick(records[0].details);
+        const payloads = [];
+        for (const record of chosen) {
+            const payload = pick(record.own);
+            if (!this.add_child_rows(dialog, record.config, payload)) return;
+            payloads.push({ doctype: record.doctype, payload });
+        }
+
+        const action_label = submit ? __("Saving and submitting") : __("Saving");
+        frappe.call({
+            method: "isnack.isnack.page.quality_hub.quality_hub.create_qc_records",
+            freeze: true,
+            freeze_message: `${action_label}...`,
+            args: { details, records: payloads, submit: submit ? 1 : 0 },
+            callback: (r) => {
+                if (!r.message) return;
+
+                dialog.hide();
+                // a check saved on its own shows in its own list
+                const saved = r.message.length === 1 && records.find((record) => record.doctype === r.message[0].doctype);
+                if (saved) this.show_pkg_list(saved.list);
+                this.reload_active_tab_records();
+                const names = r.message.map((record) => record.name);
+                frappe.show_alert({
+                    message: names.length > 1 ? __("{0} and {1} created", names) : __("{0} created", names),
+                    indicator: submit ? "green" : "blue",
+                });
+            },
+        });
     }
 
     setup_dialog_specific_behaviour(dialog, doctype) {
@@ -770,29 +1034,35 @@ isnack.quality_hub.QualityHub = class {
             .on("click", () => this.handle_dialog_save(dialog, doctype, true));
     }
 
-    handle_dialog_save(dialog, doctype, submit) {
-        const values = dialog.get_values();
+    handle_dialog_save(dialog, doctype, submit, values) {
+        values = this.read_dialog_values(dialog, values);
         if (!values) return;
 
-        const config = dialog.__config;
         const payload = { ...values };
+        if (!this.add_child_rows(dialog, dialog.__config, payload)) return;
+
+        this.save_dialog_record({ dialog, doctype, payload, submit });
+    }
+
+    /** Put the rows of ``config``'s tables in ``payload``. False, once it has
+     *  said why, when a table needs a row or a row a value. */
+    add_child_rows(dialog, config, payload) {
         for (const table of this.child_tables(config)) {
             const child_rows = this.get_non_empty_child_rows(dialog, table);
             if (!child_rows.length && (table.min_rows ?? 1) > 0) {
                 frappe.msgprint(__("Add at least one row in {0}.", [table.child_label]));
-                return;
+                return false;
             }
             const missing = this.missing_child_values(dialog, table);
             if (missing.length) {
                 frappe.msgprint(missing.map(({ label, rows }) =>
                     __("{0} is required in {1} (row {2}).", [label, table.child_label, rows.join(", ")])
                 ).join("<br>"));
-                return;
+                return false;
             }
             payload[table.child_table_field] = child_rows;
         }
-
-        this.save_dialog_record({ dialog, doctype, payload, submit });
+        return true;
     }
 
     save_dialog_record({ dialog, doctype, payload, submit }) {
