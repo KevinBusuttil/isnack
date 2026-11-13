@@ -328,6 +328,7 @@ isnack.quality_hub.PACKAGING_AND_WEIGHT = {
         {
             doctype: "QC Packaging Check",
             toggle: "record_packaging",
+            list: "packaging",
             label: __("Packaging Check (QCG)"),
             sections: {
                 sb_packaging: {
@@ -341,6 +342,7 @@ isnack.quality_hub.PACKAGING_AND_WEIGHT = {
         {
             doctype: "QC Weight Check",
             toggle: "record_weight",
+            list: "weight",
             label: __("Weight Check (QCI)"),
             sections: {
                 sb_product: { label: __("Weight Check (QCI)") },
@@ -673,7 +675,7 @@ isnack.quality_hub.QualityHub = class {
             size: "extra-large",
             fields,
             primary_action_label: __("Save Draft"),
-            primary_action: () => this.handle_dialog_save(dialog, doctype, false),
+            primary_action: (values) => this.handle_dialog_save(dialog, doctype, false, values),
         });
 
         dialog.__config = config;
@@ -761,7 +763,7 @@ isnack.quality_hub.QualityHub = class {
             size: "extra-large",
             fields,
             primary_action_label: __("Save Draft"),
-            primary_action: () => this.handle_combined_save(dialog, records, false),
+            primary_action: (values) => this.handle_combined_save(dialog, records, false, values),
         });
         dialog.__child_rows = {};
         records.forEach((record) => {
@@ -803,7 +805,7 @@ isnack.quality_hub.QualityHub = class {
             if (df.fieldtype === "Section Break") {
                 dialog.set_df_property(df.fieldname, "hidden", on ? 0 : 1);
             } else if (df.reqd) {
-                dialog.set_df_property(df.fieldname, "reqd", on ? 1 : 0);
+                this.set_dialog_df_property(dialog, df.fieldname, "reqd", on ? 1 : 0);
             }
         });
         this.child_tables(record.config).forEach((table) => {
@@ -825,22 +827,32 @@ isnack.quality_hub.QualityHub = class {
             };
         };
 
+        // a Link runs its change again when it is left with the same value
+        let work_order_was = dialog.get_value("work_order");
+        let item_code_was = dialog.get_value("item_code");
         on_change("work_order", () => {
             const work_order = dialog.get_value("work_order");
+            if (work_order === work_order_was) return;
+            work_order_was = work_order;
             if (!work_order) return;
             frappe.call({
                 method: "isnack.isnack.page.quality_hub.quality_hub.get_work_order_product",
                 args: { work_order },
                 callback: (r) => {
                     // the Work Order may have changed again while this was on its way
-                    if (r.message && dialog.get_value("work_order") === work_order) {
+                    if (r.message && dialog.get_value("work_order") === work_order && dialog.get_value("item_code") !== r.message) {
                         dialog.set_value("item_code", r.message);
                     }
                 },
             });
         });
         // another item: its batch is picked again
-        on_change("item_code", () => dialog.set_value("batch_no", ""));
+        on_change("item_code", () => {
+            const item_code = dialog.get_value("item_code");
+            if (item_code === item_code_was) return;
+            item_code_was = item_code;
+            dialog.set_value("batch_no", "");
+        });
 
         const batch = dialog.get_field("batch_no");
         if (batch) {
@@ -851,10 +863,43 @@ isnack.quality_hub.QualityHub = class {
         }
     }
 
+    /** Show the Packaging and Weight tab's ``list`` (packaging, weight). */
+    show_pkg_list(list) {
+        this.active_pkg_sub = list;
+        this.$container.find("[data-content='pkg_weight'] .qh-pill-nav")
+            .removeClass("qh-pill-active")
+            .filter(`[data-sub="${list}"]`)
+            .addClass("qh-pill-active");
+    }
+
+    /** A dialog redraws a field it has no document for as ``value || null``,
+     *  so a 0 entered in it is lost: when its property changes, and when
+     *  get_values reads it while it is required (a dialog redraws a required
+     *  field without a value as it reads it, and 0 counts as none there). */
+    set_dialog_df_property(dialog, fieldname, prop, value) {
+        const field = dialog.get_field(fieldname);
+        const kept = field.get_value ? field.get_value() : null;
+        dialog.set_df_property(fieldname, prop, value);
+        if (kept === 0) field.set_input(0);
+    }
+
+    /** The dialog's values, once: those its primary button already read, or
+     *  read now. A required field holding 0 is drawn again with its 0, so a
+     *  save refused with a message can be made again as it is. */
+    read_dialog_values(dialog, values) {
+        values = values || dialog.get_values();
+        if (!values) return values;
+        Object.entries(values).forEach(([fieldname, value]) => {
+            const field = dialog.fields_dict[fieldname];
+            if (value === 0 && field && field.df.reqd && field.set_input) field.set_input(0);
+        });
+        return values;
+    }
+
     /** Save the ticked records of the Packaging and Weight form together: the
      *  Record Details once, each record's own fields and rows to it alone. */
-    handle_combined_save(dialog, records, submit) {
-        const values = dialog.get_values();
+    handle_combined_save(dialog, records, submit, values) {
+        values = this.read_dialog_values(dialog, values);
         if (!values) return;
 
         const chosen = records.filter((record) => values[record.toggle]);
@@ -887,6 +932,9 @@ isnack.quality_hub.QualityHub = class {
                 if (!r.message) return;
 
                 dialog.hide();
+                // a check saved on its own shows in its own list
+                const saved = r.message.length === 1 && records.find((record) => record.doctype === r.message[0].doctype);
+                if (saved) this.show_pkg_list(saved.list);
                 this.reload_active_tab_records();
                 const names = r.message.map((record) => record.name);
                 frappe.show_alert({
@@ -986,8 +1034,8 @@ isnack.quality_hub.QualityHub = class {
             .on("click", () => this.handle_dialog_save(dialog, doctype, true));
     }
 
-    handle_dialog_save(dialog, doctype, submit) {
-        const values = dialog.get_values();
+    handle_dialog_save(dialog, doctype, submit, values) {
+        values = this.read_dialog_values(dialog, values);
         if (!values) return;
 
         const payload = { ...values };

@@ -379,7 +379,7 @@ def _new_qc_record(doctype, payload, submit):
     allowed_parent_fields = {
         df.fieldname: df.fieldtype for df in meta.fields if df.fieldtype != "Table" and df.fieldname
     }
-    allowed_parent_fields["doctype"] = "Data"
+    # the record is the doctype checked above: a payload's "doctype" is not taken
 
     doc_data = {"doctype": doctype}
     for fieldname, value in data.items():

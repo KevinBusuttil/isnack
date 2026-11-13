@@ -975,3 +975,25 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 		form = form[: form.index("\n};")]
 		self.assertEqual(re.findall(r'doctype: "([^"]+)"', form), ["QC Packaging Check", "QC Weight Check"])
 		self.assertIn("isnack.isnack.page.quality_hub.quality_hub.create_qc_records", script)
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
+	def test_a_payload_cannot_change_the_record_type(self, get_meta, get_doc):
+		get_meta.side_effect = self._metas
+		self._docs(get_doc)
+		records = self._records()
+		records[0]["payload"]["doctype"] = "ToDo"
+
+		with patch.object(frappe.local, "db", MagicMock()):
+			qh.create_qc_records(details={**self.DETAILS, "doctype": "Note"}, records=records)
+
+		self.assertEqual([c.args[0]["doctype"] for c in get_doc.call_args_list], ["QC Packaging Check", "QC Weight Check"])
+
+	def test_a_zero_survives_the_dialog(self):
+		# a dialog draws a field it has no document for as `value || null`: a
+		# Qty Wasted of 0 is read once, and drawn again where it would be lost
+		script = self._script()
+		self.assertIn("primary_action: (values) => this.handle_combined_save(dialog, records, false, values),", script)
+		self.assertIn("primary_action: (values) => this.handle_dialog_save(dialog, doctype, false, values),", script)
+		self.assertIn('this.set_dialog_df_property(dialog, df.fieldname, "reqd", on ? 1 : 0);', script)
+		self.assertEqual(script.count("dialog.get_values()"), 1)
