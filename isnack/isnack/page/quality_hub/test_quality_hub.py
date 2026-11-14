@@ -3,6 +3,7 @@
 
 """Unit tests for the QC record schema the FSSC 22000 changes rely on (no database)."""
 
+import datetime
 import json
 import os
 import re
@@ -997,3 +998,129 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 		self.assertIn("primary_action: (values) => this.handle_dialog_save(dialog, doctype, false, values),", script)
 		self.assertIn('this.set_dialog_df_property(dialog, df.fieldname, "reqd", on ? 1 : 0);', script)
 		self.assertEqual(script.count("dialog.get_values()"), 1)
+
+
+class TestPackagingAndWeightList(unittest.TestCase):
+	"""The Packaging and Weight tab lists the packaging checks and the weight
+	checks in one list: a Check column says which each is, and a Check filter
+	lists one alone, as the two pills the tab had did."""
+
+	ROWS = {
+		"QC Packaging Check": [
+			{"name": "QCG-2026-00003", "record_date": datetime.date(2026, 11, 14), "modified": datetime.datetime(2026, 11, 14, 9, 0)},
+			{"name": "QCG-2026-00002", "record_date": datetime.date(2026, 11, 13), "modified": datetime.datetime(2026, 11, 14, 8, 0)},
+		],
+		"QC Weight Check": [
+			{"name": "QCI-2026-00007", "record_date": datetime.date(2026, 11, 14), "modified": datetime.datetime(2026, 11, 14, 9, 5)},
+			# changed last, but of an earlier day
+			{"name": "QCI-2026-00006", "record_date": datetime.date(2026, 11, 12), "modified": datetime.datetime(2026, 11, 14, 10, 0)},
+		],
+	}
+
+	def setUp(self):
+		meta = MagicMock()
+		meta.fields = [frappe._dict(fieldname=f) for f in ("record_date", "shift", "factory_line", "work_order", "overall_status")]
+		for target, value in (
+			("frappe.get_meta", meta),
+			("frappe.db.table_exists", True),
+			("frappe.has_permission", True),
+		):
+			patcher = patch(target, return_value=value)
+			self.addCleanup(patcher.stop)
+			setattr(self, target.rsplit(".", 1)[1], patcher.start())
+		patcher = patch("frappe.get_list", side_effect=lambda doctype, **kw: [frappe._dict(r) for r in self.ROWS[doctype]][: kw["limit"]])
+		self.addCleanup(patcher.stop)
+		self.get_list = patcher.start()
+
+	def test_both_in_one_list_newest_first(self):
+		records = qh.get_packaging_and_weight_records(limit=50)
+
+		# by date, then by when changed, as each list is ordered
+		self.assertEqual(
+			[(r.name, r.doctype) for r in records],
+			[
+				("QCI-2026-00007", "QC Weight Check"),
+				("QCG-2026-00003", "QC Packaging Check"),
+				("QCG-2026-00002", "QC Packaging Check"),
+				("QCI-2026-00006", "QC Weight Check"),
+			],
+		)
+		self.assertEqual([c.args[0] for c in self.get_list.call_args_list], list(qh.COMBINED_DOCTYPES))
+		for call in self.get_list.call_args_list:
+			self.assertEqual(call.kwargs["order_by"], "record_date desc, modified desc")
+			self.assertFalse(call.kwargs.get("ignore_permissions"))
+
+	def test_the_newest_of_both_up_to_the_limit(self):
+		records = qh.get_packaging_and_weight_records(limit="3")
+
+		self.assertEqual([r.name for r in records], ["QCI-2026-00007", "QCG-2026-00003", "QCG-2026-00002"])
+		self.assertEqual({c.kwargs["limit"] for c in self.get_list.call_args_list}, {3})
+
+	def test_the_check_filter_lists_one_alone(self):
+		filters = {"check": "QC Weight Check", "work_order": "MFG-WO-2026-00412", "docstatus": "1"}
+
+		records = qh.get_packaging_and_weight_records(filters=json.dumps(filters), limit=50)
+
+		self.assertEqual([r.name for r in records], ["QCI-2026-00007", "QCI-2026-00006"])
+		self.get_list.assert_called_once()
+		self.assertEqual(self.get_list.call_args.args[0], "QC Weight Check")
+		# the other filters are the list's own; Check is not a field
+		self.assertEqual(self.get_list.call_args.kwargs["filters"], {"work_order": "MFG-WO-2026-00412", "docstatus": "1"})
+
+	def test_only_a_packaging_or_a_weight_check(self):
+		for check in ("QC Tasting Record", "ToDo", ["QC Weight Check"]):
+			with self.subTest(check=check), self.assertRaises(frappe.ValidationError):
+				qh.get_packaging_and_weight_records(filters={"check": check})
+		with self.assertRaises(frappe.ValidationError):
+			qh.get_packaging_and_weight_records(filters='["QC Weight Check"]')
+		self.get_list.assert_not_called()
+
+	def test_a_check_the_user_may_not_read_is_left_out(self):
+		self.has_permission.side_effect = lambda doctype, ptype: doctype == "QC Packaging Check"
+
+		records = qh.get_packaging_and_weight_records(limit=50)
+
+		self.assertEqual({r.doctype for r in records}, {"QC Packaging Check"})
+		self.assertEqual([c.args[0] for c in self.get_list.call_args_list], ["QC Packaging Check"])
+		# asked for alone, it is refused, as its own list was
+		with self.assertRaises(frappe.PermissionError):
+			qh.get_packaging_and_weight_records(filters={"check": "QC Weight Check"})
+
+	def test_the_list_needs_a_check_the_user_may_read(self):
+		self.has_permission.return_value = False
+
+		with self.assertRaises(frappe.PermissionError):
+			qh.get_packaging_and_weight_records()
+		self.get_list.assert_not_called()
+
+	def test_the_tab_has_one_list(self):
+		script = TestPackagingAndWeightForm._script()
+		tab = script[script.index("<!-- TAB: Packaging & Weight -->") : script.index("<!-- TAB: CCP & Metal Detector -->")]
+		# no pills: one list, and a Check filter in the filter bar
+		self.assertNotIn("qh-sub-nav", tab)
+		self.assertNotIn("qh-pill-nav", tab)
+		self.assertEqual(
+			re.findall(r'<option value="([^"]*)">', tab[tab.index('data-filter="check"') :].split("</select>")[0]),
+			["", *qh.COMBINED_DOCTYPES],
+		)
+		# the tab's list is read with the endpoint for both
+		load = script[script.index("    load_records(tab, filters) {") : script.index("    render_record_list(tab, doctype, records) {")]
+		pkg_branch = load[: load.index("const dtmap")]
+		self.assertIn('if (tab === "pkg_weight") {', pkg_branch)
+		self.assertIn("isnack.isnack.page.quality_hub.quality_hub.get_packaging_and_weight_records", pkg_branch)
+		self.assertNotIn("active_pkg_sub", script)
+		# each row opens its own record; a v1 "#Form/..." link opened "Page #Form not found"
+		self.assertIn("frappe.utils.get_form_link(row_doctype, val)", script)
+		self.assertNotIn('<a href="#Form/${', script)
+		self.assertIn('data-doctype="${frappe.utils.escape_html(row_doctype)}"', script)
+		self.assertIn('frappe.set_route("Form", $(e.currentTarget).attr("data-doctype"), name);', script)
+		# a Check column, after Name, on this tab
+		render = script[script.index("    render_record_list(tab, doctype, records) {") :]
+		self.assertIn('const check_cols = tab === "pkg_weight" ? [{ key: "doctype", label: __("Check") }] : [];', render)
+		cols = render[render.index("const cols = [") :]
+		cols = cols[: cols.index("];")]
+		self.assertLess(cols.index('{ key: "name"'), cols.index("...check_cols,"))
+		self.assertIn("check_labels[val]", render)
+		# coming back to the tab, the list is the one its filter bar shows
+		show_tab = script[script.index("    show_tab(tab) {") : script.index("    load_records(tab, filters) {")]
+		self.assertIn('this.load_records("pkg_weight", this.get_filters("pkg_weight"));', show_tab)

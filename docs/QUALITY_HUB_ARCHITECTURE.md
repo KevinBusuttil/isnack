@@ -66,7 +66,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section; their Samples grid keeps the columns it was made with (Gross, Tare, Net Weight, In Range; no Status or Remarks), set by the form script: the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
 
-**Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
+**Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
 
@@ -869,6 +869,19 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 
 ---
 
+### `get_packaging_and_weight_records(filters=None, limit=20)`
+
+**Method:** `isnack.isnack.page.quality_hub.quality_hub.get_packaging_and_weight_records`  
+**Arguments:**  
+- `filters` — those of `get_qc_records`, plus `check`: `QC Packaging Check` or `QC Weight Check`, to list that one alone (any other value throws)  
+- `limit` — integer row cap (default 20, UI passes 50)
+
+**Purpose:** The Packaging and Weight Checks tab's list (since 2026-11; until then a pill for each, read with `get_qc_records`). Reads each doctype with `get_qc_records` (the newest `limit` of each) and merges them, so permissions and User Permissions apply as they do to every list. With no `check`, a doctype the user may not read is left out, and a user who may read neither is refused; with a `check`, that doctype is refused as its own list was.
+
+**Returns:** The newest `limit` records of both, ordered by `record_date desc, modified desc` as each list is, each with its `doctype`.
+
+---
+
 ## 11. Quality Hub UI Architecture
 
 **Page registration:** `isnack/isnack/page/quality-hub/`  
@@ -896,7 +909,7 @@ new QualityHub(wrapper)
 | Receiving (QCA) | `receiving` | QC Receiving Record | — |
 | Process (QCB–QCD) | `process` | QC Puffs / Rice / Frying | Puffs · Rice · Frying |
 | Tasting (QCF) | `tasting` | QC Tasting Record | — |
-| Packaging and Weight Checks (QCG/QCI) | `pkg_weight` | QC Packaging Check / QC Weight Check | Packaging · Weight |
+| Packaging and Weight Checks (QCG/QCI) | `pkg_weight` | QC Packaging Check / QC Weight Check | — (one list; Packaging · Weight until 2026-11) |
 | CCP & Metal (QCH) | `metal` | QC Metal Detector Log | — |
 | Reports & Trends | `reports` | (matrix — the 8 types in use) | — |
 
@@ -926,18 +939,19 @@ new QualityHub(wrapper)
 - The New Record dialog: Batch No is mandatory, in the **Product** section; the Scores toolbar shows what the stars mean (1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent, `child_legend`), and each taster's **Overall %** is worked out as the scores are picked (a column with `compute`, not sent: the record works it out on save)
 
 **Packaging and Weight Checks (`pkg_weight`)** (Pkg & Weight until 2026-11)
-- Sub-nav pills: Packaging Checks (QCG) · Weight Checks (QCI): the two lists, one at a time
+- One list of both checks, newest first (`get_packaging_and_weight_records`), with a **Check** column (Packaging Check (QCG) or Weight Check (QCI), the form's labels); each row opens its own record. Until 2026-11 the tab had a pill for each, Packaging Checks (QCG) · Weight Checks (QCI), and showed their lists one at a time
+- The filter bar's **Check** (All Checks · Packaging Checks (QCG) · Weight Checks (QCI)) lists one alone, as a pill did. The tab is listed as its filter bar shows it, also on coming back to it (as a pill kept its choice); Receiving, Process and Tasting list unfiltered when opened, and CCP & Metal lists today's logs
 - **New Packaging and Weight Check** (since 2026-11; it replaced the New Record button, which opened the active pill's dialog) opens one form for both records (`PACKAGING_AND_WEIGHT` in `quality_hub.js`, `open_packaging_and_weight`). The two records stay two doctypes, one per paper sheet; only the entry is merged:
   - Two ticks at the top, **Packaging Check (QCG)** and **Weight Check (QCI)**, both ticked. Unticking one hides its sections and stops asking for its required fields (a dialog asks for a required field even hidden), so the form also records either check on its own. One of the two stays ticked; a record type the user may not create is unticked and cannot be ticked.
   - The Record Details once (the first section of both dialogs below, the same fields: a test pins it), written to both records.
   - Then each record's own fields, taken from its dialog config, under the headings **Packaging Check (QCG)** (with the QCG-007 instruction; Qty Wasted and Remarks in the same section) and **Weight Check (QCI)**, then the Samples editor. The packaging Remarks go to the packaging check only: the weight check's record-level Remarks is retired.
   - Picking the Work Order fills the weight check's Item Code with the Work Order's product (`get_work_order_product`, only when the user may read the Work Order); Batch No offers that item's batches, and a change of item clears it (another Work Order of the same item keeps it).
-  - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a check saved on its own is then shown in its own list.
+  - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a Check filter that would hide a saved check is cleared (the Date, Work Order and Status filters stay, and can still hide them).
   - A dialog draws a field it has no document for as `value || null`, which loses a 0, and Frappe redraws a required field holding 0 as it reads the dialog. So a dialog's values are read once (on Save Draft, those its button already read), a required 0 is drawn again after the read (`read_dialog_values`), and the tick keeps a 0 when it changes a field's `reqd` (`set_dialog_df_property`): a Qty Wasted of 0 saves.
 - The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
 - The Weight Check dialog: Record Details, Product (Item Code, Batch No, Nominal Weight; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Remarks, Status); no Outcome section. Status is a required column (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
 - The two dialogs above are no longer opened from the tab: the combined form is built from them
-- Filter bar: date · work_order · docstatus · Filter button · New Packaging and Weight Check button
+- Filter bar: date · work_order · check · docstatus · Filter button · New Packaging and Weight Check button
 - Single panel with record list datatable
 
 **CCP & Metal (`metal`)**
@@ -955,11 +969,12 @@ new QualityHub(wrapper)
 
 ### Record List Datatable
 
-All record lists (`render_record_list`) render the same columns, except that the Receiving list shows Supplier, Item and Batch where the others show Line:
+All record lists (`render_record_list`) render the same columns, except that the Receiving list shows Supplier, Item and Batch where the others show Line, and the Packaging and Weight list adds a Check column:
 
 | Column | Key | Rendering |
 |---|---|---|
-| Name | `name` | Hyperlink to form view (`#Form/<doctype>/<name>`) |
+| Name | `name` | Hyperlink to the record's form, `frappe.utils.get_form_link(doctype, name)` (`/app/<doctype-slug>/<name>`). Until 2026-11 a v1 `#Form/<doctype>/<name>` link, which Frappe v15 opens as "Page #Form not found" |
+| Check | `doctype` | The form's label, Packaging Check (QCG) or Weight Check (QCI) (Packaging and Weight only) |
 | Date | `record_date` | Plain text |
 | Shift | `shift` | Plain text |
 | Line | `factory_line` | Plain text (not on Receiving) |
@@ -968,7 +983,7 @@ All record lists (`render_record_list`) render the same columns, except that the
 | Result | `overall_status` | Badge: green (Pass/Accepted), red (Fail/Rejected), amber (other) |
 | Status | `docstatus` | Badge: amber (Draft), green (Submitted), red (Cancelled) |
 
-Clicking a row navigates to the form via `frappe.set_route("Form", doctype, name)`.
+Clicking a row navigates to the form via `frappe.set_route("Form", doctype, name)`, with the row's own doctype (`data-doctype`: on the Packaging and Weight list, each record's; on the others, the list's).
 
 ### CSS Class Naming Convention (`.qh-*`)
 

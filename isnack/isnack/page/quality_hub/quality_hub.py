@@ -1,3 +1,5 @@
+import datetime
+
 import frappe
 from frappe import _
 from frappe.utils import cint
@@ -278,9 +280,47 @@ def create_qc_record(doctype, payload=None, submit=False):
     return _record_summary(doc)
 
 
-# The Packaging and Weight tab's form records a packaging check and a weight
-# check together (or either on its own).
+# The Packaging and Weight tab lists the packaging checks and the weight checks
+# together, and its form records one of each together (or either on its own).
 COMBINED_DOCTYPES = ("QC Packaging Check", "QC Weight Check")
+
+
+@frappe.whitelist()
+def get_packaging_and_weight_records(filters=None, limit=20):
+    """The Packaging and Weight tab's list: the packaging checks and the weight
+    checks in one, newest first (``record_date``, then ``modified``, as
+    ``get_qc_records`` orders each), each record with its ``doctype``.
+
+    ``filters`` are those of ``get_qc_records``, plus ``check``: one of the two
+    doctypes, to list it alone. With no ``check``, a doctype the user may not
+    read is left out; the list needs one the user may read.
+    """
+    filters = frappe.parse_json(filters) if filters else {}
+    if not isinstance(filters, dict):
+        frappe.throw("Filters must be a JSON object.")
+    filters = dict(filters)
+    check = filters.pop("check", None)
+    if check:
+        if check not in COMBINED_DOCTYPES:
+            frappe.throw(_("Invalid check: {0}").format(check))
+        doctypes = [check]
+    else:
+        doctypes = [doctype for doctype in COMBINED_DOCTYPES if frappe.has_permission(doctype, "read")]
+        if not doctypes:
+            raise frappe.PermissionError(_("Not permitted to read packaging or weight checks."))
+
+    # the newest ``limit`` of each, so the newest ``limit`` of both
+    limit = cint(limit)
+    records = []
+    for doctype in doctypes:
+        for record in get_qc_records(doctype, dict(filters), limit):
+            record["doctype"] = doctype
+            records.append(record)
+    records.sort(
+        key=lambda record: (record.get("record_date") or datetime.date.min, record.get("modified") or datetime.datetime.min),
+        reverse=True,
+    )
+    return records[:limit] if limit > 0 else records
 
 
 @frappe.whitelist()
