@@ -328,7 +328,6 @@ isnack.quality_hub.PACKAGING_AND_WEIGHT = {
         {
             doctype: "QC Packaging Check",
             toggle: "record_packaging",
-            list: "packaging",
             label: __("Packaging Check (QCG)"),
             sections: {
                 sb_packaging: {
@@ -342,7 +341,6 @@ isnack.quality_hub.PACKAGING_AND_WEIGHT = {
         {
             doctype: "QC Weight Check",
             toggle: "record_weight",
-            list: "weight",
             label: __("Weight Check (QCI)"),
             sections: {
                 sb_product: { label: __("Weight Check (QCI)") },
@@ -369,7 +367,6 @@ isnack.quality_hub.QualityHub = class {
 
         this.active_tab = "monitor";
         this.active_process_sub = "puffs";
-        this.active_pkg_sub = "packaging";
         this.make_layout();
         this.bind_tabs();
         this.start_clock();
@@ -502,13 +499,14 @@ isnack.quality_hub.QualityHub = class {
 
                 <!-- TAB: Packaging & Weight -->
                 <div class="qh-tab-content" data-content="pkg_weight" style="display:none">
-                    <div class="qh-sub-nav">
-                        <button class="qh-pill-nav qh-pill-active" data-sub="packaging">${__("Packaging Checks (QCG)")}</button>
-                        <button class="qh-pill-nav" data-sub="weight">${__("Weight Checks (QCI)")}</button>
-                    </div>
                     <div class="qh-filter-bar">
                         <input type="date" class="form-control qh-filter-input" data-filter="record_date" placeholder="${__("Date")}">
                         <input type="text" class="form-control qh-filter-input" data-filter="work_order" placeholder="${__("Work Order")}">
+                        <select class="form-control qh-filter-input" data-filter="check">
+                            <option value="">${__("All Checks")}</option>
+                            <option value="QC Packaging Check">${__("Packaging Checks (QCG)")}</option>
+                            <option value="QC Weight Check">${__("Weight Checks (QCI)")}</option>
+                        </select>
                         <select class="form-control qh-filter-input" data-filter="docstatus">
                             <option value="">${__("All Status")}</option>
                             <option value="0">${__("Draft")}</option>
@@ -603,10 +601,6 @@ isnack.quality_hub.QualityHub = class {
                 this.$container.find("[data-target='process']").closest(".qh-filter-bar")
                     .find(".qh-new-record").data("doctype", dtmap[sub]);
                 this.load_records("process", {});
-            } else if (tab === "pkg_weight") {
-                // the lists stay two; the New button opens the one form for both
-                this.active_pkg_sub = sub;
-                this.load_records("pkg_weight", {});
             }
         });
 
@@ -863,15 +857,6 @@ isnack.quality_hub.QualityHub = class {
         }
     }
 
-    /** Show the Packaging and Weight tab's ``list`` (packaging, weight). */
-    show_pkg_list(list) {
-        this.active_pkg_sub = list;
-        this.$container.find("[data-content='pkg_weight'] .qh-pill-nav")
-            .removeClass("qh-pill-active")
-            .filter(`[data-sub="${list}"]`)
-            .addClass("qh-pill-active");
-    }
-
     /** A dialog redraws a field it has no document for as ``value || null``,
      *  so a 0 entered in it is lost: when its property changes, and when
      *  get_values reads it while it is required (a dialog redraws a required
@@ -932,9 +917,10 @@ isnack.quality_hub.QualityHub = class {
                 if (!r.message) return;
 
                 dialog.hide();
-                // a check saved on its own shows in its own list
-                const saved = r.message.length === 1 && records.find((record) => record.doctype === r.message[0].doctype);
-                if (saved) this.show_pkg_list(saved.list);
+                // the checks saved show in the list: a Check filter that
+                // would hide one of them is cleared
+                const $check = this.$container.find("[data-content='pkg_weight'] [data-filter='check']");
+                if ($check.val() && r.message.some((record) => record.doctype !== $check.val())) $check.val("");
                 this.reload_active_tab_records();
                 const names = r.message.map((record) => record.name);
                 frappe.show_alert({
@@ -1420,7 +1406,9 @@ isnack.quality_hub.QualityHub = class {
         } else if (tab === "tasting") {
             this.load_records("tasting", {});
         } else if (tab === "pkg_weight") {
-            this.load_records("pkg_weight", {});
+            // as the filter bar shows it: its Check stands in for the pills
+            // the tab had, which kept their choice from one visit to the next
+            this.load_records("pkg_weight", this.get_filters("pkg_weight"));
         } else if (tab === "metal") {
             this.load_metal_tab();
         } else if (tab === "reports") {
@@ -1429,6 +1417,16 @@ isnack.quality_hub.QualityHub = class {
     }
 
     load_records(tab, filters) {
+        if (tab === "pkg_weight") {
+            // the packaging checks and the weight checks, in one list
+            frappe.call({
+                method: "isnack.isnack.page.quality_hub.quality_hub.get_packaging_and_weight_records",
+                args: { filters, limit: 50 },
+                callback: (r) => this.render_record_list(tab, null, r.message || []),
+            });
+            return;
+        }
+
         const dtmap = {
             receiving: "QC Receiving Record",
             process: {
@@ -1437,10 +1435,6 @@ isnack.quality_hub.QualityHub = class {
                 frying: "QC Frying Line Record",
             },
             tasting: "QC Tasting Record",
-            pkg_weight: {
-                packaging: "QC Packaging Check",
-                weight: "QC Weight Check",
-            },
             metal: "QC Metal Detector Log",
         };
 
@@ -1448,9 +1442,6 @@ isnack.quality_hub.QualityHub = class {
         if (tab === "process") {
             const sub = this.active_process_sub || "puffs";
             doctype = dtmap.process[sub];
-        } else if (tab === "pkg_weight") {
-            const sub = this.active_pkg_sub || "packaging";
-            doctype = dtmap.pkg_weight[sub];
         } else {
             doctype = dtmap[tab];
         }
@@ -1467,6 +1458,8 @@ isnack.quality_hub.QualityHub = class {
         });
     }
 
+    /** ``records`` of ``doctype``, or each of its own ``doctype`` (the
+     *  Packaging and Weight tab's list, with a Check column). */
     render_record_list(tab, doctype, records) {
         const $target = this.$container.find(`[data-role="list-${tab}"]`);
 
@@ -1483,8 +1476,14 @@ isnack.quality_hub.QualityHub = class {
                 { key: "batch_no", label: __("Batch") },
             ]
             : [{ key: "factory_line", label: __("Line") }];
+        const check_cols = tab === "pkg_weight" ? [{ key: "doctype", label: __("Check") }] : [];
+        const check_labels = {};
+        isnack.quality_hub.PACKAGING_AND_WEIGHT.records.forEach((record) => {
+            check_labels[record.doctype] = record.label;
+        });
         const cols = [
             { key: "name", label: __("Name") },
+            ...check_cols,
             { key: "record_date", label: __("Date") },
             { key: "shift", label: __("Shift") },
             ...context_cols,
@@ -1497,6 +1496,7 @@ isnack.quality_hub.QualityHub = class {
         const status_cls = { 0: "qh-badge-amber", 1: "qh-badge-emerald", 2: "qh-badge-red" };
 
         const rows_html = records.map((r) => {
+            const row_doctype = r.doctype || doctype;
             const cells = cols.map((c) => {
                 let val = r[c.key];
                 if (c.key === "docstatus") {
@@ -1506,13 +1506,16 @@ isnack.quality_hub.QualityHub = class {
                                 val === "Fail" || val === "Rejected" ? "qh-badge-red" : "qh-badge-amber";
                     val = `<span class="qh-badge ${cls}">${frappe.utils.escape_html(val)}</span>`;
                 } else if (c.key === "name") {
-                    val = `<a href="#Form/${encodeURIComponent(doctype)}/${encodeURIComponent(val)}">${frappe.utils.escape_html(val)}</a>`;
+                    // a v1 "#Form/..." link opened "Page #Form not found"
+                    val = `<a href="${frappe.utils.escape_html(frappe.utils.get_form_link(row_doctype, val))}">${frappe.utils.escape_html(val)}</a>`;
+                } else if (c.key === "doctype") {
+                    val = frappe.utils.escape_html(check_labels[val] || val || "-");
                 } else {
                     val = frappe.utils.escape_html(val || "-");
                 }
                 return `<td>${val}</td>`;
             }).join("");
-            return `<tr data-name="${frappe.utils.escape_html(r.name)}">${cells}</tr>`;
+            return `<tr data-name="${frappe.utils.escape_html(r.name)}" data-doctype="${frappe.utils.escape_html(row_doctype)}">${cells}</tr>`;
         }).join("");
 
         const header_html = cols.map((c) => `<th>${c.label}</th>`).join("");
@@ -1527,7 +1530,7 @@ isnack.quality_hub.QualityHub = class {
         $target.find("tr[data-name]").on("click", (e) => {
             if ($(e.target).is("a")) return;
             const name = $(e.currentTarget).data("name");
-            frappe.set_route("Form", doctype, name);
+            frappe.set_route("Form", $(e.currentTarget).attr("data-doctype"), name);
         });
     }
 
