@@ -940,13 +940,13 @@ new QualityHub(wrapper)
 
 **Packaging and Weight Checks (`pkg_weight`)** (Pkg & Weight until 2026-11)
 - One list of both checks, newest first (`get_packaging_and_weight_records`), with a **Check** column (Packaging Check (QCG) or Weight Check (QCI), the form's labels); each row opens its own record. Until 2026-11 the tab had a pill for each, Packaging Checks (QCG) · Weight Checks (QCI), and showed their lists one at a time
-- The filter bar's **Check** (All Checks · Packaging Checks (QCG) · Weight Checks (QCI)) lists one alone, as a pill did. The tab is listed as its filter bar shows it, also on coming back to it (as a pill kept its choice); the other tabs list everything when opened
+- The filter bar's **Check** (All Checks · Packaging Checks (QCG) · Weight Checks (QCI)) lists one alone, as a pill did. The tab is listed as its filter bar shows it, also on coming back to it (as a pill kept its choice); Receiving, Process and Tasting list unfiltered when opened, and CCP & Metal lists today's logs
 - **New Packaging and Weight Check** (since 2026-11; it replaced the New Record button, which opened the active pill's dialog) opens one form for both records (`PACKAGING_AND_WEIGHT` in `quality_hub.js`, `open_packaging_and_weight`). The two records stay two doctypes, one per paper sheet; only the entry is merged:
   - Two ticks at the top, **Packaging Check (QCG)** and **Weight Check (QCI)**, both ticked. Unticking one hides its sections and stops asking for its required fields (a dialog asks for a required field even hidden), so the form also records either check on its own. One of the two stays ticked; a record type the user may not create is unticked and cannot be ticked.
   - The Record Details once (the first section of both dialogs below, the same fields: a test pins it), written to both records.
   - Then each record's own fields, taken from its dialog config, under the headings **Packaging Check (QCG)** (with the QCG-007 instruction; Qty Wasted and Remarks in the same section) and **Weight Check (QCI)**, then the Samples editor. The packaging Remarks go to the packaging check only: the weight check's record-level Remarks is retired.
   - Picking the Work Order fills the weight check's Item Code with the Work Order's product (`get_work_order_product`, only when the user may read the Work Order); Batch No offers that item's batches, and a change of item clears it (another Work Order of the same item keeps it).
-  - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a Check filter that would hide a saved check is cleared, so the checks saved show in the list.
+  - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a Check filter that would hide a saved check is cleared (the Date, Work Order and Status filters stay, and can still hide them).
   - A dialog draws a field it has no document for as `value || null`, which loses a 0, and Frappe redraws a required field holding 0 as it reads the dialog. So a dialog's values are read once (on Save Draft, those its button already read), a required 0 is drawn again after the read (`read_dialog_values`), and the tick keeps a 0 when it changes a field's `reqd` (`set_dialog_df_property`): a Qty Wasted of 0 saves.
 - The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
 - The Weight Check dialog: Record Details, Product (Item Code, Batch No, Nominal Weight; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Remarks, Status); no Outcome section. Status is a required column (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
@@ -969,11 +969,12 @@ new QualityHub(wrapper)
 
 ### Record List Datatable
 
-All record lists (`render_record_list`) render the same columns, except that the Receiving list shows Supplier, Item and Batch where the others show Line:
+All record lists (`render_record_list`) render the same columns, except that the Receiving list shows Supplier, Item and Batch where the others show Line, and the Packaging and Weight list adds a Check column:
 
 | Column | Key | Rendering |
 |---|---|---|
-| Name | `name` | Hyperlink to form view (`#Form/<doctype>/<name>`) |
+| Name | `name` | Hyperlink to the record's form, `frappe.utils.get_form_link(doctype, name)` (`/app/<doctype-slug>/<name>`). Until 2026-11 a v1 `#Form/<doctype>/<name>` link, which Frappe v15 opens as "Page #Form not found" |
+| Check | `doctype` | The form's label, Packaging Check (QCG) or Weight Check (QCI) (Packaging and Weight only) |
 | Date | `record_date` | Plain text |
 | Shift | `shift` | Plain text |
 | Line | `factory_line` | Plain text (not on Receiving) |
@@ -982,7 +983,7 @@ All record lists (`render_record_list`) render the same columns, except that the
 | Result | `overall_status` | Badge: green (Pass/Accepted), red (Fail/Rejected), amber (other) |
 | Status | `docstatus` | Badge: amber (Draft), green (Submitted), red (Cancelled) |
 
-Clicking a row navigates to the form via `frappe.set_route("Form", doctype, name)`.
+Clicking a row navigates to the form via `frappe.set_route("Form", doctype, name)`, with the row's own doctype (`data-doctype`: on the Packaging and Weight list, each record's; on the others, the list's).
 
 ### CSS Class Naming Convention (`.qh-*`)
 
