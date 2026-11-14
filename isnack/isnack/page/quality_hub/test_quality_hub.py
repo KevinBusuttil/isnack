@@ -1103,16 +1103,27 @@ class TestPackagingAndWeightList(unittest.TestCase):
 			re.findall(r'<option value="([^"]*)">', tab[tab.index('data-filter="check"') :].split("</select>")[0]),
 			["", *qh.COMBINED_DOCTYPES],
 		)
-		self.assertIn("isnack.isnack.page.quality_hub.quality_hub.get_packaging_and_weight_records", script)
+		# the tab's list is read with the endpoint for both
+		load = script[script.index("    load_records(tab, filters) {") : script.index("    render_record_list(tab, doctype, records) {")]
+		pkg_branch = load[: load.index("const dtmap")]
+		self.assertIn('if (tab === "pkg_weight") {', pkg_branch)
+		self.assertIn("isnack.isnack.page.quality_hub.quality_hub.get_packaging_and_weight_records", pkg_branch)
 		self.assertNotIn("active_pkg_sub", script)
 		# each row opens its own record; a v1 "#Form/..." link opened "Page #Form not found"
 		self.assertIn("frappe.utils.get_form_link(row_doctype, val)", script)
 		self.assertNotIn('<a href="#Form/${', script)
 		self.assertIn('data-doctype="${frappe.utils.escape_html(row_doctype)}"', script)
 		self.assertIn('frappe.set_route("Form", $(e.currentTarget).attr("data-doctype"), name);', script)
-		self.assertIn('{ key: "doctype", label: __("Check") }', script)
+		# a Check column, after Name, on this tab
+		render = script[script.index("    render_record_list(tab, doctype, records) {") :]
+		self.assertIn('const check_cols = tab === "pkg_weight" ? [{ key: "doctype", label: __("Check") }] : [];', render)
+		cols = render[render.index("const cols = [") :]
+		cols = cols[: cols.index("];")]
+		self.assertLess(cols.index('{ key: "name"'), cols.index("...check_cols,"))
+		self.assertIn("check_labels[val]", render)
 		# coming back to the tab, the list is the one its filter bar shows
-		self.assertIn('this.load_records("pkg_weight", this.get_filters("pkg_weight"));', script)
+		show_tab = script[script.index("    show_tab(tab) {") : script.index("    load_records(tab, filters) {")]
+		self.assertIn('this.load_records("pkg_weight", this.get_filters("pkg_weight"));', show_tab)
 
 
 class TestLiveMonitor(unittest.TestCase):
