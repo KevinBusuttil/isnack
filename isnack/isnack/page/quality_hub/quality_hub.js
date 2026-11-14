@@ -1733,6 +1733,12 @@ isnack.quality_hub.QualityHub = class {
                                 r.reference_type && r.reference_name
                                     ? `${r.reference_type} ${r.reference_name}`
                                     : r.item_code || "-";
+                            // a v1 "#Form/..." href is routed as page "#Form" ("Page #Form not found")
+                            const inspection = r.quality_inspection
+                                ? `<a href="${frappe.utils.escape_html(
+                                      frappe.utils.get_form_link("Quality Inspection", r.quality_inspection)
+                                  )}">${frappe.utils.escape_html(r.quality_inspection)}</a>`
+                                : "-";
 
                             return `
                                 <tr>
@@ -1748,15 +1754,7 @@ isnack.quality_hub.QualityHub = class {
                                     <td>${frappe.utils.escape_html(
                                         r.inspection_type || ""
                                     )}</td>
-                                    <td>
-                                        <a href="#Form/Quality%20Inspection/${encodeURIComponent(
-                                            r.quality_inspection
-                                        )}">
-                                            ${frappe.utils.escape_html(
-                                                r.quality_inspection || ""
-                                            )}
-                                        </a>
-                                    </td>
+                                    <td>${inspection}</td>
                                 </tr>`;
                         })
                         .join("")}
