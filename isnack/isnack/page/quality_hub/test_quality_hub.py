@@ -1124,3 +1124,17 @@ class TestPackagingAndWeightList(unittest.TestCase):
 		# coming back to the tab, the list is the one its filter bar shows
 		show_tab = script[script.index("    show_tab(tab) {") : script.index("    load_records(tab, filters) {")]
 		self.assertIn('this.load_records("pkg_weight", this.get_filters("pkg_weight"));', show_tab)
+
+
+class TestLiveMonitor(unittest.TestCase):
+	def test_an_out_of_range_reading_opens_its_inspection(self):
+		script = TestPackagingAndWeightForm._script()
+		# Frappe v15 routes an href starting "#" as a page: "#Form/..." opened "Page #Form not found"
+		self.assertNotIn('href="#Form/', script)
+		table = script[script.index("render_out_of_range_table(rows) {") :]
+		self.assertIn(
+			'frappe.utils.get_form_link("Quality Inspection", r.quality_inspection)',
+			table,
+		)
+		self.assertIn("const inspection = r.quality_inspection", table)
+		self.assertIn("<td>${inspection}</td>", table)
