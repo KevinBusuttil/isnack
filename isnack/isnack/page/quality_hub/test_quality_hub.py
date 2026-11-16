@@ -531,6 +531,67 @@ class TestWeightCheckSchema(unittest.TestCase):
 			self.assertIn(".qh-child-reqd {", fh.read())
 
 
+class TestMetalDetectorLogDialog(unittest.TestCase):
+	"""Since 2026-11 the log picks its detector from the Metal Detectors and
+	takes its Make/Model and calibration dates; the Calibration Certificate is
+	kept on the Metal Detector, and each test's Sensitivity Setting and Remarks
+	came off. Test Piece Size starts at 0.2 mm."""
+
+	def setUp(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			self.script = fh.read()
+		start = self.script.index('"QC Metal Detector Log": {')
+		self.parent, self.child = self.script[start : self.script.index("\n    },\n", start)].split("child_fields: [")
+
+	def test_the_detector_is_picked_and_its_details_filled_in(self):
+		self.assertIn('{ fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" }', self.parent)
+		for fieldname, fieldtype, label, source in (
+			("detector_make_model", "Data", "Make/Model", "make_model"),
+			("last_calibration_date", "Date", "Last Calibration Date", "last_calibration_date"),
+			("next_calibration_date", "Date", "Next Calibration Date", "next_calibration_date"),
+		):
+			self.assertIn(
+				f'{{ fieldname: "{fieldname}", fieldtype: "{fieldtype}", label: __("{label}"), read_only: 1, fetch_from: "metal_detector_id.{source}" }}',
+				self.parent,
+			)
+		self.assertNotIn('fieldname: "calibration_certificate"', self.parent)
+		self.assertEqual(
+			re.findall(r'fieldname: "(\w+)"', self.parent)[-8:],
+			["sb_equipment", "metal_detector_id", "detector_make_model", "last_calibration_date", "next_calibration_date", "cb_equipment", "corrective_action", "remarks"],
+		)
+
+	def test_the_tests(self):
+		self.assertEqual(re.findall(r'fieldname: "(\w+)"', self.child), ["test_time", "test_piece_type", "test_piece_size_mm", "detected"])
+		self.assertIn('{ fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 }', self.child)
+
+	def test_a_row_holding_only_its_defaults_is_not_a_test(self):
+		# rows saved and rows asked for a required value: those entered, not
+		# those holding only a column's default
+		block = self.script[self.script.index("    get_non_empty_child_rows(dialog, table) {") :]
+		block = block[: block.index("\n    }\n")]
+		self.assertIn(".filter((row) => this.child_row_entered(row, entered))", block)
+		block = self.script[self.script.index("    missing_child_values(dialog, table) {") :]
+		block = block[: block.index("\n    }\n")]
+		self.assertIn("this.child_row_entered(row, entered) && !this.child_row_has_values(row, [field])", block)
+		block = self.script[self.script.index("    child_row_entered(row, fields) {") :]
+		block = block[: block.index("\n    }\n")]
+		self.assertIn("return row[field.fieldname] !== value;", block)
+
+	def test_a_detector_emptied_by_hand_empties_its_details(self):
+		# a dialog's Link misses being emptied after a first pick (Frappe v15):
+		# the dialog sets it empty, which empties the fields fetched from it
+		block = self.script[self.script.index("    open_new_record(doctype) {") :]
+		block = block[: block.index("\n    }\n")]
+		self.assertIn("this.empty_cleared_links(dialog);", block)
+		block = self.script[self.script.index("    empty_cleared_links(dialog) {") :]
+		block = block[: block.index("\n    }\n")]
+		self.assertIn('dialog.fields.filter((df) => df.fetch_from).map((df) => df.fetch_from.split(".")[0])', block)
+		self.assertIn('if (!field.$input.val()) field.set_value("");', block)
+
+	def test_the_detectors_are_a_quick_link(self):
+		self.assertIn('data-doctype="Metal Detector">${__("Metal Detectors")}</a>', self.script)
+
+
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):
 		for doctype in QC_DOCTYPES.values():

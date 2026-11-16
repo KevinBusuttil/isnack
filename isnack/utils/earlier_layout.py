@@ -61,10 +61,11 @@ def mark_deleted_documents(doctype, belongs):
             frappe.db.set_value("Deleted Document", deleted.name, "data", frappe.as_json(data), update_modified=False)
 
 
-def forget_grid_columns(doctype, child_doctype):
+def forget_grid_columns(doctype, child_doctype, fieldnames=None):
     """Forget the columns users chose (the grid's Configure Columns) for
     ``child_doctype`` in ``doctype``'s form: chosen before fields came off, they
-    would keep the new ones out of the grid."""
+    would keep the new ones out of the grid, or show the ones taken off. With
+    ``fieldnames``, only the choices showing one of them are forgotten."""
     from frappe.model.utils.user_settings import sync_user_settings
 
     sync_user_settings()  # the cache holds the latest choices; the table, what was synced
@@ -74,6 +75,10 @@ def forget_grid_columns(doctype, child_doctype):
         data = json.loads(row.data or "{}")
         grid = data.get("GridView") or {}
         if child_doctype not in grid:
+            continue
+        if fieldnames and not any(
+            isinstance(column, dict) and column.get("fieldname") in fieldnames for column in grid[child_doctype] or ()
+        ):
             continue
         grid.pop(child_doctype)
         if not grid:

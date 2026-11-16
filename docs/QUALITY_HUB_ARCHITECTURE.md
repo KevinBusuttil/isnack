@@ -23,6 +23,7 @@
    - [QCF — QC Tasting Record](#qcf--qc-tasting-record)
    - [QCG — QC Packaging Check](#qcg--qc-packaging-check)
    - [QCH — QC Metal Detector Log](#qch--qc-metal-detector-log)
+   - [Metal Detector](#metal-detector)
    - [QCI — QC Weight Check](#qci--qc-weight-check)
 6. [Child Table Schemas](#6-child-table-schemas)
    - [QC Extruder Reading](#qc-extruder-reading)
@@ -66,6 +67,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section; their Samples grid keeps the columns it was made with (Gross, Tare, Net Weight, In Range; no Status or Remarks), set by the form script: the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
 
+**Metal detector log changed (2026-11).** The QC Metal Detector Log (QCH) picks its **Metal Detector ID** from a new master, **Metal Detector**, which holds each detector's Make/Model, Last and Next Calibration Date and Calibration Certificate. The log's Make/Model and calibration dates are filled from the detector picked and cannot be edited (`fetch_from`, `read_only`); they are taken when the log is saved, so a submitted log keeps the calibration it was verified under. The Calibration Certificate is kept on the Metal Detector only, and each test's Sensitivity Setting and Remarks came off; Test Piece Size (mm) starts at 0.2. The patch `isnack.patches.v1_0.metal_detectors_from_qc_logs` makes a Metal Detector of each ID the logs named, with the details of the newest log holding each, so their links lead somewhere and a draft can still be saved. The logs made before keep their certificate and their tests' sensitivity settings and remarks, in **Earlier Layout** sections: the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding any of them; a draft holding none is finished the new way.
+
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
 Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
@@ -108,7 +111,7 @@ Access is restricted to the **Quality Controller**, **Quality Manager**, and **S
 
 ## 3. DocType Inventory
 
-All 19 DocTypes (9 parent + 10 child) registered under the **Isnack** module:
+All 20 DocTypes (9 parent records, 10 child tables and the Metal Detector master) registered under the **Isnack** module:
 
 | DocType Name | Type | Code | Child Table Of | File Path |
 |---|---|---|---|---|
@@ -121,6 +124,7 @@ All 19 DocTypes (9 parent + 10 child) registered under the **Isnack** module:
 | QC Packaging Check | Parent | QCG | — | `isnack/isnack/doctype/qc_packaging_check/` |
 | QC Metal Detector Log | Parent | QCH | — | `isnack/isnack/doctype/qc_metal_detector_log/` |
 | QC Weight Check | Parent | QCI | — | `isnack/isnack/doctype/qc_weight_check/` |
+| Metal Detector | Master | — | — (linked from QCH) | `isnack/isnack/doctype/metal_detector/` |
 | QC Extruder Reading | Child | N/A | QCB, QCC (earlier readings) | `isnack/isnack/doctype/qc_extruder_reading/` |
 | QC Puffs Extruder Reading | Child | N/A | QCB | `isnack/isnack/doctype/qc_puffs_extruder_reading/` |
 | QC Puffs Oven Reading | Child | N/A | QCB | `isnack/isnack/doctype/qc_puffs_oven_reading/` |
@@ -132,7 +136,7 @@ All 19 DocTypes (9 parent + 10 child) registered under the **Isnack** module:
 | QC Metal Detector Test | Child | N/A | QCH | `isnack/isnack/doctype/qc_metal_detector_test/` |
 | QC Weight Sample | Child | N/A | QCI | `isnack/isnack/doctype/qc_weight_sample/` |
 
-All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All child DocTypes have `"istable": 1` and `"editable_grid": 1`.
+All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All child DocTypes have `"istable": 1` and `"editable_grid": 1`. The Metal Detector is a plain master (not submittable), with `"track_changes": 1`: each change of its calibration is kept in its version history.
 
 ---
 
@@ -322,18 +326,40 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 ### QCH — QC Metal Detector Log
 
 **Naming:** `QCH-.YYYY.-.#####`  
-**Purpose:** Critical Control Point (CCP) daily verification log for metal detectors. Mandatory per HACCP requirements.
+**Purpose:** Critical Control Point (CCP) daily verification log for metal detectors. Mandatory per HACCP requirements. Since 2026-11 the detector is picked from the [Metal Detectors](#metal-detector), and its details are taken from it; until then they were typed on each log, with a calibration certificate and each test's sensitivity setting and remarks. The logs made before keep those, in Earlier Layout sections.
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `metal_detector_id` | Data | Metal Detector ID | — |
-| `detector_make_model` | Data | Make/Model | — |
+| `metal_detector_id` | Link → Metal Detector | Metal Detector ID | Data until 2026-11: the patch `metal_detectors_from_qc_logs` made a Metal Detector of each ID the logs named |
+| `detector_make_model` | Data | Make/Model | `fetch_from: metal_detector_id.make_model`, `read_only: 1` |
+| `last_calibration_date` | Date | Last Calibration Date | `fetch_from: metal_detector_id.last_calibration_date`, `read_only: 1` |
+| `next_calibration_date` | Date | Next Calibration Date | `fetch_from: metal_detector_id.next_calibration_date`, `read_only: 1` |
 | `tests` | Table → QC Metal Detector Test | Tests | Child table |
 | `all_tests_passed` | Check | All Tests Passed | `read_only: 1` — auto-calculated |
 | `corrective_action` | Small Text | Corrective Action | `mandatory_depends_on: eval:!doc.all_tests_passed` |
+| `earlier_layout_section` | Section Break | Earlier Layout | shown only on a log made before 2026-11 (`earlier_layout`) |
+| `calibration_certificate` | Attach | Calibration Certificate | `no_copy: 1`; earlier layout (kept on the Metal Detector since) |
+| `earlier_layout` | Check | Earlier Layout | `hidden`, `read_only`, `no_copy`, `print_hide` — set by the patch `qc_metal_detector_log_earlier_layout` on the logs made before 2026-11 that keep the earlier layout (submitted or cancelled, or a draft holding a certificate or a test's sensitivity setting or remarks); Amend carries it, and `validate` never lets it go |
+
+The fetched fields are filled when the detector is picked (the form, the Quality Hub dialog) and again when the log is saved (Frappe's link validation, which overwrites them: they are not `fetch_if_empty`); a submitted log is not saved again, so it keeps the Make/Model and calibration dates it was verified under when the Metal Detector changes. A detector cleared on the form clears them; a log saved with no detector keeps what it holds.
+
+---
+
+### Metal Detector
+
+**Naming:** `field:metal_detector_id` (the ID is the record's name; renaming it renames the links on the logs)  
+**Purpose:** A metal detector the QC Metal Detector Logs verify, with its calibration. Not submittable; `track_changes: 1`. Made from the log's Metal Detector ID without leaving the form (`quick_entry: 1`, all its fields `allow_in_quick_entry`), or from the Quality Hub's **Metal Detectors** quick link.
+
+| Fieldname | Fieldtype | Label | Notes |
+|---|---|---|---|
+| `metal_detector_id` | Data | Metal Detector ID | `reqd: 1`, `unique: 1`; the name |
+| `make_model` | Data | Make/Model | searched in the log's Metal Detector ID (`search_fields`) |
+| `calibration_section` | Section Break | Calibration | — |
 | `last_calibration_date` | Date | Last Calibration Date | — |
 | `next_calibration_date` | Date | Next Calibration Date | — |
 | `calibration_certificate` | Attach | Calibration Certificate | — |
+
+Permissions follow the log's: Quality Controller read, write and create; Quality Manager and System Manager also delete; Production Manager read.
 
 ---
 
@@ -518,10 +544,11 @@ The desk grid shows the taster, all five scores and the Overall % (`columns`: ta
 |---|---|---|---|
 | `test_time` | Time | Test Time | ✅ |
 | `test_piece_type` | Select | Test Piece Type | ✅ (options: Fe / Non-Fe / Stainless) |
-| `test_piece_size_mm` | Float | Test Piece Size (mm) | ✅ |
+| `test_piece_size_mm` | Float | Test Piece Size (mm) | ✅ (`default: 0.2`, since 2026-11) |
 | `detected` | Check | Detected (Pass) | ✅ |
-| `sensitivity_setting` | Data | Sensitivity Setting | — |
-| `test_remarks` | Small Text | Remarks | — |
+| `earlier_layout_section` | Section Break | Earlier Layout | — (in the row's form, shown only on a log made before 2026-11: `eval:parent.earlier_layout`) |
+| `sensitivity_setting` | Data | Sensitivity Setting | — (`no_copy`, `print_hide_if_no_value`; earlier layout) |
+| `test_remarks` | Small Text | Remarks | — (`no_copy`, `print_hide_if_no_value`; earlier layout) |
 
 ---
 
@@ -710,6 +737,11 @@ The checks made before 2026-11 that keep the earlier layout (`earlier_layout`, s
 
 ```
 validate():
+    earlier_layout.keep_mark(self)      # a form loaded before the migrate sends no mark
+    if not earlier_layout:              # a log made since 2026-11
+        refuse_retired_values()         # certificate, a test's sensitivity setting or remarks:
+            blank a value of only spaces
+            throw "This page is out of date"   # a form or hub page from before
     if tests is not empty:
         all_tests_passed = 1 if all(t.detected == True for t in tests) else 0
     else:
@@ -717,6 +749,10 @@ validate():
 ```
 
 Note: `corrective_action` is mandatory when `all_tests_passed = 0`, enforced via the `mandatory_depends_on` expression on the field.
+
+The Make/Model and calibration dates are not the controller's: Frappe fetches them from the Metal Detector as it validates the link (see the schema above). The logs made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a calibration certificate or a test's sensitivity setting or remarks; marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout`, which also marks a log deleted before in its Deleted Document when it keeps the earlier layout, and forgets the Tests grid columns a user had chosen when they show the sensitivity setting or remarks: `earlier_layout.forget_grid_columns(…, fieldnames)`) keep them, and can correct them on a draft or an amendment. A log made since records none. Until the migrate adds the mark, every log is treated as one made before. There is no `before_print`: a log made since cannot hold them, and the standard print leaves out a field without a value.
+
+The patch `isnack.patches.v1_0.metal_detectors_from_qc_logs` (run before it) makes a Metal Detector of each Metal Detector ID the logs name: an ID differing only in case or surrounding spaces is one detector, named as the newest log spells it; it takes the Make/Model, the calibration dates (the two together) and the certificate of the newest log holding each, a cancelled log only when no other does. The logs are left as they are. An ID that cannot name a record (one with `<` or `>`) is reported in the migrate output and left out.
 
 ---
 
@@ -960,12 +996,15 @@ new QualityHub(wrapper)
   - Amber warning (`.qh-ccp-alert-warn`) when no records for today
 - Filter bar: date · metal_detector_id · docstatus · Filter button · New Record button
 - Single panel with record list datatable
+- The New Record dialog: **Metal Detector ID** picks a Metal Detector (a Link; a new one can be made from it, in a quick entry over the dialog), which fills **Make/Model**, **Last Calibration Date** and **Next Calibration Date** (read-only, `fetch_from`, as on the form); no Calibration Certificate since 2026-11. The Tests editor has Test Time, Test Piece Type, Test Piece Size (mm) and Detected (Pass); no Sensitivity Setting or Remarks since 2026-11. A page loaded before that change still sends them: the log refuses them with "This page is out of date" (`QCMetalDetectorLog.validate`)
+- Test Piece Size starts at 0.2 in each new row (`default` on a child field, `make_empty_child_row`). A row holding nothing but its defaults is not a test (`child_row_entered`): it is not saved, and Save asks for a test when there is no other
+- Emptying the Metal Detector ID empties Make/Model and the dates. A dialog's Link has no document and compares what is typed with the value before last, so emptying it after a first pick goes unseen (Frappe v15): the dialog sets a Link that fields are fetched from empty when it is left empty (`empty_cleared_links`, also on the tasting's Batch No). A detector made from the Link's **Create a new Metal Detector** is picked and its details shown; Frappe's quick entry sets a copy of the Link (`deep_clone`), so the dialog's own values for them stay blank, and the log takes them from the detector when it is saved
 
 **Reports & Trends (`reports`)**
 - Date-picker + Refresh button → calls `get_completion_matrix(date)` 
 - Completion matrix rendered as `<table class="qh-table qh-matrix">` (shift rows × code columns)
   - ✅ = submitted, 🟡 = draft, — = not started
-- Quick Links row with direct `#List/` links to the 8 DocType list views in use, and to the Quality Explorer page (see `docs/quality-explorer.md`)
+- Quick Links row with direct `#List/` links to the 8 DocType list views in use, the Metal Detectors (since 2026-11), and the Quality Explorer page (see `docs/quality-explorer.md`)
 
 ### Record List Datatable
 
@@ -1089,7 +1128,7 @@ isnack/
 ├── hooks.py                                  ← doc_events for all 9 QC DocTypes
 │
 ├── utils/
-│   ├── earlier_layout.py                     ← QCG/QCI earlier layout: the mark, kept; the patches' marking; grid columns forgotten
+│   ├── earlier_layout.py                     ← QCG/QCH/QCI earlier layout: the mark, kept; the patches' marking; grid columns forgotten
 │   ├── earlier_readings.py                   ← QCB/QCC earlier tables: no new rows, print, averages
 │   └── test_earlier_readings.py
 │
@@ -1153,7 +1192,14 @@ isnack/
         ├── qc_metal_detector_log/            ── QCH
         │   ├── qc_metal_detector_log.json
         │   ├── qc_metal_detector_log.py
+        │   ├── test_metal_detector_layout.py ── retired values refused, earlier layout, both patches, the doctypes
         │   ├── test_qc_metal_detector_log.py
+        │   └── __init__.py
+        │
+        ├── metal_detector/                   ── master (linked from QCH)
+        │   ├── metal_detector.json
+        │   ├── metal_detector.py
+        │   ├── test_metal_detector.py
         │   └── __init__.py
         │
         ├── qc_weight_check/                  ── QCI
