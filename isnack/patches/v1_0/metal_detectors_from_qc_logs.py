@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe.utils import cstr
 
@@ -13,12 +15,18 @@ def execute():
     Make a Metal Detector of each ID the logs name, so their links lead to one
     and a draft can still be saved: with the Make/Model, the calibration dates
     (the two together) and the certificate of the newest log holding each, a
-    cancelled log only when no other holds it. An ID differing only in case or
-    surrounding spaces is the same detector (as the database compares them); it
-    takes the newest log's spelling. The logs are left as they are.
+    cancelled log only when no other holds it, a log deleted before (its
+    Deleted Document, which a restore needs the detector for) only when no log
+    there is does. An ID differing only in case or surrounding spaces is the
+    same detector; it takes the newest log's spelling. The database matches a
+    log's ID to it whatever its case or trailing spaces, but not a leading
+    space, tab or line break: a log whose ID has one is given the detector's
+    name (a plain update, leaving ``modified`` alone). The other logs are left
+    as they are.
 
     An ID that cannot name a record is reported and left out: its logs keep
-    it, and a draft of them is saved again with a detector picked.
+    it, and a draft of them is saved again with a detector picked (the log
+    refuses a Metal Detector ID that names none).
     """
     if not frappe.db.table_exists("Metal Detector"):
         return
@@ -26,12 +34,13 @@ def execute():
     logs = frappe.get_all(
         "QC Metal Detector Log",
         filters={"metal_detector_id": ["is", "set"]},
-        fields=["metal_detector_id", "docstatus", *LOG_FIELDS],
+        fields=["name", "metal_detector_id", "docstatus", *LOG_FIELDS],
         order_by="record_date desc, modified desc",
     )
     detectors = {}
-    # newest first, the cancelled after the rest (sorted keeps the date order)
-    for log in sorted(logs, key=lambda log: log.docstatus == 2):
+    # newest first, the cancelled after the rest (sorted keeps the date order),
+    # then those deleted before
+    for log in sorted(logs, key=lambda log: log.docstatus == 2) + _deleted_logs():
         detector_id = cstr(log.metal_detector_id).strip()
         if not detector_id:
             continue
@@ -56,3 +65,33 @@ def execute():
             frappe.db.rollback(save_point="metal_detector_from_logs")
             frappe.clear_last_message()
             print(f"Metal Detector {detector['metal_detector_id']!r} not made from the QC Metal Detector Logs: {e}")
+
+    _link_logs(logs)
+
+
+def _deleted_logs():
+    """The logs deleted before and not restored (their Deleted Documents'
+    snapshots), newest first."""
+    deleted = [
+        frappe._dict(json.loads(row.data))
+        for row in frappe.get_all(
+            "Deleted Document",
+            filters={"deleted_doctype": "QC Metal Detector Log", "restored": 0},
+            fields=["data"],
+        )
+    ]
+    return sorted(deleted, key=lambda log: (cstr(log.record_date), cstr(log.modified)), reverse=True)
+
+
+def _link_logs(logs):
+    """Give a log whose ID the database does not match to its detector (a
+    leading space, a tab or a line break around it) the detector's name."""
+    for log in logs:
+        raw = cstr(log.metal_detector_id)
+        if raw == raw.strip() or frappe.db.exists("Metal Detector", raw):
+            continue
+        name = frappe.db.exists("Metal Detector", raw.strip())
+        if name:
+            frappe.db.sql(
+                "update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", (name, log.name)
+            )

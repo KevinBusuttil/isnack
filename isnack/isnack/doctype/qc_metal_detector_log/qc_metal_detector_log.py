@@ -15,12 +15,17 @@ from isnack.utils import earlier_layout
 RETIRED_FIELDS = ("calibration_certificate",)
 RETIRED_TEST_FIELDS = ("sensitivity_setting", "test_remarks")
 
+# What the log takes from the Metal Detector picked (fetch_from).
+DETECTOR_FIELDS = ("detector_make_model", "last_calibration_date", "next_calibration_date")
+
 
 class QCMetalDetectorLog(Document):
     def validate(self):
         earlier_layout.keep_mark(self)
         if not earlier_layout.in_earlier_layout(self):
             self.refuse_retired_values()
+        self.check_metal_detector()
+        self.keep_details_verified_under()
 
         tests = self.tests or []
         if tests:
@@ -40,6 +45,40 @@ class QCMetalDetectorLog(Document):
                     holder.set(fieldname, None)
         if any(holder.get(fieldname) for holder, fieldnames in holders for fieldname in fieldnames):
             frappe.throw(_("This page is out of date. Reload it and enter the log again."))
+
+    def check_metal_detector(self):
+        """The Metal Detector ID names a Metal Detector. Frappe does not check a
+        Link that fields are fetched from (v15): it reads the record's values,
+        and when there is none it fetches nothing and says nothing, keeping
+        whatever Make/Model and dates were sent (a page loaded before the
+        change, the API, a draft whose ID could not be made a detector)."""
+        if self.metal_detector_id and not frappe.db.exists("Metal Detector", self.metal_detector_id):
+            frappe.throw(
+                _("Could not find Metal Detector: {0}. Pick the metal detector again.").format(
+                    frappe.bold(self.metal_detector_id)
+                ),
+                frappe.LinkValidationError,
+            )
+
+    def keep_details_verified_under(self):
+        """An amendment of the same detector keeps the Make/Model and calibration
+        dates the log it amends was verified under: Frappe fetches the
+        detector's current ones into a new record. Another detector picked on
+        it gives that detector's."""
+        if not (self.is_new() and self.amended_from and self.metal_detector_id):
+            return
+        amended = frappe.db.get_value(
+            self.doctype, self.amended_from, ["metal_detector_id", *DETECTOR_FIELDS], as_dict=True
+        )
+        if amended and _same_id(amended.metal_detector_id, self.metal_detector_id):
+            for fieldname in DETECTOR_FIELDS:
+                self.set(fieldname, amended.get(fieldname))
+
+
+def _same_id(one, other) -> bool:
+    """The same Metal Detector ID, case and surrounding spaces aside (a log
+    made before 2026-11 may spell it otherwise than its detector)."""
+    return cstr(one).strip().casefold() == cstr(other).strip().casefold()
 
 
 def belongs_to_earlier_layout(log, tests=()) -> bool:

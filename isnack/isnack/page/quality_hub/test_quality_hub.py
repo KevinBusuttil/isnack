@@ -7,6 +7,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -564,29 +566,66 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 		self.assertEqual(re.findall(r'fieldname: "(\w+)"', self.child), ["test_time", "test_piece_type", "test_piece_size_mm", "detected"])
 		self.assertIn('{ fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 }', self.child)
 
+	def _method(self, signature):
+		start = self.script.index(f"    {signature} {{")
+		return self.script[start : self.script.index("\n    }\n", start) + 6]
+
 	def test_a_row_holding_only_its_defaults_is_not_a_test(self):
 		# rows saved and rows asked for a required value: those entered, not
 		# those holding only a column's default
-		block = self.script[self.script.index("    get_non_empty_child_rows(dialog, table) {") :]
-		block = block[: block.index("\n    }\n")]
-		self.assertIn(".filter((row) => this.child_row_entered(row, entered))", block)
-		block = self.script[self.script.index("    missing_child_values(dialog, table) {") :]
-		block = block[: block.index("\n    }\n")]
-		self.assertIn("this.child_row_entered(row, entered) && !this.child_row_has_values(row, [field])", block)
-		block = self.script[self.script.index("    child_row_entered(row, fields) {") :]
-		block = block[: block.index("\n    }\n")]
-		self.assertIn("return row[field.fieldname] !== value;", block)
+		self.assertIn(".filter((row) => this.child_row_entered(row, entered))", self._method("get_non_empty_child_rows(dialog, table)"))
+		self.assertIn(
+			"this.child_row_entered(row, entered) && !this.child_row_has_values(row, [field])",
+			self._method("missing_child_values(dialog, table)"),
+		)
+		self.assertEqual(
+			self._method("child_row_entered(row, fields)"),
+			"""    child_row_entered(row, fields) {
+        return this.child_row_has_values(row, fields.filter((field) => {
+            if (field.default === undefined) return true;
+            const value = typeof field.default === "function" ? field.default() : field.default;
+            return row[field.fieldname] !== value;
+        }));
+    }""",
+		)
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_which_rows_are_tests(self):
+		# the dialog's own code, run on the Tests' columns
+		methods = "\n".join(self._method(m) for m in ("child_row_entered(row, fields)", "child_row_has_values(row, fields)"))
+		script = (
+			f"class Editor {{\n{methods}\n}}\n"
+			"const editor = new Editor();\n"
+			"const fields = [{fieldname: 'test_time', fieldtype: 'Time'}, {fieldname: 'test_piece_type', fieldtype: 'Select'},"
+			" {fieldname: 'test_piece_size_mm', fieldtype: 'Float', default: 0.2}, {fieldname: 'detected', fieldtype: 'Check'},"
+			" {fieldname: 'size_from_a_function', fieldtype: 'Float', default: () => 1}];\n"
+			"const blank = {test_time: '', test_piece_type: '', test_piece_size_mm: 0.2, detected: 0, size_from_a_function: 1};\n"
+			"const rows = [blank, {...blank, test_time: '08:00'}, {...blank, test_piece_type: 'Fe'}, {...blank, detected: 1},"
+			" {...blank, test_piece_size_mm: 0.3}, {...blank, test_piece_size_mm: ''}, {...blank, size_from_a_function: 2}];\n"
+			"console.log(JSON.stringify(rows.map((row) => editor.child_row_entered(row, fields))));\n"
+		)
+		out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+		# only the defaults, then a time, a type, Detected, another size; a size
+		# cleared is no value; a default from a function is a default
+		self.assertEqual(json.loads(out), [False, True, True, True, True, False, True])
 
 	def test_a_detector_emptied_by_hand_empties_its_details(self):
 		# a dialog's Link misses being emptied after a first pick (Frappe v15):
 		# the dialog sets it empty, which empties the fields fetched from it
-		block = self.script[self.script.index("    open_new_record(doctype) {") :]
-		block = block[: block.index("\n    }\n")]
-		self.assertIn("this.empty_cleared_links(dialog);", block)
-		block = self.script[self.script.index("    empty_cleared_links(dialog) {") :]
-		block = block[: block.index("\n    }\n")]
-		self.assertIn('dialog.fields.filter((df) => df.fetch_from).map((df) => df.fetch_from.split(".")[0])', block)
-		self.assertIn('if (!field.$input.val()) field.set_value("");', block)
+		self.assertIn("this.empty_cleared_links(dialog);", self._method("open_new_record(doctype)"))
+		self.assertEqual(
+			self._method("empty_cleared_links(dialog)"),
+			"""    empty_cleared_links(dialog) {
+        const sources = new Set(dialog.fields.filter((df) => df.fetch_from).map((df) => df.fetch_from.split(".")[0]));
+        sources.forEach((fieldname) => {
+            const field = dialog.get_field(fieldname);
+            if (!field || !field.$input) return;
+            field.$input.on("blur", () => {
+                if (!field.$input.val()) field.set_value("");
+            });
+        });
+    }""",
+		)
 
 	def test_the_detectors_are_a_quick_link(self):
 		self.assertIn('data-doctype="Metal Detector">${__("Metal Detectors")}</a>', self.script)

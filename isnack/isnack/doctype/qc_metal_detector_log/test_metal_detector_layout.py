@@ -47,6 +47,8 @@ class _Log(_Row):
 	meta = SimpleNamespace(has_field=lambda fieldname: True)
 	validate = QCMetalDetectorLog.validate
 	refuse_retired_values = QCMetalDetectorLog.refuse_retired_values
+	check_metal_detector = QCMetalDetectorLog.check_metal_detector
+	keep_details_verified_under = QCMetalDetectorLog.keep_details_verified_under
 
 	def is_new(self):
 		return not self.saved
@@ -118,6 +120,64 @@ class TestTheLog(unittest.TestCase):
 		doc.validate()
 		self.assertEqual(doc.calibration_certificate, "/files/cert.pdf")
 		self.assertNotIn("earlier_layout", doc)
+
+
+@patch("frappe.db.exists", side_effect=lambda doctype, name: name.strip().upper() if name.strip().upper() in ("MD-1", "MD-2") else None)
+class TestTheDetector(unittest.TestCase):
+	"""Frappe does not check a Link that fields are fetched from (v15): the
+	log checks its Metal Detector ID names a Metal Detector."""
+
+	def test_a_detector_there_is(self, exists):
+		doc = _log(_test(), metal_detector_id="MD-1")
+		doc.validate()
+		exists.assert_called_once_with("Metal Detector", "MD-1")
+		# spelled otherwise, as the database matches it
+		_log(_test(), metal_detector_id="md-2 ").validate()
+
+	def test_a_detector_there_is_not(self, exists):
+		# a page from before the change, the API, a draft whose ID was not made a detector
+		for doc in (_log(_test(), metal_detector_id="MD-3", detector_make_model="typed"), _log(_test(), earlier_layout=1, metal_detector_id="<MD-8>")):
+			with self.assertRaisesRegex(frappe.LinkValidationError, "Could not find Metal Detector"):
+				doc.validate()
+
+	def test_no_detector(self, exists):
+		_log(_test(), metal_detector_id=None).validate()
+		exists.assert_not_called()
+
+
+_VERIFIED = {"metal_detector_id": "md-1 ", "detector_make_model": "Loma IQ3", "last_calibration_date": "2026-05-01", "next_calibration_date": "2026-11-30"}
+_NOW = {"detector_make_model": "Loma IQ4", "last_calibration_date": "2026-11-30", "next_calibration_date": "2027-05-30"}
+
+
+@patch("frappe.db.exists", side_effect=lambda doctype, name: name)
+class TestAnAmendment(unittest.TestCase):
+	"""Frappe fetches the detector's details into a new record: an amendment of
+	the same detector keeps those the log it amends was verified under."""
+
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(_VERIFIED) if isinstance(fields, list) else 0)
+	def test_of_the_same_detector_keeps_them(self, get_value, _exists):
+		doc = _log(_test(), amended_from="QCH-2026-00010", metal_detector_id="MD-1", **_NOW)
+		doc.validate()
+		self.assertIn(
+			call("QC Metal Detector Log", "QCH-2026-00010", ["metal_detector_id", "detector_make_model", "last_calibration_date", "next_calibration_date"], as_dict=True),
+			get_value.call_args_list,
+		)
+		self.assertEqual(
+			(doc.detector_make_model, doc.last_calibration_date, doc.next_calibration_date), ("Loma IQ3", "2026-05-01", "2026-11-30")
+		)
+
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(_VERIFIED) if isinstance(fields, list) else 0)
+	def test_of_another_detector_takes_its(self, _get_value, _exists):
+		doc = _log(_test(), amended_from="QCH-2026-00010", metal_detector_id="MD-2", **_NOW)
+		doc.validate()
+		self.assertEqual(doc.detector_make_model, "Loma IQ4")
+
+	@patch("frappe.db.get_value")
+	def test_a_log_saved_again_or_new_takes_the_detectors(self, get_value, _exists):
+		for doc in (_log(_test(), metal_detector_id="MD-1", saved=_log(), **_NOW), _log(_test(), metal_detector_id="MD-1", **_NOW)):
+			doc.validate()
+			self.assertEqual(doc.last_calibration_date, "2026-11-30")
+		get_value.assert_not_called()
 
 
 class TestTheMarkStays(unittest.TestCase):
@@ -273,12 +333,13 @@ class _Inserted(list):
 		return _Doc()
 
 
-def _log_row(detector_id, docstatus=1, **values):
+def _log_row(detector_id, docstatus=1, name=None, **values):
 	row = dict.fromkeys(seed_module.LOG_FIELDS)
 	row.update(values)
-	return frappe._dict(metal_detector_id=detector_id, docstatus=docstatus, **row)
+	return frappe._dict(name=name or f"QCH-{detector_id}", metal_detector_id=detector_id, docstatus=docstatus, **row)
 
 
+@patch("frappe.db.sql")
 @patch("frappe.clear_last_message")
 @patch("frappe.db.rollback")
 @patch("frappe.db.savepoint")
@@ -286,8 +347,11 @@ def _log_row(detector_id, docstatus=1, **values):
 @patch("frappe.get_all")
 @patch("frappe.db.table_exists", return_value=True)
 class TestDetectorsFromTheLogs(unittest.TestCase):
-	def _seed(self, get_all, logs, refuse=()):
-		get_all.return_value = logs
+	def _seed(self, get_all, logs, refuse=(), deleted=()):
+		get_all.side_effect = lambda doctype, **kw: {
+			"QC Metal Detector Log": logs,
+			"Deleted Document": [frappe._dict(data=json.dumps(d)) for d in deleted],
+		}[doctype]
 		inserted = _Inserted(refuse)
 		with patch("frappe.get_doc", inserted.get_doc):
 			seed_module.execute()
@@ -300,16 +364,17 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 			_log_row("MD-2", docstatus=0, detector_make_model="  "),
 			_log_row("MD-1", detector_make_model="Loma IQ3", last_calibration_date=d(2026, 4, 1), next_calibration_date=d(2026, 10, 1), calibration_certificate="/files/md1.pdf"),
 			_log_row("MD-2", detector_make_model="Mettler Profile", next_calibration_date=d(2027, 1, 15)),
+			_log_row("MD-1", detector_make_model="Loma IQ2", calibration_certificate="/files/md1-2025.pdf"),
 		]
 
 		inserted = self._seed(get_all, logs)
 
 		self.assertEqual(
-			get_all.call_args,
+			get_all.call_args_list[0],
 			call(
 				"QC Metal Detector Log",
 				filters={"metal_detector_id": ["is", "set"]},
-				fields=["metal_detector_id", "docstatus", *seed_module.LOG_FIELDS],
+				fields=["name", "metal_detector_id", "docstatus", *seed_module.LOG_FIELDS],
 				order_by="record_date desc, modified desc",
 			),
 		)
@@ -340,6 +405,46 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 		inserted = self._seed(get_all, [_log_row(" md-3 ", detector_make_model="A"), _log_row("MD-3", detector_make_model="B"), _log_row("   ")])
 		self.assertEqual(inserted, [{"doctype": "Metal Detector", "metal_detector_id": "md-3", "make_model": "A"}])
 
+	def test_a_log_deleted_before_gives_its_detector_and_details_only_when_no_log_there_is_does(self, _table, get_all, *_db):
+		# a restore needs its detector
+		deleted = [
+			{"doctype": "QC Metal Detector Log", "name": "QCH-20", "metal_detector_id": "MD-10", "detector_make_model": "Deleted", "record_date": "2026-11-01", "modified": "2026-11-01 08:00:00"},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-21", "metal_detector_id": "MD-11", "detector_make_model": "Older", "record_date": "2026-10-01", "modified": "2026-10-01 08:00:00"},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-22", "metal_detector_id": "MD-11", "detector_make_model": "Newer", "last_calibration_date": "2026-09-01", "record_date": "2026-10-20", "modified": "2026-10-20 08:00:00"},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-23", "metal_detector_id": None},
+		]
+		inserted = self._seed(get_all, [_log_row("MD-10", detector_make_model="Live")], deleted=deleted)
+		self.assertEqual(get_all.call_args_list[1].kwargs["filters"], {"deleted_doctype": "QC Metal Detector Log", "restored": 0})
+		self.assertEqual(
+			inserted,
+			[
+				{"doctype": "Metal Detector", "metal_detector_id": "MD-10", "make_model": "Live"},
+				{"doctype": "Metal Detector", "metal_detector_id": "MD-11", "make_model": "Newer", "last_calibration_date": "2026-09-01", "next_calibration_date": None},
+			],
+		)
+
+	def test_a_log_whose_id_the_database_does_not_match_is_given_the_detectors_name(self, _table, get_all, exists, _savepoint, _rollback, _clear, sql):
+		# the database ignores case and trailing spaces, not a leading space,
+		# a tab or a line break
+		made = {"MD-12": "MD-12"}
+		exists.side_effect = lambda doctype, name: made.get(name.rstrip(" ").upper()) if not name.startswith((" ", "\t")) and not name.endswith(("\t", "\n")) else None
+		logs = [
+			_log_row("MD-12", name="QCH-30"),
+			_log_row("md-12 ", name="QCH-31"),  # matched as it is
+			_log_row(" MD-12", name="QCH-32"),
+			_log_row("MD-12\t", name="QCH-33"),
+			_log_row(" <MD-13>", name="QCH-34"),  # no detector made of it
+		]
+		with patch("builtins.print"):
+			self._seed(get_all, logs, refuse=("<MD-13>",))
+		self.assertEqual(
+			[c.args for c in sql.call_args_list],
+			[
+				("update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", ("MD-12", "QCH-32")),
+				("update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", ("MD-12", "QCH-33")),
+			],
+		)
+
 	def test_a_cancelled_log_gives_details_only_when_no_other_does(self, _table, get_all, *_db):
 		logs = [
 			_log_row("MD-4", docstatus=2, detector_make_model="As cancelled", calibration_certificate="/files/md4.pdf"),
@@ -360,7 +465,7 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 		inserted = self._seed(get_all, [_log_row("MD-6"), _log_row("MD-7")])
 		self.assertEqual([d["metal_detector_id"] for d in inserted], ["MD-7"])
 
-	def test_an_id_that_cannot_name_a_record_is_reported_and_left_out(self, _table, get_all, _exists, savepoint, rollback, clear):
+	def test_an_id_that_cannot_name_a_record_is_reported_and_left_out(self, _table, get_all, _exists, savepoint, rollback, clear, _sql):
 		with patch("builtins.print") as printed:
 			inserted = self._seed(get_all, [_log_row("<MD-8>"), _log_row("MD-9")], refuse=("<MD-8>",))
 		self.assertEqual([d["metal_detector_id"] for d in inserted], ["MD-9"])
