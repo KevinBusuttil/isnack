@@ -534,10 +534,11 @@ class TestWeightCheckSchema(unittest.TestCase):
 
 
 class TestMetalDetectorLogDialog(unittest.TestCase):
-	"""Since 2026-11 the log picks its detector from the Metal Detectors and
-	takes its Make/Model and calibration dates; the Calibration Certificate is
-	kept on the Metal Detector, and each test's Sensitivity Setting and Remarks
-	came off. Test Piece Size starts at 0.2 mm."""
+	"""Since 2026-11 the log picks its detector from the Metal Detectors used
+	on its factory line and takes its Make/Model and calibration dates; the
+	Calibration Certificate is kept on the Metal Detector, and the Corrective
+	Action and each test's Sensitivity Setting and Remarks came off. Test Piece
+	Size starts at 0.2 mm."""
 
 	def setUp(self):
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
@@ -557,9 +558,10 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 				self.parent,
 			)
 		self.assertNotIn('fieldname: "calibration_certificate"', self.parent)
+		self.assertNotIn('fieldname: "corrective_action"', self.parent)
 		self.assertEqual(
-			re.findall(r'fieldname: "(\w+)"', self.parent)[-8:],
-			["sb_equipment", "metal_detector_id", "detector_make_model", "last_calibration_date", "next_calibration_date", "cb_equipment", "corrective_action", "remarks"],
+			re.findall(r'fieldname: "(\w+)"', self.parent)[-7:],
+			["sb_equipment", "metal_detector_id", "detector_make_model", "last_calibration_date", "next_calibration_date", "cb_equipment", "remarks"],
 		)
 
 	def test_the_tests(self):
@@ -629,6 +631,78 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 
 	def test_the_detectors_are_a_quick_link(self):
 		self.assertIn('data-doctype="Metal Detector">${__("Metal Detectors")}</a>', self.script)
+
+	def test_the_detectors_are_those_used_on_the_line(self):
+		self.assertIn(
+			'if (doctype === "QC Metal Detector Log") this.setup_metal_detector_dialog(dialog);',
+			self._method("setup_dialog_specific_behaviour(dialog, doctype)"),
+		)
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_the_detectors_offered_and_one_taken_off(self):
+		# the dialog's own code, on a dialog and a database of detectors and lines
+		start = self.script.index("isnack.quality_hub.metal_detectors_on_line =")
+		on_line = self.script[start : self.script.index(";\n", start) + 2]
+		methods = "\n".join(self._method(m) for m in ("setup_metal_detector_dialog(dialog)", "drop_detector_off_line(dialog)"))
+		script = (
+			"const isnack = {quality_hub: {}};\n"
+			"const __ = (msg, args) => msg.replace(/\\{(\\d)\\}/g, (_m, i) => args[i]);\n"
+			"const lines = {'MD-1': ['CORN EXTRUSION', 'FRYING'], 'MD-2': ['RICE EXTRUSION']};\n"
+			"const asked = [], alerts = [];\n"
+			"const frappe = {show_alert: (a) => alerts.push(a.message), db: {get_list: (doctype, args) => {\n"
+			"  asked.push([doctype, args]);\n"
+			"  const [[, , name], [, , , line]] = args.filters;\n"
+			"  return Promise.resolve((lines[name] || []).includes(line) ? [{name}] : []);\n"
+			"}}};\n"
+			f"{on_line}\n"
+			f"class Hub {{\n{methods}\n}}\n"
+			"const make_dialog = (values) => {\n"
+			"  const fields = {factory_line: {df: {onchange: () => values.line_onchange = (values.line_onchange || 0) + 1}}, metal_detector_id: {df: {}}};\n"
+			"  return {get_field: (f) => fields[f], get_value: (f) => values[f], set_value: (f, v) => { values[f] = v; }, fields};\n"
+			"};\n"
+			"const flush = () => new Promise((r) => setTimeout(r, 0));\n"
+			"(async () => {\n"
+			"  const out = {};\n"
+			"  const values = {factory_line: '', metal_detector_id: ''};\n"
+			"  const dialog = make_dialog(values);\n"
+			"  new Hub().setup_metal_detector_dialog(dialog);\n"
+			"  const query = dialog.fields.metal_detector_id.get_query;\n"
+			"  out.no_line = query();\n"
+			"  values.factory_line = 'FRYING';\n"
+			"  out.frying = query();\n"
+			"  dialog.fields.factory_line.df.onchange();\n"  # no detector yet: nothing asked
+			"  out.asked_without_detector = asked.length;\n"
+			"  values.metal_detector_id = 'MD-1'; values.factory_line = 'CORN EXTRUSION';\n"
+			"  dialog.fields.factory_line.df.onchange(); await flush();\n"
+			"  out.kept = values.metal_detector_id; out.asked = asked[0];\n"
+			"  values.factory_line = 'RICE EXTRUSION';\n"
+			"  dialog.fields.factory_line.df.onchange(); await flush();\n"
+			"  out.taken_off = values.metal_detector_id; out.alerts = alerts.slice();\n"
+			"  values.metal_detector_id = 'MD-2'; values.factory_line = 'FRYING';\n"
+			"  dialog.fields.factory_line.df.onchange(); values.factory_line = 'RICE EXTRUSION'; await flush();\n"
+			"  out.changed_again = values.metal_detector_id;\n"
+			"  out.line_onchange = values.line_onchange;\n"
+			"  console.log(JSON.stringify(out));\n"
+			"})();\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		# every detector before a line is picked (no filter: no empty "Filters
+		# applied for" under them); then those used on it
+		self.assertEqual(out["no_line"], {})
+		self.assertEqual(out["frying"], {"filters": [["Metal Detector Factory Line", "factory_line", "=", "FRYING"]]})
+		self.assertEqual(out["asked_without_detector"], 0)
+		self.assertEqual(
+			out["asked"],
+			["Metal Detector", {"filters": [["name", "=", "MD-1"], ["Metal Detector Factory Line", "factory_line", "=", "CORN EXTRUSION"]], "limit": 1}],
+		)
+		# used on the new line: kept; not: taken off, and the user told
+		self.assertEqual(out["kept"], "MD-1")
+		self.assertEqual(out["taken_off"], "")
+		self.assertEqual(out["alerts"], ["MD-1 is not used on RICE EXTRUSION: pick a metal detector on that line."])
+		# the line changed again before the answer came: left to that change
+		self.assertEqual(out["changed_again"], "MD-2")
+		# the line's own onchange still runs
+		self.assertEqual(out["line_onchange"], 4)
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):

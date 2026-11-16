@@ -23,3 +23,5 @@ isnack.patches.v1_0.qc_packaging_check_earlier_layout
 isnack.patches.v1_0.qc_weight_check_earlier_layout
 isnack.patches.v1_0.metal_detectors_from_qc_logs
 isnack.patches.v1_0.qc_metal_detector_log_earlier_layout
+isnack.patches.v1_0.metal_detector_lines_from_qc_logs
+isnack.patches.v1_0.qc_metal_detector_log_corrective_action

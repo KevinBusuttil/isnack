@@ -10,9 +10,10 @@ from isnack.utils import earlier_layout
 
 # Taken off the log in 2026-11: the calibration certificate (the Metal Detector
 # keeps it since, with the Make/Model and calibration dates the log takes from
-# it) and each test's sensitivity setting and remarks. The logs made before
-# that keep them (earlier_layout), in their Earlier Layout sections.
-RETIRED_FIELDS = ("calibration_certificate",)
+# it), the corrective action, and each test's sensitivity setting and remarks.
+# The logs made before that keep them (earlier_layout), in their Earlier Layout
+# sections.
+RETIRED_FIELDS = ("calibration_certificate", "corrective_action")
 RETIRED_TEST_FIELDS = ("sensitivity_setting", "test_remarks")
 
 # What the log takes from the Metal Detector picked (fetch_from).
@@ -25,6 +26,7 @@ class QCMetalDetectorLog(Document):
         if not earlier_layout.in_earlier_layout(self):
             self.refuse_retired_values()
         self.check_metal_detector()
+        self.check_detector_on_line()
         self.keep_details_verified_under()
 
         tests = self.tests or []
@@ -35,8 +37,8 @@ class QCMetalDetectorLog(Document):
 
     def refuse_retired_values(self):
         """A form loaded before the change (desk, Quality Hub) still offers the
-        certificate and each test's sensitivity setting and remarks; a log made
-        since would keep them out of sight."""
+        certificate, the corrective action and each test's sensitivity setting
+        and remarks; a log made since would keep them out of sight."""
         holders = [(self, RETIRED_FIELDS)] + [(test, RETIRED_TEST_FIELDS) for test in self.tests or []]
         for holder, fieldnames in holders:
             for fieldname in fieldnames:
@@ -60,6 +62,41 @@ class QCMetalDetectorLog(Document):
                 frappe.LinkValidationError,
             )
 
+    def check_detector_on_line(self):
+        """The Metal Detector picked is used on the log's factory line (one of
+        its Factory Lines). The Quality Hub and the form offer only those, but
+        a Link takes any detector typed in full. An amendment keeps the
+        detector and line of the log it amends, as it keeps its calibration:
+        the detector may have moved to another line since."""
+        if not (self.metal_detector_id and self.factory_line):
+            return
+        if frappe.db.exists(
+            "Metal Detector Factory Line",
+            {
+                "parenttype": "Metal Detector",
+                "parentfield": "factory_lines",
+                "parent": self.metal_detector_id,
+                "factory_line": self.factory_line,
+            },
+        ):
+            return
+        if self.amended_from:
+            amended = frappe.db.get_value(
+                self.doctype, self.amended_from, ["metal_detector_id", "factory_line"], as_dict=True
+            )
+            if (
+                amended
+                and _same_id(amended.metal_detector_id, self.metal_detector_id)
+                and _same_id(amended.factory_line, self.factory_line)
+            ):
+                return
+        frappe.throw(
+            _("Metal Detector {0} is not used on {1}. Pick a metal detector on that line, or add {1} to the Factory Lines of {0}.").format(
+                frappe.bold(self.metal_detector_id), frappe.bold(self.factory_line)
+            ),
+            title=_("Not on this line"),
+        )
+
     def keep_details_verified_under(self):
         """An amendment of the same detector keeps the Make/Model and calibration
         dates the log it amends was verified under: Frappe fetches the
@@ -77,16 +114,18 @@ class QCMetalDetectorLog(Document):
 
 
 def _same_id(one, other) -> bool:
-    """The same Metal Detector ID, case and surrounding spaces aside (a log
-    made before 2026-11 may spell it otherwise than its detector)."""
+    """The same Metal Detector ID (or Factory Line), case and surrounding
+    spaces aside (a log made before 2026-11 may spell it otherwise than its
+    detector)."""
     return cstr(one).strip().casefold() == cstr(other).strip().casefold()
 
 
 def belongs_to_earlier_layout(log, tests=()) -> bool:
     """Whether a log made before 2026-11 (a row or a dict, and its tests) keeps
     the earlier layout: a submitted or cancelled one does, and so does a draft
-    holding a calibration certificate or a test's sensitivity setting or
-    remarks. A draft with none of them is finished the new way."""
+    holding a calibration certificate, a corrective action or a test's
+    sensitivity setting or remarks. A draft with none of them is finished the
+    new way."""
     return (
         cint(log.get("docstatus")) != 0
         or any(cstr(log.get(fieldname)).strip() for fieldname in RETIRED_FIELDS)
