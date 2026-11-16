@@ -264,22 +264,23 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Equipment ───────────────────────────────────────────
             { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
-            { fieldname: "metal_detector_id", fieldtype: "Data", label: __("Metal Detector ID") },
-            { fieldname: "detector_make_model", fieldtype: "Data", label: __("Make/Model") },
-            { fieldname: "last_calibration_date", fieldtype: "Date", label: __("Last Calibration Date") },
-            { fieldname: "next_calibration_date", fieldtype: "Date", label: __("Next Calibration Date") },
+            { fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" },
+            // filled from the Metal Detector picked, as on the form (the
+            // Calibration Certificate is kept on the Metal Detector since 2026-11)
+            { fieldname: "detector_make_model", fieldtype: "Data", label: __("Make/Model"), read_only: 1, fetch_from: "metal_detector_id.make_model" },
+            { fieldname: "last_calibration_date", fieldtype: "Date", label: __("Last Calibration Date"), read_only: 1, fetch_from: "metal_detector_id.last_calibration_date" },
+            { fieldname: "next_calibration_date", fieldtype: "Date", label: __("Next Calibration Date"), read_only: 1, fetch_from: "metal_detector_id.next_calibration_date" },
             { fieldname: "cb_equipment", fieldtype: "Column Break" },
-            { fieldname: "calibration_certificate", fieldtype: "Attach", label: __("Calibration Certificate") },
             { fieldname: "corrective_action", fieldtype: "Small Text", label: __("Corrective Action") },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
+        // (each test's Sensitivity Setting and Remarks came off in 2026-11)
         child_fields: [
             { fieldname: "test_time", fieldtype: "Time", label: __("Test Time") },
             { fieldname: "test_piece_type", fieldtype: "Select", label: __("Test Piece Type"), options: "\nFe\nNon-Fe\nStainless" },
-            { fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)") },
+            // as on the form; a row holding nothing else is not a test
+            { fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 },
             { fieldname: "detected", fieldtype: "Check", label: __("Detected (Pass)") },
-            { fieldname: "sensitivity_setting", fieldtype: "Data", label: __("Sensitivity Setting") },
-            { fieldname: "test_remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
     },
     "QC Weight Check": {
@@ -566,6 +567,7 @@ isnack.quality_hub.QualityHub = class {
                             <a class="btn btn-sm btn-default qh-ql-violet qh-quick-link" href="#" data-doctype="QC Tasting Record">${__("Tasting Records")}</a>
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Packaging Check">${__("Packaging Checks")}</a>
                             <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="QC Metal Detector Log">${__("Metal Detector Logs")}</a>
+                            <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="Metal Detector">${__("Metal Detectors")}</a>
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Weight Check">${__("Weight Checks")}</a>
                             <a class="btn btn-sm btn-default qh-ql-blue qh-quick-link" href="#" data-page="quality-explorer">${__("Quality Explorer")}</a>
                         </div>
@@ -680,9 +682,26 @@ isnack.quality_hub.QualityHub = class {
         });
         dialog.show();
         dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
+        this.empty_cleared_links(dialog);
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
         tables.forEach((table) => this.render_child_editor(dialog, table));
+    }
+
+    /** A Link the dialog fills fields from (``fetch_from``: the Metal Detector,
+     *  the tasting's batch), emptied by hand, empties them too. A dialog has no
+     *  document: its Link compares what is typed with the value before last,
+     *  so emptying it after a first pick goes unseen, and the fields keep the
+     *  details of what was picked (Frappe v15). Set it empty, which empties them. */
+    empty_cleared_links(dialog) {
+        const sources = new Set(dialog.fields.filter((df) => df.fetch_from).map((df) => df.fetch_from.split(".")[0]));
+        sources.forEach((fieldname) => {
+            const field = dialog.get_field(fieldname);
+            if (!field || !field.$input) return;
+            field.$input.on("blur", () => {
+                if (!field.$input.val()) field.set_value("");
+            });
+        });
     }
 
     /** The child tables a dialog edits: the record's own (``child_table_field``),
@@ -1346,6 +1365,7 @@ isnack.quality_hub.QualityHub = class {
         // a column worked out from the others is the server's to work out
         const entered = table.child_fields.filter((field) => !field.compute);
         return (dialog.__child_rows[table.child_table_field] || [])
+            .filter((row) => this.child_row_entered(row, entered))
             .map((row) => {
                 const clean_row = {};
                 entered.forEach((field) => {
@@ -1354,8 +1374,7 @@ isnack.quality_hub.QualityHub = class {
                         : row[field.fieldname];
                 });
                 return clean_row;
-            })
-            .filter((row) => this.child_row_has_values(row, entered));
+            });
     }
 
     /** The dialog picks a Rating in stars (1-5); Frappe stores the fraction of
@@ -1375,10 +1394,21 @@ isnack.quality_hub.QualityHub = class {
             .map((field) => ({
                 label: field.label,
                 rows: rows
-                    .map((row, index) => (this.child_row_has_values(row, entered) && !this.child_row_has_values(row, [field]) ? index + 1 : null))
+                    .map((row, index) => (this.child_row_entered(row, entered) && !this.child_row_has_values(row, [field]) ? index + 1 : null))
                     .filter(Boolean),
             }))
             .filter(({ rows: missing_rows }) => missing_rows.length);
+    }
+
+    /** Whether the user entered a row: a value in it other than a column's
+     *  default. A new row holds the defaults (make_empty_child_row): with
+     *  nothing else, it is left out, as an empty one is. */
+    child_row_entered(row, fields) {
+        return this.child_row_has_values(row, fields.filter((field) => {
+            if (field.default === undefined) return true;
+            const value = typeof field.default === "function" ? field.default() : field.default;
+            return row[field.fieldname] !== value;
+        }));
     }
 
     child_row_has_values(row, fields) {

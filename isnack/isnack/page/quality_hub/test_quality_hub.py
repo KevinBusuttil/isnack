@@ -7,6 +7,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -529,6 +531,104 @@ class TestWeightCheckSchema(unittest.TestCase):
 		self.assertIn('class="qh-child-reqd"', script)
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.css")) as fh:
 			self.assertIn(".qh-child-reqd {", fh.read())
+
+
+class TestMetalDetectorLogDialog(unittest.TestCase):
+	"""Since 2026-11 the log picks its detector from the Metal Detectors and
+	takes its Make/Model and calibration dates; the Calibration Certificate is
+	kept on the Metal Detector, and each test's Sensitivity Setting and Remarks
+	came off. Test Piece Size starts at 0.2 mm."""
+
+	def setUp(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			self.script = fh.read()
+		start = self.script.index('"QC Metal Detector Log": {')
+		self.parent, self.child = self.script[start : self.script.index("\n    },\n", start)].split("child_fields: [")
+
+	def test_the_detector_is_picked_and_its_details_filled_in(self):
+		self.assertIn('{ fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" }', self.parent)
+		for fieldname, fieldtype, label, source in (
+			("detector_make_model", "Data", "Make/Model", "make_model"),
+			("last_calibration_date", "Date", "Last Calibration Date", "last_calibration_date"),
+			("next_calibration_date", "Date", "Next Calibration Date", "next_calibration_date"),
+		):
+			self.assertIn(
+				f'{{ fieldname: "{fieldname}", fieldtype: "{fieldtype}", label: __("{label}"), read_only: 1, fetch_from: "metal_detector_id.{source}" }}',
+				self.parent,
+			)
+		self.assertNotIn('fieldname: "calibration_certificate"', self.parent)
+		self.assertEqual(
+			re.findall(r'fieldname: "(\w+)"', self.parent)[-8:],
+			["sb_equipment", "metal_detector_id", "detector_make_model", "last_calibration_date", "next_calibration_date", "cb_equipment", "corrective_action", "remarks"],
+		)
+
+	def test_the_tests(self):
+		self.assertEqual(re.findall(r'fieldname: "(\w+)"', self.child), ["test_time", "test_piece_type", "test_piece_size_mm", "detected"])
+		self.assertIn('{ fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 }', self.child)
+
+	def _method(self, signature):
+		start = self.script.index(f"    {signature} {{")
+		return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+	def test_a_row_holding_only_its_defaults_is_not_a_test(self):
+		# rows saved and rows asked for a required value: those entered, not
+		# those holding only a column's default
+		self.assertIn(".filter((row) => this.child_row_entered(row, entered))", self._method("get_non_empty_child_rows(dialog, table)"))
+		self.assertIn(
+			"this.child_row_entered(row, entered) && !this.child_row_has_values(row, [field])",
+			self._method("missing_child_values(dialog, table)"),
+		)
+		self.assertEqual(
+			self._method("child_row_entered(row, fields)"),
+			"""    child_row_entered(row, fields) {
+        return this.child_row_has_values(row, fields.filter((field) => {
+            if (field.default === undefined) return true;
+            const value = typeof field.default === "function" ? field.default() : field.default;
+            return row[field.fieldname] !== value;
+        }));
+    }""",
+		)
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_which_rows_are_tests(self):
+		# the dialog's own code, run on the Tests' columns
+		methods = "\n".join(self._method(m) for m in ("child_row_entered(row, fields)", "child_row_has_values(row, fields)"))
+		script = (
+			f"class Editor {{\n{methods}\n}}\n"
+			"const editor = new Editor();\n"
+			"const fields = [{fieldname: 'test_time', fieldtype: 'Time'}, {fieldname: 'test_piece_type', fieldtype: 'Select'},"
+			" {fieldname: 'test_piece_size_mm', fieldtype: 'Float', default: 0.2}, {fieldname: 'detected', fieldtype: 'Check'},"
+			" {fieldname: 'size_from_a_function', fieldtype: 'Float', default: () => 1}];\n"
+			"const blank = {test_time: '', test_piece_type: '', test_piece_size_mm: 0.2, detected: 0, size_from_a_function: 1};\n"
+			"const rows = [blank, {...blank, test_time: '08:00'}, {...blank, test_piece_type: 'Fe'}, {...blank, detected: 1},"
+			" {...blank, test_piece_size_mm: 0.3}, {...blank, test_piece_size_mm: ''}, {...blank, size_from_a_function: 2}];\n"
+			"console.log(JSON.stringify(rows.map((row) => editor.child_row_entered(row, fields))));\n"
+		)
+		out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+		# only the defaults, then a time, a type, Detected, another size; a size
+		# cleared is no value; a default from a function is a default
+		self.assertEqual(json.loads(out), [False, True, True, True, True, False, True])
+
+	def test_a_detector_emptied_by_hand_empties_its_details(self):
+		# a dialog's Link misses being emptied after a first pick (Frappe v15):
+		# the dialog sets it empty, which empties the fields fetched from it
+		self.assertIn("this.empty_cleared_links(dialog);", self._method("open_new_record(doctype)"))
+		self.assertEqual(
+			self._method("empty_cleared_links(dialog)"),
+			"""    empty_cleared_links(dialog) {
+        const sources = new Set(dialog.fields.filter((df) => df.fetch_from).map((df) => df.fetch_from.split(".")[0]));
+        sources.forEach((fieldname) => {
+            const field = dialog.get_field(fieldname);
+            if (!field || !field.$input) return;
+            field.$input.on("blur", () => {
+                if (!field.$input.val()) field.set_value("");
+            });
+        });
+    }""",
+		)
+
+	def test_the_detectors_are_a_quick_link(self):
+		self.assertIn('data-doctype="Metal Detector">${__("Metal Detectors")}</a>', self.script)
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
