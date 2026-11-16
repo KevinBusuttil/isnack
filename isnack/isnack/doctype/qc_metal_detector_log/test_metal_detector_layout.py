@@ -167,6 +167,13 @@ class TestAnAmendment(unittest.TestCase):
 		)
 
 	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(_VERIFIED) if isinstance(fields, list) else 0)
+	def test_saved_again_and_submitted_it_keeps_them(self, _get_value, _exists):
+		# Frappe fetches again on each save of a draft, the amendment's too
+		doc = _log(_test(), amended_from="QCH-2026-00010", metal_detector_id="MD-1", saved=_log(amended_from="QCH-2026-00010"), **_NOW)
+		doc.validate()
+		self.assertEqual((doc.last_calibration_date, doc.next_calibration_date), ("2026-05-01", "2026-11-30"))
+
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(_VERIFIED) if isinstance(fields, list) else 0)
 	def test_of_another_detector_takes_its(self, _get_value, _exists):
 		doc = _log(_test(), amended_from="QCH-2026-00010", metal_detector_id="MD-2", **_NOW)
 		doc.validate()
@@ -350,7 +357,7 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 	def _seed(self, get_all, logs, refuse=(), deleted=()):
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Metal Detector Log": logs,
-			"Deleted Document": [frappe._dict(data=json.dumps(d)) for d in deleted],
+			"Deleted Document": [frappe._dict(name=f"DD-{i}", data=json.dumps(d)) for i, d in enumerate(deleted)],
 		}[doctype]
 		inserted = _Inserted(refuse)
 		with patch("frappe.get_doc", inserted.get_doc):
@@ -444,6 +451,23 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 				("update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", ("MD-12", "QCH-33")),
 			],
 		)
+
+	def test_a_log_deleted_before_whose_id_the_database_does_not_match_is_given_the_detectors_name(self, _table, get_all, exists, *_db):
+		# so a restore leads to its detector
+		exists.side_effect = lambda doctype, name: "MD-14" if name.upper() == "MD-14" else None
+		deleted = [
+			{"doctype": "QC Metal Detector Log", "name": "QCH-40", "metal_detector_id": " md-14", "record_date": "2026-11-02", "earlier_layout": 1},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-41", "metal_detector_id": "MD-14", "record_date": "2026-11-01"},
+		]
+		with patch("frappe.db.set_value") as set_value:
+			inserted = self._seed(get_all, [], deleted=deleted)
+		self.assertEqual(inserted, [])  # (exists says MD-14 is there)
+		self.assertEqual(get_all.call_args_list[1].kwargs["fields"], ["name", "data"])
+		self.assertEqual(len(set_value.call_args_list), 1)
+		args, kwargs = set_value.call_args
+		self.assertEqual(args[:3], ("Deleted Document", "DD-0", "data"))
+		self.assertEqual(json.loads(args[3]), {**deleted[0], "metal_detector_id": "MD-14"})
+		self.assertEqual(kwargs, {"update_modified": False})
 
 	def test_a_cancelled_log_gives_details_only_when_no_other_does(self, _table, get_all, *_db):
 		logs = [

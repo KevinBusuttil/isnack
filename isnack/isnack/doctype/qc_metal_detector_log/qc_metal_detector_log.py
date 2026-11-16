@@ -63,9 +63,10 @@ class QCMetalDetectorLog(Document):
     def keep_details_verified_under(self):
         """An amendment of the same detector keeps the Make/Model and calibration
         dates the log it amends was verified under: Frappe fetches the
-        detector's current ones into a new record. Another detector picked on
-        it gives that detector's."""
-        if not (self.is_new() and self.amended_from and self.metal_detector_id):
+        detector's current ones each time a draft is saved, the amendment's
+        too, until it is submitted. Another detector picked on it gives that
+        detector's."""
+        if not (self.amended_from and self.metal_detector_id):
             return
         amended = frappe.db.get_value(
             self.doctype, self.amended_from, ["metal_detector_id", *DETECTOR_FIELDS], as_dict=True

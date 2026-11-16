@@ -21,8 +21,9 @@ def execute():
     same detector; it takes the newest log's spelling. The database matches a
     log's ID to it whatever its case or trailing spaces, but not a leading
     space, tab or line break: a log whose ID has one is given the detector's
-    name (a plain update, leaving ``modified`` alone). The other logs are left
-    as they are.
+    name (a plain update, leaving ``modified`` alone), and so is a log deleted
+    before, in its Deleted Document, so a restore leads to it. The other logs
+    are left as they are.
 
     An ID that cannot name a record is reported and left out: its logs keep
     it, and a draft of them is saved again with a detector picked (the log
@@ -37,10 +38,11 @@ def execute():
         fields=["name", "metal_detector_id", "docstatus", *LOG_FIELDS],
         order_by="record_date desc, modified desc",
     )
+    deleted = _deleted_logs()
     detectors = {}
     # newest first, the cancelled after the rest (sorted keeps the date order),
     # then those deleted before
-    for log in sorted(logs, key=lambda log: log.docstatus == 2) + _deleted_logs():
+    for log in sorted(logs, key=lambda log: log.docstatus == 2) + [log for _name, log in deleted]:
         detector_id = cstr(log.metal_detector_id).strip()
         if not detector_id:
             continue
@@ -66,32 +68,37 @@ def execute():
             frappe.clear_last_message()
             print(f"Metal Detector {detector['metal_detector_id']!r} not made from the QC Metal Detector Logs: {e}")
 
-    _link_logs(logs)
+    for log in logs:
+        detector = _unmatched_detector(log.metal_detector_id)
+        if detector:
+            frappe.db.sql(
+                "update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", (detector, log.name)
+            )
+    for name, log in deleted:
+        detector = _unmatched_detector(log.metal_detector_id)
+        if detector:
+            log.metal_detector_id = detector
+            frappe.db.set_value("Deleted Document", name, "data", frappe.as_json(log), update_modified=False)
 
 
 def _deleted_logs():
-    """The logs deleted before and not restored (their Deleted Documents'
-    snapshots), newest first."""
+    """The logs deleted before and not restored: (their Deleted Document, its
+    snapshot), newest first."""
     deleted = [
-        frappe._dict(json.loads(row.data))
+        (row.name, frappe._dict(json.loads(row.data)))
         for row in frappe.get_all(
             "Deleted Document",
             filters={"deleted_doctype": "QC Metal Detector Log", "restored": 0},
-            fields=["data"],
+            fields=["name", "data"],
         )
     ]
-    return sorted(deleted, key=lambda log: (cstr(log.record_date), cstr(log.modified)), reverse=True)
+    return sorted(deleted, key=lambda item: (cstr(item[1].record_date), cstr(item[1].modified)), reverse=True)
 
 
-def _link_logs(logs):
-    """Give a log whose ID the database does not match to its detector (a
-    leading space, a tab or a line break around it) the detector's name."""
-    for log in logs:
-        raw = cstr(log.metal_detector_id)
-        if raw == raw.strip() or frappe.db.exists("Metal Detector", raw):
-            continue
-        name = frappe.db.exists("Metal Detector", raw.strip())
-        if name:
-            frappe.db.sql(
-                "update `tabQC Metal Detector Log` set metal_detector_id = %s where name = %s", (name, log.name)
-            )
+def _unmatched_detector(detector_id):
+    """The detector a log's ID names when the database does not match the ID
+    as it is (a leading space, a tab or a line break around it); else None."""
+    raw = cstr(detector_id)
+    if raw == raw.strip() or frappe.db.exists("Metal Detector", raw):
+        return None
+    return frappe.db.exists("Metal Detector", raw.strip())
