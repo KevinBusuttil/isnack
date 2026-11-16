@@ -686,8 +686,9 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 			"})();\n"
 		)
 		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
-		# every detector before a line is picked; then those used on it
-		self.assertEqual(out["no_line"], {"filters": []})
+		# every detector before a line is picked (no filter: no empty "Filters
+		# applied for" under them); then those used on it
+		self.assertEqual(out["no_line"], {})
 		self.assertEqual(out["frying"], {"filters": [["Metal Detector Factory Line", "factory_line", "=", "FRYING"]]})
 		self.assertEqual(out["asked_without_detector"], 0)
 		self.assertEqual(

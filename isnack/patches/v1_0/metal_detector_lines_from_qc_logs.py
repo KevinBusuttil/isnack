@@ -10,14 +10,17 @@ def execute():
     is not used on its line.
 
     Give each Metal Detector that has no Factory Lines yet the lines of the
-    logs that name it: submitted, draft or cancelled (an amendment keeps its
-    line), and deleted before (a restore needs it). So each log made before
-    can still be saved, amended and restored, and a new one on those lines
-    offers its detector. The database matches a log's ID and line to the
-    detector and line whatever their case or trailing spaces; a detector takes
-    the line's own spelling. A detector no log names is left without: it is
-    offered on no line until one is added to it (it cannot be saved without
-    one).
+    logs that name it: submitted or draft, and deleted before (a restore needs
+    it). So each log made before can still be saved and restored, and a new
+    one on those lines offers its detector. A cancelled log gives none: one
+    cancelled for its line or detector would put the detector on a line it was
+    logged on by mistake, and an amendment keeping the detector and line it
+    amends needs none (the log lets it).
+
+    The database matches a log's ID and line to the detector and line whatever
+    their case or trailing spaces; a detector takes the line's own spelling. A
+    detector no log names is left without: it is offered on no line until one
+    is added to it (it cannot be saved without one).
 
     The rows are inserted as they are, leaving the detector's ``modified`` (and
     so its version history) alone.
@@ -29,7 +32,7 @@ def execute():
         (cstr(log.metal_detector_id).strip(), cstr(log.factory_line).strip())
         for log in frappe.get_all(
             "QC Metal Detector Log",
-            filters={"metal_detector_id": ["is", "set"], "factory_line": ["is", "set"]},
+            filters={"metal_detector_id": ["is", "set"], "factory_line": ["is", "set"], "docstatus": ["!=", 2]},
             fields=["metal_detector_id", "factory_line"],
             distinct=True,
         )

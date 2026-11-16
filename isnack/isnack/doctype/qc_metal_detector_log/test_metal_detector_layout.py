@@ -219,6 +219,14 @@ class TestTheLine(unittest.TestCase):
 			with self.assertRaisesRegex(frappe.ValidationError, "is not used on"):
 				_log(_test(), amended_from="QCH-2026-00020", metal_detector_id=detector, factory_line=line).validate()
 
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(metal_detector_id="MD-2", factory_line="PACKING LINE 1") if fields == ["metal_detector_id", "factory_line"] else 0)
+	def test_an_amendment_of_another_detector_on_the_same_line_is_not_kept(self, _get_value, _exists):
+		# the line kept, the detector changed: MD-1 is not used on PACKING LINE 1
+		with self.assertRaisesRegex(frappe.ValidationError, "MD-1.* is not used on .*PACKING LINE 1"):
+			_log(_test(), amended_from="QCH-2026-00021", metal_detector_id="MD-1", factory_line="PACKING LINE 1").validate()
+		# the amended log's own detector there is kept
+		_log(_test(), amended_from="QCH-2026-00021", metal_detector_id="MD-2", factory_line="PACKING LINE 1").validate()
+
 	@patch("frappe.db.get_value", return_value=None)
 	def test_an_amendment_of_a_log_there_is_not(self, _get_value, _exists):
 		with self.assertRaisesRegex(frappe.ValidationError, "is not used on"):
@@ -474,7 +482,9 @@ class TestLinesFromTheLogs(unittest.TestCase):
 			get_all.call_args_list[0],
 			call(
 				"QC Metal Detector Log",
-				filters={"metal_detector_id": ["is", "set"], "factory_line": ["is", "set"]},
+				# not a cancelled log: one cancelled for its line or detector would
+				# put the detector on a line it was logged on by mistake
+				filters={"metal_detector_id": ["is", "set"], "factory_line": ["is", "set"], "docstatus": ["!=", 2]},
 				fields=["metal_detector_id", "factory_line"],
 				distinct=True,
 			),
@@ -775,8 +785,9 @@ class TestTheForm(unittest.TestCase):
 		)
 		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
 		self.assertEqual(out["doctype"], "QC Metal Detector Log")
-		# every detector before a line is picked; then those used on it
-		self.assertEqual(out["no_line"], {"filters": []})
+		# every detector before a line is picked (no filter: no empty "Filters
+		# applied for" under them); then those used on it
+		self.assertEqual(out["no_line"], {})
 		self.assertEqual(out["frying"], {"filters": [["Metal Detector Factory Line", "factory_line", "=", "FRYING"]]})
 		self.assertEqual(out["asked_without_detector"], 0)
 		self.assertEqual(

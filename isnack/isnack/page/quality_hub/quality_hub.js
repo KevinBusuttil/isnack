@@ -1046,9 +1046,11 @@ isnack.quality_hub.QualityHub = class {
         const line_field = dialog.get_field("factory_line");
         if (!detector_field || !line_field) return;
         // a Dialog has no set_query: the Link reads get_query from its control
-        detector_field.get_query = () => ({
-            filters: isnack.quality_hub.metal_detectors_on_line(dialog.get_value("factory_line")),
-        });
+        // (no line yet: every detector, and no empty "Filters applied for" under them)
+        detector_field.get_query = () => {
+            const factory_line = dialog.get_value("factory_line");
+            return factory_line ? { filters: isnack.quality_hub.metal_detectors_on_line(factory_line) } : {};
+        };
         const orig = line_field.df.onchange;
         line_field.df.onchange = (...args) => {
             const result = orig ? orig.apply(line_field, args) : undefined;

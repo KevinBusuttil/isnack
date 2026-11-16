@@ -10,7 +10,10 @@ const metal_detectors_on_line = (factory_line) =>
 
 frappe.ui.form.on("QC Metal Detector Log", {
 	setup(frm) {
-		frm.set_query("metal_detector_id", () => ({ filters: metal_detectors_on_line(frm.doc.factory_line) }));
+		// no line yet: every detector, and no empty "Filters applied for" under them
+		frm.set_query("metal_detector_id", () =>
+			frm.doc.factory_line ? { filters: metal_detectors_on_line(frm.doc.factory_line) } : {}
+		);
 	},
 
 	factory_line(frm) {
