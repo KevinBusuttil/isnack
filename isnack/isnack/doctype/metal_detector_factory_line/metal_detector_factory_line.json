@@ -1,0 +1,37 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-11-16 16:00:00.000000",
+ "description": "A factory line a Metal Detector is used on.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "factory_line"
+ ],
+ "fields": [
+  {
+   "fieldname": "factory_line",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Factory Line",
+   "options": "Factory Line",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-16 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Metal Detector Factory Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

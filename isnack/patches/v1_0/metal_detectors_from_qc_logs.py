@@ -62,7 +62,11 @@ def execute():
             continue
         frappe.db.savepoint("metal_detector_from_logs")
         try:
-            frappe.get_doc({"doctype": "Metal Detector", **detector}).insert(ignore_permissions=True)
+            # its Factory Lines, which a detector needs, come from the logs next
+            # (metal_detector_lines_from_qc_logs)
+            frappe.get_doc({"doctype": "Metal Detector", **detector}).insert(
+                ignore_permissions=True, ignore_mandatory=True
+            )
         except (frappe.NameError, frappe.ValidationError) as e:
             frappe.db.rollback(save_point="metal_detector_from_logs")
             frappe.clear_last_message()

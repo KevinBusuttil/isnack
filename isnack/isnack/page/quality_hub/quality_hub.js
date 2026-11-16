@@ -11,6 +11,11 @@ isnack.quality_hub.tasting_overall_percent = (row) => {
     return Math.round((stars.reduce((sum, value) => sum + value, 0) / full_marks) * 1000) / 10;
 };
 
+// The Metal Detectors used on a factory line (their Factory Lines): those a
+// metal detector log on it offers. Every one when no line is picked yet.
+isnack.quality_hub.metal_detectors_on_line = (factory_line) =>
+    factory_line ? [["Metal Detector Factory Line", "factory_line", "=", factory_line]] : [];
+
 isnack.quality_hub.DIALOG_RECORD_CONFIG = {
     "QC Receiving Record": {
         parent_fields: [
@@ -264,6 +269,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Equipment ───────────────────────────────────────────
             { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
+            // the detectors used on the Factory Line picked (setup_metal_detector_dialog)
             { fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" },
             // filled from the Metal Detector picked, as on the form (the
             // Calibration Certificate is kept on the Metal Detector since 2026-11)
@@ -271,7 +277,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "last_calibration_date", fieldtype: "Date", label: __("Last Calibration Date"), read_only: 1, fetch_from: "metal_detector_id.last_calibration_date" },
             { fieldname: "next_calibration_date", fieldtype: "Date", label: __("Next Calibration Date"), read_only: 1, fetch_from: "metal_detector_id.next_calibration_date" },
             { fieldname: "cb_equipment", fieldtype: "Column Break" },
-            { fieldname: "corrective_action", fieldtype: "Small Text", label: __("Corrective Action") },
+            // (the Corrective Action came off in 2026-11)
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
         // (each test's Sensitivity Setting and Remarks came off in 2026-11)
@@ -951,6 +957,7 @@ isnack.quality_hub.QualityHub = class {
     }
 
     setup_dialog_specific_behaviour(dialog, doctype) {
+        if (doctype === "QC Metal Detector Log") this.setup_metal_detector_dialog(dialog);
         if (doctype !== "QC Receiving Record") return;
 
         // A Dialog has no set_query (only a form does): a Link control reads
@@ -1028,6 +1035,52 @@ isnack.quality_hub.QualityHub = class {
                 return result;
             };
         }
+    }
+
+    /** The Metal Detector ID offers the detectors used on the Factory Line
+     *  picked, as the form does; a detector picked that is not used on a line
+     *  picked afterwards is taken off. The log refuses one not used on its
+     *  line (a Link takes any detector typed in full). */
+    setup_metal_detector_dialog(dialog) {
+        const detector_field = dialog.get_field("metal_detector_id");
+        const line_field = dialog.get_field("factory_line");
+        if (!detector_field || !line_field) return;
+        // a Dialog has no set_query: the Link reads get_query from its control
+        detector_field.get_query = () => ({
+            filters: isnack.quality_hub.metal_detectors_on_line(dialog.get_value("factory_line")),
+        });
+        const orig = line_field.df.onchange;
+        line_field.df.onchange = (...args) => {
+            const result = orig ? orig.apply(line_field, args) : undefined;
+            this.drop_detector_off_line(dialog);
+            return result;
+        };
+    }
+
+    drop_detector_off_line(dialog) {
+        const metal_detector_id = dialog.get_value("metal_detector_id");
+        const factory_line = dialog.get_value("factory_line");
+        if (!metal_detector_id || !factory_line) return;
+        frappe.db
+            .get_list("Metal Detector", {
+                filters: [["name", "=", metal_detector_id], ...isnack.quality_hub.metal_detectors_on_line(factory_line)],
+                limit: 1,
+            })
+            .then((on_line) => {
+                // used on it, or the line or detector changed again meanwhile
+                if (
+                    on_line.length ||
+                    dialog.get_value("factory_line") !== factory_line ||
+                    dialog.get_value("metal_detector_id") !== metal_detector_id
+                ) {
+                    return;
+                }
+                dialog.set_value("metal_detector_id", "");
+                frappe.show_alert({
+                    message: __("{0} is not used on {1}: pick a metal detector on that line.", [metal_detector_id, factory_line]),
+                    indicator: "orange",
+                });
+            });
     }
 
     setup_dialog_secondary_action(dialog, doctype) {

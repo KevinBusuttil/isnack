@@ -1,13 +1,16 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
-"""The metal detector log with its detector picked from the Metal Detectors,
-without a calibration certificate or each test's sensitivity setting and
-remarks (2026-11), and the logs made before, which keep them (no database)."""
+"""The metal detector log with its detector picked from the Metal Detectors
+used on its factory line, without a calibration certificate, a corrective
+action or each test's sensitivity setting and remarks (2026-11), and the logs
+made before, which keep them (no database)."""
 
 import datetime
 import json
 import os
+import shutil
+import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest.mock import call, patch
@@ -19,7 +22,9 @@ from isnack.isnack.doctype.qc_metal_detector_log.qc_metal_detector_log import (
 	QCMetalDetectorLog,
 	belongs_to_earlier_layout,
 )
+from isnack.patches.v1_0 import metal_detector_lines_from_qc_logs as lines_module
 from isnack.patches.v1_0 import metal_detectors_from_qc_logs as seed_module
+from isnack.patches.v1_0 import qc_metal_detector_log_corrective_action as corrective_module
 from isnack.patches.v1_0 import qc_metal_detector_log_earlier_layout as patch_module
 from isnack.utils import earlier_layout
 
@@ -48,6 +53,7 @@ class _Log(_Row):
 	validate = QCMetalDetectorLog.validate
 	refuse_retired_values = QCMetalDetectorLog.refuse_retired_values
 	check_metal_detector = QCMetalDetectorLog.check_metal_detector
+	check_detector_on_line = QCMetalDetectorLog.check_detector_on_line
 	keep_details_verified_under = QCMetalDetectorLog.keep_details_verified_under
 
 	def is_new(self):
@@ -68,7 +74,7 @@ def _test(detected=1, **values):
 
 
 def _log(*tests, cls=_Log, **values):
-	doc = cls(doctype="QC Metal Detector Log", tests=list(tests), calibration_certificate=None, earlier_layout=0, amended_from=None, saved=None)
+	doc = cls(doctype="QC Metal Detector Log", tests=list(tests), calibration_certificate=None, corrective_action=None, earlier_layout=0, amended_from=None, saved=None)
 	doc.update(values)
 	return doc
 
@@ -89,10 +95,11 @@ class TestTheLog(unittest.TestCase):
 
 	def test_a_form_from_before_the_change_is_told_to_reload(self):
 		# a desk form or a Quality Hub page loaded before the change still
-		# offers the certificate and each test's sensitivity setting and
-		# remarks: a new log would keep them out of sight
+		# offers the certificate, the corrective action and each test's
+		# sensitivity setting and remarks: a new log would keep them out of sight
 		for doc in (
 			_log(_test(), calibration_certificate="/files/cert.pdf"),
+			_log(_test(0), corrective_action="line stopped, product held"),
 			_log(_test(sensitivity_setting="Fe 1.5")),
 			_log(_test(), _test(test_remarks="belt stopped")),
 		):
@@ -101,17 +108,18 @@ class TestTheLog(unittest.TestCase):
 
 	def test_nothing_said_is_nothing_kept_out_of_sight(self):
 		# a stray space or line break: no value, and none kept
-		doc = _log(_test(sensitivity_setting=" ", test_remarks="\n"), calibration_certificate=" ")
+		doc = _log(_test(sensitivity_setting=" ", test_remarks="\n"), calibration_certificate=" ", corrective_action=" \n")
 		doc.validate()
 		self.assertEqual(
-			(doc.calibration_certificate, doc.tests[0].sensitivity_setting, doc.tests[0].test_remarks), (None, None, None)
+			(doc.calibration_certificate, doc.corrective_action, doc.tests[0].sensitivity_setting, doc.tests[0].test_remarks),
+			(None, None, None, None),
 		)
 		self.assertEqual(doc.all_tests_passed, 1)
 
 	def test_a_log_made_before_keeps_them(self):
-		doc = _log(_test(sensitivity_setting="Fe 1.5", test_remarks="ok"), earlier_layout=1, calibration_certificate="/files/cert.pdf")
+		doc = _log(_test(sensitivity_setting="Fe 1.5", test_remarks="ok"), earlier_layout=1, calibration_certificate="/files/cert.pdf", corrective_action="re-screened")
 		doc.validate()
-		self.assertEqual(doc.calibration_certificate, "/files/cert.pdf")
+		self.assertEqual((doc.calibration_certificate, doc.corrective_action), ("/files/cert.pdf", "re-screened"))
 		self.assertEqual((doc.tests[0].sensitivity_setting, doc.tests[0].test_remarks), ("Fe 1.5", "ok"))
 
 	def test_before_the_migrate_every_log_is_one_made_before(self):
@@ -142,7 +150,79 @@ class TestTheDetector(unittest.TestCase):
 
 	def test_no_detector(self, exists):
 		_log(_test(), metal_detector_id=None).validate()
+		_log(_test(), metal_detector_id=None, factory_line="FRYING").validate()
 		exists.assert_not_called()
+
+
+_ON_LINES = {"MD-1": ("CORN EXTRUSION", "FRYING"), "MD-2": ("RICE EXTRUSION",)}
+
+
+def _exists(doctype, name):
+	"""The database: Metal Detectors MD-1 and MD-2 and their Factory Lines
+	(matched, as the database does, whatever their case or trailing spaces)."""
+	same = lambda one, other: one.rstrip(" ").upper() == other.upper()
+	if doctype == "Metal Detector":
+		return next((d for d in _ON_LINES if same(name, d)), None)
+	assert doctype == "Metal Detector Factory Line"
+	assert (name["parenttype"], name["parentfield"]) == ("Metal Detector", "factory_lines")
+	return next(
+		(f"row-{d}-{line}" for d, lines in _ON_LINES.items() for line in lines if same(name["parent"], d) and same(name["factory_line"], line)),
+		None,
+	)
+
+
+@patch("frappe.db.exists", side_effect=_exists)
+class TestTheLine(unittest.TestCase):
+	"""A log picks a Metal Detector used on its factory line (its Factory
+	Lines): the Quality Hub and the form offer only those, but a Link takes
+	any detector typed in full."""
+
+	def test_a_detector_used_on_the_line(self, exists):
+		for line in ("CORN EXTRUSION", "frying "):
+			_log(_test(), metal_detector_id="MD-1", factory_line=line).validate()
+		self.assertIn(
+			call("Metal Detector Factory Line", {"parenttype": "Metal Detector", "parentfield": "factory_lines", "parent": "MD-1", "factory_line": "CORN EXTRUSION"}),
+			exists.call_args_list,
+		)
+		# spelled otherwise, as the database matches it
+		_log(_test(), metal_detector_id="md-2 ", factory_line="Rice Extrusion").validate()
+
+	@patch("frappe.db.get_value")
+	def test_a_detector_not_used_on_the_line(self, get_value, _exists):
+		for doc in (
+			_log(_test(), metal_detector_id="MD-2", factory_line="CORN EXTRUSION"),
+			_log(_test(), metal_detector_id="MD-1", factory_line="RICE EXTRUSION", saved=_log()),
+			# a log made before is refused one too
+			_log(_test(), metal_detector_id="MD-1", factory_line="PACKING LINE 1", earlier_layout=1),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, r"Metal Detector .*MD-\d.* is not used on .*\. Pick a metal detector on that line"):
+				doc.validate()
+		get_value.assert_not_called()
+
+	def test_no_line(self, exists):
+		_log(_test(), metal_detector_id="MD-2", factory_line=None).validate()
+		self.assertEqual([c.args[0] for c in exists.call_args_list], ["Metal Detector"])
+
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(metal_detector_id="md-2 ", factory_line="corn extrusion") if fields == ["metal_detector_id", "factory_line"] else 0)
+	def test_an_amendment_keeps_its_detector_on_its_line(self, get_value, _exists):
+		# MD-2 was on CORN EXTRUSION when the log it amends was verified, and
+		# has moved since
+		doc = _log(_test(), amended_from="QCH-2026-00020", metal_detector_id="MD-2", factory_line="CORN EXTRUSION")
+		doc.validate()
+		self.assertIn(call("QC Metal Detector Log", "QCH-2026-00020", ["metal_detector_id", "factory_line"], as_dict=True), get_value.call_args_list)
+		# saved again, too
+		_log(_test(), amended_from="QCH-2026-00020", metal_detector_id="MD-2", factory_line="CORN EXTRUSION", saved=_log(amended_from="QCH-2026-00020")).validate()
+
+	@patch("frappe.db.get_value", side_effect=lambda doctype, name, fields, **kw: frappe._dict(metal_detector_id="MD-2", factory_line="CORN EXTRUSION") if fields == ["metal_detector_id", "factory_line"] else 0)
+	def test_an_amendment_on_another_line_or_detector_is_not_kept(self, _get_value, _exists):
+		for detector, line in (("MD-2", "FRYING"), ("MD-1", "PACKING LINE 1")):
+			with self.assertRaisesRegex(frappe.ValidationError, "is not used on"):
+				_log(_test(), amended_from="QCH-2026-00020", metal_detector_id=detector, factory_line=line).validate()
+
+	@patch("frappe.db.get_value", return_value=None)
+	def test_an_amendment_of_a_log_there_is_not(self, _get_value, _exists):
+		with self.assertRaisesRegex(frappe.ValidationError, "is not used on"):
+			_log(_test(), amended_from="QCH-2026-00099", metal_detector_id="MD-2", factory_line="FRYING").validate()
 
 
 _VERIFIED = {"metal_detector_id": "md-1 ", "detector_make_model": "Loma IQ3", "last_calibration_date": "2026-05-01", "next_calibration_date": "2026-11-30"}
@@ -219,11 +299,12 @@ class TestWhichLogsKeepTheEarlierLayout(unittest.TestCase):
 
 	def test_a_draft_keeps_it_when_it_holds_any_of_them(self):
 		self.assertTrue(belongs_to_earlier_layout({"docstatus": 0, "calibration_certificate": "/files/cert.pdf"}))
+		self.assertTrue(belongs_to_earlier_layout({"docstatus": 0, "corrective_action": "re-screened"}))
 		for test in ({"sensitivity_setting": "Fe 1.5"}, {"test_remarks": "ok"}):
 			self.assertTrue(belongs_to_earlier_layout({"docstatus": 0}, [{}, test]), test)
 
 	def test_a_draft_with_none_of_them_is_finished_the_new_way(self):
-		blank = {"docstatus": 0, "calibration_certificate": " ", "metal_detector_id": "MD-1", "detector_make_model": "Loma IQ4"}
+		blank = {"docstatus": 0, "calibration_certificate": " ", "corrective_action": "\n", "metal_detector_id": "MD-1", "detector_make_model": "Loma IQ4"}
 		tests = [{"sensitivity_setting": None, "test_remarks": "\n", "test_piece_size_mm": 2.0}]
 		self.assertFalse(belongs_to_earlier_layout(blank, tests))
 		self.assertFalse(belongs_to_earlier_layout({"docstatus": 0}))
@@ -298,6 +379,150 @@ class TestEarlierLayoutPatch(unittest.TestCase):
 		forget.assert_not_called()
 
 
+@patch("frappe.db.set_value")
+@patch("frappe.db.sql")
+@patch("frappe.get_all")
+@patch("frappe.db.has_column", return_value=True)
+class TestCorrectiveActionPatch(unittest.TestCase):
+	"""The Corrective Action comes off the log after the Metal Detector change:
+	the logs holding one keep it, those made since that change too."""
+
+	def test_the_logs_holding_one_are_marked(self, _has, get_all, sql, set_value):
+		holding = {"doctype": "QC Metal Detector Log", "name": "QCH-7", "docstatus": 1, "corrective_action": "held and re-screened"}
+		blank = {"doctype": "QC Metal Detector Log", "name": "QCH-8", "docstatus": 1, "corrective_action": " "}
+		get_all.side_effect = lambda doctype, **kw: {
+			"QC Metal Detector Log": [
+				_record("QCH-1", 1, corrective_action="held and re-screened"),  # submitted since the Metal Detector change
+				_record("QCH-2", 2, corrective_action="line stopped"),  # cancelled: an amendment carries it on
+				_record("QCH-3", corrective_action="re-tested"),  # a draft
+				_record("QCH-4", corrective_action=" \n"),  # nothing said
+			],
+			"Deleted Document": [_record(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate((holding, blank), 1)],
+		}[doctype]
+
+		corrective_module.execute()
+
+		self.assertEqual(
+			get_all.call_args_list[0],
+			call("QC Metal Detector Log", filters={"corrective_action": ["is", "set"]}, fields=["name", "corrective_action"]),
+		)
+		sql.assert_called_once_with(
+			"update `tabQC Metal Detector Log` set earlier_layout = 1 where name in %(names)s",
+			{"names": ("QCH-1", "QCH-2", "QCH-3")},
+		)
+		# deleted before: restored as it was
+		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1"])
+		self.assertEqual(json.loads(set_value.call_args.args[3]), {**holding, "earlier_layout": 1})
+		self.assertEqual(set_value.call_args.kwargs, {"update_modified": False})
+
+	def test_none_holding_one(self, _has, get_all, sql, set_value):
+		get_all.side_effect = lambda doctype, **kw: []
+		corrective_module.execute()
+		sql.assert_not_called()
+		set_value.assert_not_called()
+
+	def test_before_the_column_exists(self, has_column, get_all, sql, _set_value):
+		has_column.return_value = False
+		corrective_module.execute()
+		get_all.assert_not_called()
+		sql.assert_not_called()
+
+
+class _Rows(list):
+	"""The Metal Detector Factory Lines the patch inserts, by their values."""
+
+	def get_doc(self, values):
+		rows = self
+
+		class _Row:
+			def db_insert(self):
+				rows.append(values)
+
+		return _Row()
+
+
+_DETECTORS = ("MD-1", "MD-2", "MD-3")
+_LINES = ("CORN EXTRUSION", "FRYING", "RICE EXTRUSION")
+
+
+def _named(doctype, name):
+	"""The database: what a name matches, whatever its case or trailing spaces."""
+	return next((n for n in {"Metal Detector": _DETECTORS, "Factory Line": _LINES}[doctype] if n.upper() == name.rstrip(" ").upper()), None)
+
+
+@patch("frappe.db.exists", side_effect=_named)
+@patch("frappe.get_all")
+@patch("frappe.db.table_exists", return_value=True)
+class TestLinesFromTheLogs(unittest.TestCase):
+	def _run(self, get_all, logs, deleted=(), with_lines=()):
+		get_all.side_effect = lambda doctype, **kw: {
+			"QC Metal Detector Log": [frappe._dict(metal_detector_id=d, factory_line=line) for d, line in logs],
+			"Deleted Document": [frappe._dict(data=json.dumps(d)) for d in deleted],
+			"Metal Detector Factory Line": list(with_lines),
+		}[doctype]
+		rows = _Rows()
+		with patch("frappe.get_doc", rows.get_doc):
+			lines_module.execute()
+		return rows
+
+	def test_each_detector_is_given_the_lines_of_its_logs(self, _table, get_all, _exists):
+		rows = self._run(
+			get_all,
+			[("MD-2", "FRYING"), ("MD-1", "FRYING"), ("MD-1", "CORN EXTRUSION"), ("md-1 ", "corn extrusion"), (" MD-2", "FRYING ")],
+		)
+		self.assertEqual(
+			get_all.call_args_list[0],
+			call(
+				"QC Metal Detector Log",
+				filters={"metal_detector_id": ["is", "set"], "factory_line": ["is", "set"]},
+				fields=["metal_detector_id", "factory_line"],
+				distinct=True,
+			),
+		)
+		self.assertEqual(get_all.call_args_list[1].kwargs["filters"], {"deleted_doctype": "QC Metal Detector Log", "restored": 0})
+		self.assertEqual(
+			get_all.call_args_list[2],
+			call(
+				"Metal Detector Factory Line",
+				filters={"parenttype": "Metal Detector", "parentfield": "factory_lines"},
+				pluck="parent",
+				distinct=True,
+			),
+		)
+		# each line once, as the line spells it, in order
+		self.assertEqual(
+			rows,
+			[
+				{"doctype": "Metal Detector Factory Line", "parent": "MD-1", "parenttype": "Metal Detector", "parentfield": "factory_lines", "idx": 1, "factory_line": "CORN EXTRUSION"},
+				{"doctype": "Metal Detector Factory Line", "parent": "MD-1", "parenttype": "Metal Detector", "parentfield": "factory_lines", "idx": 2, "factory_line": "FRYING"},
+				{"doctype": "Metal Detector Factory Line", "parent": "MD-2", "parenttype": "Metal Detector", "parentfield": "factory_lines", "idx": 1, "factory_line": "FRYING"},
+			],
+		)
+
+	def test_a_log_deleted_before_gives_its_line(self, _table, get_all, _exists):
+		# a restore needs it
+		deleted = [
+			{"doctype": "QC Metal Detector Log", "name": "QCH-9", "metal_detector_id": "MD-3", "factory_line": "RICE EXTRUSION"},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-10", "metal_detector_id": None, "factory_line": "FRYING"},
+			{"doctype": "QC Metal Detector Log", "name": "QCH-11", "metal_detector_id": "MD-3"},
+		]
+		rows = self._run(get_all, [], deleted=deleted)
+		self.assertEqual([(r["parent"], r["factory_line"]) for r in rows], [("MD-3", "RICE EXTRUSION")])
+
+	def test_a_detector_or_line_there_is_not_is_left_out(self, _table, get_all, _exists):
+		rows = self._run(get_all, [("MD-9", "FRYING"), ("MD-1", "OLD LINE"), ("MD-1", "FRYING")])
+		self.assertEqual([(r["parent"], r["factory_line"]) for r in rows], [("MD-1", "FRYING")])
+
+	def test_a_detector_given_its_lines_already_is_left_as_it_is(self, _table, get_all, _exists):
+		rows = self._run(get_all, [("MD-1", "FRYING"), ("MD-2", "FRYING")], with_lines=["MD-1"])
+		self.assertEqual([(r["parent"], r["factory_line"]) for r in rows], [("MD-2", "FRYING")])
+
+	def test_before_the_doctype_exists(self, table_exists, get_all, _exists):
+		table_exists.return_value = False
+		lines_module.execute()
+		get_all.assert_not_called()
+
+
 @patch("frappe.cache")
 @patch("frappe.model.utils.user_settings.sync_user_settings")
 @patch("frappe.db.sql")
@@ -331,10 +556,11 @@ class _Inserted(list):
 		inserted = self
 
 		class _Doc:
-			def insert(self, ignore_permissions=False):
+			def insert(self, ignore_permissions=False, ignore_mandatory=False):
 				if values["metal_detector_id"] in inserted.refuse:
 					raise frappe.NameError("Name cannot contain special characters like < >")
-				assert ignore_permissions
+				# its Factory Lines come next, from the logs
+				assert ignore_permissions and ignore_mandatory
 				inserted.append(values)
 
 		return _Doc()
@@ -504,6 +730,66 @@ class TestDetectorsFromTheLogs(unittest.TestCase):
 		get_all.assert_not_called()
 
 
+@unittest.skipUnless(shutil.which("node"), "needs node to run the form's code")
+class TestTheForm(unittest.TestCase):
+	"""The desk form offers the Metal Detectors used on the log's Factory Line,
+	and takes off one picked that is not used on a line picked afterwards."""
+
+	def test_the_detectors_offered_and_one_taken_off(self):
+		with open(os.path.join(os.path.dirname(__file__), "qc_metal_detector_log.js")) as fh:
+			form_script = fh.read()
+		script = (
+			"const __ = (msg, args) => msg.replace(/\\{(\\d)\\}/g, (_m, i) => args[i]);\n"
+			"const lines = {'MD-1': ['CORN EXTRUSION', 'FRYING'], 'MD-2': ['RICE EXTRUSION']};\n"
+			"const asked = [], alerts = [], queries = {};\n"
+			"let handlers;\n"
+			"const frappe = {show_alert: (a) => alerts.push(a.message), ui: {form: {on: (doctype, h) => { handlers = [doctype, h]; }}},\n"
+			"  db: {get_list: (doctype, args) => {\n"
+			"    asked.push([doctype, args]);\n"
+			"    const [[, , name], [, , , line]] = args.filters;\n"
+			"    return Promise.resolve((lines[name] || []).includes(line) ? [{name}] : []);\n"
+			"  }}};\n"
+			f"{form_script}\n"
+			"const frm = {doc: {factory_line: '', metal_detector_id: ''}, set_query: (f, q) => { queries[f] = q; }, set_value: (f, v) => { frm.doc[f] = v; }};\n"
+			"const flush = () => new Promise((r) => setTimeout(r, 0));\n"
+			"(async () => {\n"
+			"  const [doctype, h] = handlers;\n"
+			"  const out = {doctype};\n"
+			"  h.setup(frm);\n"
+			"  out.no_line = queries.metal_detector_id();\n"
+			"  frm.doc.factory_line = 'FRYING';\n"
+			"  out.frying = queries.metal_detector_id();\n"
+			"  h.factory_line(frm);\n"
+			"  out.asked_without_detector = asked.length;\n"
+			"  frm.doc.metal_detector_id = 'MD-1'; frm.doc.factory_line = 'CORN EXTRUSION';\n"
+			"  h.factory_line(frm); await flush();\n"
+			"  out.kept = frm.doc.metal_detector_id; out.asked = asked[0];\n"
+			"  frm.doc.factory_line = 'RICE EXTRUSION';\n"
+			"  h.factory_line(frm); await flush();\n"
+			"  out.taken_off = frm.doc.metal_detector_id; out.alerts = alerts.slice();\n"
+			"  frm.doc.metal_detector_id = 'MD-2'; frm.doc.factory_line = 'FRYING';\n"
+			"  h.factory_line(frm); frm.doc.metal_detector_id = 'MD-1'; await flush();\n"
+			"  out.changed_again = frm.doc.metal_detector_id;\n"
+			"  console.log(JSON.stringify(out));\n"
+			"})();\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		self.assertEqual(out["doctype"], "QC Metal Detector Log")
+		# every detector before a line is picked; then those used on it
+		self.assertEqual(out["no_line"], {"filters": []})
+		self.assertEqual(out["frying"], {"filters": [["Metal Detector Factory Line", "factory_line", "=", "FRYING"]]})
+		self.assertEqual(out["asked_without_detector"], 0)
+		self.assertEqual(
+			out["asked"],
+			["Metal Detector", {"filters": [["name", "=", "MD-1"], ["Metal Detector Factory Line", "factory_line", "=", "CORN EXTRUSION"]], "limit": 1}],
+		)
+		self.assertEqual(out["kept"], "MD-1")
+		self.assertEqual(out["taken_off"], "")
+		self.assertEqual(out["alerts"], ["MD-1 is not used on RICE EXTRUSION: pick a metal detector on that line."])
+		# the detector changed again before the answer came: left to that change
+		self.assertEqual(out["changed_again"], "MD-1")
+
+
 class TestTheDoctypes(unittest.TestCase):
 	def test_the_metal_detector(self):
 		doc = _doctype("Metal Detector")
@@ -521,13 +807,29 @@ class TestTheDoctypes(unittest.TestCase):
 			},
 		)
 		self.assertEqual(fields["metal_detector_id"].get("reqd"), 1)
+		# the lines it is used on: one at least
+		lines = fields["factory_lines"]
+		self.assertEqual(
+			(lines["fieldtype"], lines["label"], lines["options"], lines.get("reqd")),
+			("Table MultiSelect", "Factory Lines", "Metal Detector Factory Line", 1),
+		)
+		self.assertEqual(doc["field_order"].index("factory_lines"), doc["field_order"].index("make_model") + 1)
 		# made from the log's Metal Detector ID without leaving it
 		self.assertEqual(doc.get("quick_entry"), 1)
-		for fieldname in ("make_model", "last_calibration_date", "next_calibration_date", "calibration_certificate"):
+		for fieldname in ("make_model", "factory_lines", "last_calibration_date", "next_calibration_date", "calibration_certificate"):
 			self.assertEqual(fields[fieldname].get("allow_in_quick_entry"), 1, fieldname)
 		# whoever records a log can pick a detector and read its details
 		log_roles = {p["role"] for p in _doctype("QC Metal Detector Log")["permissions"] if p.get("read")}
 		self.assertTrue(log_roles <= {p["role"] for p in doc["permissions"] if p.get("read")})
+
+	def test_a_detectors_factory_line(self):
+		doc = _doctype("Metal Detector Factory Line")
+		self.assertEqual(doc.get("istable"), 1)
+		# a Table MultiSelect picks its rows by their one Link
+		self.assertEqual(
+			[(f["fieldname"], f["fieldtype"], f.get("options"), f.get("reqd"), f.get("in_list_view")) for f in doc["fields"]],
+			[("factory_line", "Link", "Factory Line", 1, 1)],
+		)
 
 	def test_the_log_takes_the_detectors_details(self):
 		doc = _doctype("QC Metal Detector Log")
@@ -555,11 +857,14 @@ class TestTheDoctypes(unittest.TestCase):
 		order = doc["field_order"]
 		section = fields["earlier_layout_section"]
 		self.assertEqual((section["fieldtype"], section.get("depends_on")), ("Section Break", "eval:doc.earlier_layout"))
-		for fieldname in ("metal_detector_id", "tests", "all_tests_passed", "corrective_action", "remarks"):
+		for fieldname in ("metal_detector_id", "tests", "all_tests_passed", "remarks"):
 			self.assertLess(order.index(fieldname), order.index("earlier_layout_section"), fieldname)
+		self.assertEqual(RETIRED_FIELDS, ("calibration_certificate", "corrective_action"))
 		for fieldname in RETIRED_FIELDS:
 			self.assertGreater(order.index(fieldname), order.index("earlier_layout_section"), fieldname)
 			self.assertEqual(fields[fieldname].get("no_copy"), 1, fieldname)
+		# asked for by nothing since: a log made before is not made to give one
+		self.assertNotIn("mandatory_depends_on", fields["corrective_action"])
 		marker = fields["earlier_layout"]
 		self.assertEqual(
 			(marker["fieldtype"], marker.get("hidden"), marker.get("read_only"), marker.get("no_copy"), marker.get("print_hide")),
@@ -587,6 +892,12 @@ class TestTheDoctypes(unittest.TestCase):
 	def test_the_patches_run_in_order(self):
 		with open(os.path.join(DOCTYPE_DIR, "..", "..", "patches.txt")) as fh:
 			patches = fh.read().split("[post_model_sync]")[1].split()
-		# after the model sync makes the Metal Detector and the mark
-		self.assertIn("isnack.patches.v1_0.metal_detectors_from_qc_logs", patches)
-		self.assertIn("isnack.patches.v1_0.qc_metal_detector_log_earlier_layout", patches)
+		# after the model sync makes the Metal Detector, its lines and the mark;
+		# the detectors before their lines
+		ours = [
+			"isnack.patches.v1_0.metal_detectors_from_qc_logs",
+			"isnack.patches.v1_0.qc_metal_detector_log_earlier_layout",
+			"isnack.patches.v1_0.metal_detector_lines_from_qc_logs",
+			"isnack.patches.v1_0.qc_metal_detector_log_corrective_action",
+		]
+		self.assertEqual([p for p in patches if p in ours], ours)

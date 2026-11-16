@@ -21,9 +21,9 @@
   "next_calibration_date",
   "tests",
   "all_tests_passed",
-  "corrective_action",
   "earlier_layout_section",
   "calibration_certificate",
+  "corrective_action",
   "earlier_layout"
  ],
  "fields": [
@@ -128,16 +128,10 @@
    "read_only": 1
   },
   {
-   "fieldname": "corrective_action",
-   "fieldtype": "Small Text",
-   "label": "Corrective Action",
-   "mandatory_depends_on": "eval:!doc.all_tests_passed"
-  },
-  {
    "fieldname": "earlier_layout_section",
    "fieldtype": "Section Break",
    "label": "Earlier Layout",
-   "description": "Recorded on logs made before 2026-11: the calibration certificate, kept on the Metal Detector since. It can be corrected on a draft; logs made since record none.",
+   "description": "Recorded on logs made before 2026-11: the calibration certificate (kept on the Metal Detector since) and the corrective action. They can be corrected on a draft; logs made since record neither.",
    "depends_on": "eval:doc.earlier_layout"
   },
   {
@@ -147,10 +141,16 @@
    "no_copy": 1
   },
   {
+   "fieldname": "corrective_action",
+   "fieldtype": "Small Text",
+   "label": "Corrective Action",
+   "no_copy": 1
+  },
+  {
    "fieldname": "earlier_layout",
    "fieldtype": "Check",
    "label": "Earlier Layout",
-   "description": "A log made before 2026-11 that keeps its Calibration Certificate and each test's Sensitivity Setting and Remarks: submitted or cancelled, or a draft holding any of them. Set by a patch; Amend carries it.",
+   "description": "A log made before 2026-11 that keeps its Calibration Certificate, Corrective Action or each test's Sensitivity Setting and Remarks. Set by a patch; Amend carries it.",
    "default": "0",
    "hidden": 1,
    "read_only": 1,
@@ -162,7 +162,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-16 10:00:00.000000",
+ "modified": "2026-11-16 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Metal Detector Log",

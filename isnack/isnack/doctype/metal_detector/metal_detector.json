@@ -3,12 +3,13 @@
  "allow_rename": 1,
  "autoname": "field:metal_detector_id",
  "creation": "2026-11-16 10:00:00.000000",
- "description": "A metal detector the QC Metal Detector Logs verify: its make and model and its calibration. A log takes these from the detector picked on it.",
+ "description": "A metal detector the QC Metal Detector Logs verify: the factory lines it is used on, its make and model and its calibration. A log on one of its lines picks it and takes these from it.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "metal_detector_id",
   "make_model",
+  "factory_lines",
   "calibration_section",
   "last_calibration_date",
   "next_calibration_date",
@@ -31,6 +32,15 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Make/Model"
+  },
+  {
+   "allow_in_quick_entry": 1,
+   "description": "The lines it is used on. A QC Metal Detector Log offers it on these lines only.",
+   "fieldname": "factory_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Factory Lines",
+   "options": "Metal Detector Factory Line",
+   "reqd": 1
   },
   {
    "fieldname": "calibration_section",
@@ -65,7 +75,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-16 10:00:00.000000",
+ "modified": "2026-11-16 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Metal Detector",
