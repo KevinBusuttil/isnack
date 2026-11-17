@@ -728,6 +728,8 @@ validate():
     out_of_range_count   = 0   # placeholder — spec-based logic to be added
 ```
 
+**Since 2026-11** a reading left blank (saved as 0) is left out of both averages, as on QCB and QCC. Until then the record counted it once the blank had been saved (a desk save, then Submit, for one), which pulled the averages down. The patch `isnack.patches.v1_0.recompute_qc_frying_averages` worked the averages of every record but the cancelled ones out again from its stored readings; it writes only a record whose averages change (`db_set`, `update_modified=False`) and leaves an Info comment on it saying what changed.
+
 ---
 
 ### QCE — QC Oven Record
