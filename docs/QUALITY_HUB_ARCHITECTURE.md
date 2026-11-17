@@ -265,8 +265,8 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 | `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `readings` | Table → QC Frying Reading | Readings | Child table |
-| `avg_oil_temperature` | Float | Avg Oil Temperature (°C) | `read_only: 1` — auto-calculated |
-| `avg_product_moisture` | Float | Avg Moisture Content (%) | `read_only: 1` — auto-calculated (was "Avg Product Moisture (%)") |
+| `avg_oil_temperature` | Float | Avg Oil Temperature (°C) | `read_only: 1` — auto-calculated; a reading left blank (saved as 0) is left out |
+| `avg_product_moisture` | Float | Avg Moisture Content (%) | `read_only: 1` — auto-calculated; a reading left blank (saved as 0) is left out (was "Avg Product Moisture (%)") |
 | `out_of_range_count` | Int | Out of Range Count | `read_only: 1` — placeholder for future spec-based logic |
 | `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail |
 
@@ -721,12 +721,14 @@ As QCB, on `rice_readings` and `rice_oven_readings` (`avg_rice_oven_moisture`); 
 
 ```
 validate():
-    oil_temps = [r.oil_temperature  for r in readings if oil_temperature  is not None]
-    moistures = [r.product_moisture for r in readings if product_moisture is not None]
-    avg_oil_temperature  = mean(oil_temps) if oil_temps else 0
-    avg_product_moisture = mean(moistures) if moistures else 0
+    # zero_is_blank: Frappe saves a blank Float as 0, and neither is ever 0
+    # (as on QCB / QCC, with the same average() from qc_oven_reading)
+    avg_oil_temperature  = average(readings, "oil_temperature", zero_is_blank)
+    avg_product_moisture = average(readings, "product_moisture", zero_is_blank)
     out_of_range_count   = 0   # placeholder — spec-based logic to be added
 ```
+
+**Since 2026-11** a reading left blank (saved as 0) is left out of both averages, as on QCB and QCC. Until then the record counted it once the blank had been saved (a desk save, then Submit, for one), which pulled the averages down. The patch `isnack.patches.v1_0.recompute_qc_frying_averages` worked the averages of every record but the cancelled ones out again from its stored readings; it writes only a record whose averages change (`db_set`, `update_modified=False`) and leaves an Info comment on it saying what changed.
 
 ---
 

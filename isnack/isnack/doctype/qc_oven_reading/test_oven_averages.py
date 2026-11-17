@@ -1,15 +1,20 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
-"""Reading averages of the extruder records and the old oven records (no database)."""
+"""Reading averages of the extruder and frying records and the old oven records (no database)."""
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+import frappe
+
+from isnack.isnack.doctype.qc_frying_line_record.qc_frying_line_record import QCFryingLineRecord
 from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import average, oven_averages
 from isnack.isnack.doctype.qc_oven_record.qc_oven_record import QCOvenRecord
 from isnack.isnack.doctype.qc_puffs_extruder_record.qc_puffs_extruder_record import QCPuffsExtruderRecord
 from isnack.isnack.doctype.qc_rice_extruder_record.qc_rice_extruder_record import QCRiceExtruderRecord
+from isnack.patches.v1_0 import recompute_qc_frying_averages as frying_patch
 
 
 def _oven(zone_1_temp=None, zone_2_temp=None, moisture=None):
@@ -112,6 +117,102 @@ class TestExtruderRecords(unittest.TestCase):
 				)
 				record_type.validate(rec)
 				self.assertEqual(self._new_averages(record_type, rec), (14.0, 180, 4.0), (record_type.__name__, blank))
+
+
+def _frying(oil_temperature=None, product_moisture=None):
+	return SimpleNamespace(oil_temperature=oil_temperature, product_moisture=product_moisture)
+
+
+class TestFryingRecord(unittest.TestCase):
+	"""A Frying Line record averages its readings' oil temperature and moisture
+	content, leaving out a reading left blank, as the extruder records do."""
+
+	def _averages(self, readings):
+		rec = SimpleNamespace(readings=readings)
+		QCFryingLineRecord.validate(rec)
+		return rec.avg_oil_temperature, rec.avg_product_moisture, rec.out_of_range_count
+
+	def test_averages_the_readings_that_have_a_value(self):
+		oil, moisture, out_of_range = self._averages([_frying(178, 1.5), _frying(176, 1.7), _frying(180, None)])
+		self.assertAlmostEqual(oil, 178)
+		self.assertAlmostEqual(moisture, 1.6)
+		self.assertEqual(out_of_range, 0)
+
+	def test_a_blank_reading_is_left_out_once_saved_as_0(self):
+		# blank in the dialog: None on the first save, 0.0 when saved again or submitted
+		for blank in (None, 0.0):
+			readings = [_frying(180, 2.0), _frying(170, blank), _frying(blank, 1.0), _frying(blank, blank)]
+			self.assertEqual(self._averages(readings), (175, 1.5, 0), blank)
+
+	def test_no_readings(self):
+		self.assertEqual(self._averages([]), (0, 0, 0))
+		self.assertEqual(self._averages(None), (0, 0, 0))
+		self.assertEqual(self._averages([_frying(0.0, 0.0), _frying()]), (0, 0, 0))
+
+
+def _frying_record(avg_oil_temperature, avg_product_moisture, readings):
+	doc = frappe._dict(avg_oil_temperature=avg_oil_temperature, avg_product_moisture=avg_product_moisture, readings=readings)
+	doc.db_set = MagicMock()
+	doc.add_comment = MagicMock()
+	return doc
+
+
+def _stored(oil_temperature, product_moisture):
+	"""A reading as the database holds it: a value left blank is 0."""
+	return frappe._dict(oil_temperature=oil_temperature, product_moisture=product_moisture)
+
+
+@patch("frappe.db.table_exists", return_value=True)
+class TestFryingAveragesPatch(unittest.TestCase):
+	"""recompute_qc_frying_averages: the records averaged before 2026-11, a blank counted as 0."""
+
+	def _run(self, records):
+		with patch("frappe.get_all", return_value=list(records)) as get_all, patch("frappe.get_doc", side_effect=lambda dt, name: records[name]):
+			frying_patch.execute()
+		return get_all
+
+	def test_a_record_that_counted_a_blank_is_worked_out_again(self, _table_exists):
+		# saved in the desk, then submitted: the two blanks, stored as 0, were counted
+		doc = _frying_record(118.0, 1.066666667, [_stored(178, 1.5), _stored(176, 0), _stored(0, 1.7)])
+		get_all = self._run({"QCD-2026-00001": doc})
+		self.assertEqual(get_all.call_args.kwargs["filters"], {"docstatus": ["<", 2]})
+		doc.db_set.assert_called_once()
+		values, = doc.db_set.call_args.args
+		self.assertEqual(values["avg_oil_temperature"], 177)
+		self.assertAlmostEqual(values["avg_product_moisture"], 1.6)
+		self.assertEqual(doc.db_set.call_args.kwargs, {"update_modified": False})
+		kind, text = doc.add_comment.call_args.args
+		self.assertEqual(kind, "Info")
+		self.assertIn("Avg Oil Temperature (°C) 118.0 → 177.0", text)
+		self.assertIn("Avg Moisture Content (%) 1.067 → 1.6", text)
+
+	def test_a_record_whose_averages_stand_is_left_alone(self, _table_exists):
+		# stored as the column keeps them, to 9 decimals: 533 / 3 and 4.9 / 3
+		thirds = _frying_record(177.666666667, 1.633333333, [_stored(178, 1.5), _stored(176, 1.6), _stored(179, 1.8)])
+		# readings to the 9 decimals the column keeps, averaging a hair below a 5
+		# at the 7th decimal, which the column holds as that 5: rounding each to
+		# 6 places would part them (…937 and …938)
+		on_the_half = _frying_record(
+			178.0, 1.6479375, [_stored(178, 1.647937499), _stored(178, 1.6479375), _stored(178, 1.6479375)]
+		)
+		blank_row_only = _frying_record(0, 0, [_stored(0, 0)])
+		self._run({"QCD-2026-00002": thirds, "QCD-2026-00005": on_the_half, "QCD-2026-00003": blank_row_only})
+		for record in (thirds, on_the_half, blank_row_only):
+			record.db_set.assert_not_called()
+			record.add_comment.assert_not_called()
+
+	def test_only_the_average_that_changed_is_named(self, _table_exists):
+		doc = _frying_record(118.0, 1.6, [_stored(178, 1.5), _stored(176, 1.7), _stored(0, 0)])
+		self._run({"QCD-2026-00004": doc})
+		_kind, text = doc.add_comment.call_args.args
+		self.assertIn("Avg Oil Temperature (°C)", text)
+		self.assertNotIn("Avg Moisture Content (%)", text)
+
+	def test_before_the_doctype_is_made(self, table_exists):
+		table_exists.return_value = False
+		with patch("frappe.get_all") as get_all:
+			frying_patch.execute()
+		get_all.assert_not_called()
 
 
 class TestOvenRecord(unittest.TestCase):
