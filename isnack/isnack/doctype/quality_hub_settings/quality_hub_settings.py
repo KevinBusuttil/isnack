@@ -47,16 +47,24 @@ def tab_field(doctype):
 
 def factory_lines(doctype) -> list[str]:
     """The factory lines records of ``doctype`` may be on: those Quality Hub
-    Settings gives their tab. An empty list when it gives none: any line."""
+    Settings gives their tab, each once. An empty list when it gives none:
+    any line."""
     fieldname = tab_field(doctype)
     if not fieldname:
         return []
-    try:
-        settings = frappe.get_cached_doc("Quality Hub Settings")
-    except frappe.DoesNotExistError:
-        # the code before the migrate that makes the settings
+    # the code before the migrate that makes the settings: Frappe has no
+    # controller to read them with yet (ImportError)
+    if not frappe.db.exists("DocType", "Quality Hub Settings", cache=True):
         return []
-    return [row.factory_line for row in settings.get(fieldname) or [] if row.factory_line]
+    lines, seen = [], set()
+    # a line listed twice is read once: merging a listed line into another
+    # (Rename, "Merge with existing") rewrites the rows without validate
+    for row in frappe.get_cached_doc("Quality Hub Settings").get(fieldname) or []:
+        key = cstr(row.factory_line).strip().casefold()
+        if key and key not in seen:
+            seen.add(key)
+            lines.append(row.factory_line)
+    return lines
 
 
 @frappe.whitelist()

@@ -73,9 +73,23 @@ class TestTheLines(unittest.TestCase):
             get_cached_doc.assert_not_called()
 
     def test_before_the_migrate_makes_the_settings(self):
-        with patch("frappe.get_cached_doc", side_effect=frappe.DoesNotExistError):
+        # no DocType yet: Frappe would find no controller to read them with
+        # (ImportError), so they are not read; every record is on any line
+        with patch("frappe.db.exists", return_value=None) as exists, patch("frappe.get_cached_doc") as get_cached_doc:
             self.assertEqual(factory_lines("QC Tasting Record"), [])
+            self.assertEqual(get_factory_lines(), {doctype: [] for doctype in RESTRICTED_DOCTYPES})
             check_factory_line(_record("QC Tasting Record", "FRYING"))
+            check_factory_line(_record("QC Puffs Extruder Record", None))
+        get_cached_doc.assert_not_called()
+        exists.assert_called_with("DocType", "Quality Hub Settings", cache=True)
+
+    def test_a_line_listed_twice_is_read_once(self):
+        # merging one listed line into another (Rename, "Merge with existing")
+        # rewrites the rows without the settings' validate
+        with _given(packaging_and_weight_lines=["PACKING LINE 1", "packing line 1 ", "PACKING LINE 1"], tasting_lines=["FRYING", "CORN MIX", "FRYING"]):
+            # the tab's only line, still filled in (quality_hub_lines.js only_line)
+            self.assertEqual(factory_lines("QC Weight Check"), ["PACKING LINE 1"])
+            self.assertEqual(factory_lines("QC Tasting Record"), ["FRYING", "CORN MIX"])
 
     def test_every_tabs_lines_by_record_type(self):
         with _given(metal_detector_lines=["CORN EXTRUSION", "FRYING"]):
