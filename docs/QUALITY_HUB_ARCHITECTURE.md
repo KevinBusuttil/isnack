@@ -24,6 +24,7 @@
    - [QCG — QC Packaging Check](#qcg--qc-packaging-check)
    - [QCH — QC Metal Detector Log](#qch--qc-metal-detector-log)
    - [Metal Detector](#metal-detector)
+   - [Quality Hub Settings](#quality-hub-settings)
    - [QCI — QC Weight Check](#qci--qc-weight-check)
 6. [Child Table Schemas](#6-child-table-schemas)
    - [QC Extruder Reading](#qc-extruder-reading)
@@ -36,6 +37,7 @@
    - [QC Tasting Score](#qc-tasting-score)
    - [QC Metal Detector Test](#qc-metal-detector-test)
    - [Metal Detector Factory Line](#metal-detector-factory-line)
+   - [Quality Hub Factory Line](#quality-hub-factory-line)
    - [QC Weight Sample](#qc-weight-sample)
 7. [RBAC / Permissions](#7-rbac--permissions)
 8. [Backend Controller Logic](#8-backend-controller-logic)
@@ -71,6 +73,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 **Metal detector log changed (2026-11).** The QC Metal Detector Log (QCH) picks its **Metal Detector ID** from a new master, **Metal Detector**, which holds each detector's Make/Model, Last and Next Calibration Date and Calibration Certificate. The log's Make/Model and calibration dates are filled from the detector picked and cannot be edited (`fetch_from`, `read_only`); they are taken when the log is saved, so a submitted log keeps the calibration it was verified under, and so does its amendment (of the same detector). The Calibration Certificate is kept on the Metal Detector only, and each test's Sensitivity Setting and Remarks came off; Test Piece Size (mm) starts at 0.2. The patch `isnack.patches.v1_0.metal_detectors_from_qc_logs` makes a Metal Detector of each ID the logs named (and the logs deleted before, for a restore), with the details of the newest log holding each, so their links lead somewhere and a draft can still be saved; the log refuses an ID that names no Metal Detector. The logs made before keep their certificate and their tests' sensitivity settings and remarks, in **Earlier Layout** sections: the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding any of them; a draft holding none is finished the new way.
 
 **Metal detectors by factory line; no corrective action (2026-11).** A Metal Detector is used on one or more factory lines (its **Factory Lines**, required). The log's **Metal Detector ID** offers the detectors used on the Factory Line picked, on the form and in the Quality Hub dialog; a detector picked that is not used on a line picked afterwards is taken off, and the log refuses one not used on its line (an amendment keeps the detector and line of the log it amends). The patch `isnack.patches.v1_0.metal_detector_lines_from_qc_logs` gives each detector the lines of the logs that name it. The **Corrective Action** came off the log: the logs holding one keep it in their Earlier Layout section, marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_corrective_action`.
+
+**Factory lines by tab (2026-11).** [Quality Hub Settings](#quality-hub-settings) gives each Quality Hub tab that records a factory line the lines it records on: Puffs Extruder, Rice Extruder, Frying Line, Tasting, Packaging and Weight Checks (one list for both checks, which its form records together) and CCP & Metal. A tab's New dialog, and its records' desk forms, offer only those lines, and fill in the line when the tab has just one; the records refuse another line (`check_factory_line`, a `validate` doc event), an amendment keeping the line of the record it amends. A tab given no lines offers every line, as before the settings came. Receiving has no factory line.
 
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
@@ -114,7 +118,7 @@ Access is restricted to the **Quality Controller**, **Quality Manager**, and **S
 
 ## 3. DocType Inventory
 
-All 21 DocTypes (9 parent records, 11 child tables and the Metal Detector master) registered under the **Isnack** module:
+All 23 DocTypes (9 parent records, 12 child tables, the Metal Detector master and the Quality Hub Settings) registered under the **Isnack** module:
 
 | DocType Name | Type | Code | Child Table Of | File Path |
 |---|---|---|---|---|
@@ -128,6 +132,7 @@ All 21 DocTypes (9 parent records, 11 child tables and the Metal Detector master
 | QC Metal Detector Log | Parent | QCH | — | `isnack/isnack/doctype/qc_metal_detector_log/` |
 | QC Weight Check | Parent | QCI | — | `isnack/isnack/doctype/qc_weight_check/` |
 | Metal Detector | Master | — | — (linked from QCH) | `isnack/isnack/doctype/metal_detector/` |
+| Quality Hub Settings | Single | — | — | `isnack/isnack/doctype/quality_hub_settings/` |
 | QC Extruder Reading | Child | N/A | QCB, QCC (earlier readings) | `isnack/isnack/doctype/qc_extruder_reading/` |
 | QC Puffs Extruder Reading | Child | N/A | QCB | `isnack/isnack/doctype/qc_puffs_extruder_reading/` |
 | QC Puffs Oven Reading | Child | N/A | QCB | `isnack/isnack/doctype/qc_puffs_oven_reading/` |
@@ -138,9 +143,10 @@ All 21 DocTypes (9 parent records, 11 child tables and the Metal Detector master
 | QC Tasting Score | Child | N/A | QCF | `isnack/isnack/doctype/qc_tasting_score/` |
 | QC Metal Detector Test | Child | N/A | QCH | `isnack/isnack/doctype/qc_metal_detector_test/` |
 | Metal Detector Factory Line | Child | N/A | Metal Detector (its Factory Lines) | `isnack/isnack/doctype/metal_detector_factory_line/` |
+| Quality Hub Factory Line | Child | N/A | Quality Hub Settings (each tab's lines) | `isnack/isnack/doctype/quality_hub_factory_line/` |
 | QC Weight Sample | Child | N/A | QCI | `isnack/isnack/doctype/qc_weight_sample/` |
 
-All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All child DocTypes have `"istable": 1` and `"editable_grid": 1`. The Metal Detector is a plain master (not submittable), with `"track_changes": 1`: each change of its calibration is kept in its version history.
+All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All child DocTypes have `"istable": 1` and `"editable_grid": 1`. The Metal Detector is a plain master (not submittable), with `"track_changes": 1`: each change of its calibration is kept in its version history. Quality Hub Settings is a single doctype (`"issingle": 1`), with `"track_changes": 1` too.
 
 ---
 
@@ -372,6 +378,32 @@ Permissions follow the log's: Quality Controller read, write and create; Quality
 
 ---
 
+### Quality Hub Settings
+
+**Naming:** single doctype (`issingle: 1`, `track_changes: 1`)  
+**Purpose:** The factory lines each Quality Hub tab records on (since 2026-11). Opened from the Quality Hub's **Quality Hub Settings** quick link.
+
+| Fieldname | Fieldtype | Label | Record types it restricts |
+|---|---|---|---|
+| `factory_lines_section` | Section Break | Factory Lines by Tab | — |
+| `puffs_extruder_lines` | Table MultiSelect → Quality Hub Factory Line | Puffs Extruder (QCB) | QC Puffs Extruder Record |
+| `rice_extruder_lines` | Table MultiSelect → Quality Hub Factory Line | Rice Extruder (QCC) | QC Rice Extruder Record |
+| `frying_line_lines` | Table MultiSelect → Quality Hub Factory Line | Frying Line (QCD) | QC Frying Line Record |
+| `tasting_lines` | Table MultiSelect → Quality Hub Factory Line | Tasting (QCF) | QC Tasting Record |
+| `packaging_and_weight_lines` | Table MultiSelect → Quality Hub Factory Line | Packaging and Weight Checks (QCG/QCI) | QC Packaging Check, QC Weight Check (their form records both, with one line) |
+| `metal_detector_lines` | Table MultiSelect → Quality Hub Factory Line | CCP & Metal (QCH) | QC Metal Detector Log |
+
+A tab given no lines records on any line: nothing is restricted until the settings are filled in. Each line is kept once in a tab (`validate`, case and surrounding spaces aside). Receiving (QCA) has no factory line, and the retired Oven Record (QCE) is not offered, so neither has a field.
+
+The controller, `quality_hub_settings.py`, holds which field is each record type's (`TAB_FIELDS`), and:
+- `factory_lines(doctype)` — the lines records of `doctype` may be on, read from the cached settings (saving them clears the cache); `[]` for any line, and before the migrate makes the settings.
+- `get_factory_lines()` — whitelisted: those of each restricted record type, by doctype, for the hub's dialogs and the records' forms.
+- `check_factory_line(doc, method)` — the `validate` doc event of the seven restricted record types (`hooks.py`): refuses a Factory Line not given to the record's tab ("FRYING is not one of the factory lines Quality Hub Settings gives Puffs Extruder (QCB): CORN EXTRUSION."). The hub and the forms offer only those, but a Link takes any line typed in full. An amendment keeping the line of the record it amends is let through, as the Metal Detector Log keeps its detector: the tab may have left the line since. A draft is held to the lines as they are when it is saved again; a record with no line, or of a tab given none, is not checked.
+
+Quality Manager and System Manager set it; a Quality Controller reads it. The hub and the forms read the lines through `get_factory_lines`, whoever the user.
+
+---
+
 ### QCI — QC Weight Check
 
 **Naming:** `QCI-.YYYY.-.#####`  
@@ -573,6 +605,16 @@ The log's Metal Detector ID is filtered on it: `[["Metal Detector Factory Line",
 
 ---
 
+### Quality Hub Factory Line
+
+**Used by:** Quality Hub Settings (each tab's Table MultiSelect: a row per line, picked by its one Link)
+
+| Fieldname | Fieldtype | Label | `in_list_view` |
+|---|---|---|---|
+| `factory_line` | Link → Factory Line | Factory Line | ✅ (`reqd`) |
+
+---
+
 ### QC Weight Sample
 
 **Used by:** QC Weight Check (QCI)
@@ -616,6 +658,7 @@ The permission model is identical across all 9 parent DocTypes (read from the `"
 - Quality Managers have full CRUD including deletion.
 - Production Managers have **read-only** access — they can view QC records from their Operator Hub context but cannot create or modify them.
 - Child table permissions are inherited from the parent DocType.
+- [Quality Hub Settings](#quality-hub-settings) (since 2026-11): Quality Manager and System Manager set it; Quality Controller reads it.
 
 ---
 
@@ -841,7 +884,9 @@ The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier
 
 ## 9. Hooks & Doc Events
 
-The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. The `doc_events` block in `hooks.py` no longer contains any QC record entries.
+The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. Since 2026-11 it holds one entry per record type a Quality Hub tab restricts the line of (QC Puffs Extruder Record, QC Rice Extruder Record, QC Frying Line Record, QC Tasting Record, QC Packaging Check, QC Weight Check, QC Metal Detector Log): `validate` → `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line` ([Quality Hub Settings](#quality-hub-settings)). Frappe runs it after the record's own `validate`.
+
+`app_include_js` loads `/assets/isnack/js/quality_hub_lines.js` on every desk page: `isnack.quality_hub_lines`, the lines of each restricted record type (`load()`, from `get_factory_lines`) and the query offering them (`query(doctypes, df)`, the line when there is just one: `only_line(doctypes)`), which the Quality Hub's dialogs use; and, for each of those record types, form handlers: `setup` sets the Factory Line's query, `onload` fills in a new record's only line.
 
 ---
 
@@ -948,6 +993,17 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 
 ---
 
+### `get_factory_lines()`
+
+**Method:** `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines` (in the settings' controller, not `quality_hub.py`)  
+**Arguments:** none
+
+**Purpose:** The factory lines each Quality Hub tab records on (since 2026-11), for the hub's dialogs and the records' forms (`quality_hub_lines.js`). Read whoever the user: a Quality Controller who may not read the settings is still offered the lines.
+
+**Returns:** `{doctype: [line, ...]}` for each restricted record type; an empty list where the tab is given none (any line).
+
+---
+
 ## 11. Quality Hub UI Architecture
 
 **Page registration:** `isnack/isnack/page/quality-hub/`  
@@ -959,6 +1015,7 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 ```
 new QualityHub(wrapper)
   ├── frappe.ui.make_app_page(...)   // Frappe page scaffold
+  ├── isnack.quality_hub_lines.load() // Each tab's factory lines (Quality Hub Settings)
   ├── make_layout()                  // Render full tab HTML into DOM
   ├── bind_tabs()                    // Attach click/filter/sub-nav events
   ├── start_clock()                  // Live clock (updates every 30 s)
@@ -978,6 +1035,10 @@ new QualityHub(wrapper)
 | Packaging and Weight Checks (QCG/QCI) | `pkg_weight` | QC Packaging Check / QC Weight Check | — (one list; Packaging · Weight until 2026-11) |
 | CCP & Metal (QCH) | `metal` | QC Metal Detector Log | — |
 | Reports & Trends | `reports` | (matrix — the 8 types in use) | — |
+
+### Factory Lines by Tab
+
+Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#quality-hub-settings) gives its tab (`restrict_factory_line(dialog, doctypes)`, since 2026-11): the Link's `get_query` is `[["Factory Line", "name", "in", <lines>]]`, with "The lines Quality Hub Settings gives this tab" under the lines offered (`df.filter_description`), or nothing, and so every line with no note, when the tab is given none. When the tab has just one line, the dialog fills it in. The lines are those `isnack.quality_hub_lines` loaded as the hub opened, loaded again as each dialog opens. The Packaging and Weight form offers a line both its checks may be on (the lines their tab shares). The records' desk forms do the same (`quality_hub_lines.js`), and the records refuse another line (`check_factory_line`). A desk loaded before the settings came (no `isnack.quality_hub_lines`) offers every line.
 
 ### Per-Tab Components
 
@@ -1035,7 +1096,7 @@ new QualityHub(wrapper)
 - Date-picker + Refresh button → calls `get_completion_matrix(date)` 
 - Completion matrix rendered as `<table class="qh-table qh-matrix">` (shift rows × code columns)
   - ✅ = submitted, 🟡 = draft, — = not started
-- Quick Links row with direct `#List/` links to the 8 DocType list views in use, the Metal Detectors (since 2026-11), and the Quality Explorer page (see `docs/quality-explorer.md`)
+- Quick Links row with direct `#List/` links to the 8 DocType list views in use, the Metal Detectors (since 2026-11), and the Quality Explorer page (see `docs/quality-explorer.md`); and to the Quality Hub Settings form (`data-form`, since 2026-11), for a user who may read it
 
 ### Record List Datatable
 
@@ -1156,7 +1217,10 @@ Paper Sheet                   Digital Entry
 
 ```
 isnack/
-├── hooks.py                                  ← doc_events for all 9 QC DocTypes
+├── hooks.py                                  ← doc_events: each restricted QC record's Factory Line (check_factory_line); app_include_js
+│
+├── public/js/
+│   └── quality_hub_lines.js                  ← each tab's factory lines, on the hub's dialogs and the records' forms
 │
 ├── utils/
 │   ├── earlier_layout.py                     ← QCG/QCH/QCI earlier layout: the mark, kept; the patches' marking; grid columns forgotten
@@ -1237,6 +1301,17 @@ isnack/
         ├── metal_detector_factory_line/      ── child (Metal Detector's Factory Lines)
         │   ├── metal_detector_factory_line.json
         │   ├── metal_detector_factory_line.py
+        │   └── __init__.py
+        │
+        ├── quality_hub_settings/             ── single: each tab's factory lines
+        │   ├── quality_hub_settings.json
+        │   ├── quality_hub_settings.py       ── TAB_FIELDS, factory_lines, get_factory_lines, check_factory_line
+        │   ├── test_quality_hub_settings.py  ── the lines, the check, the doctypes, the hooks, the script
+        │   └── __init__.py
+        │
+        ├── quality_hub_factory_line/         ── child (Quality Hub Settings' lines)
+        │   ├── quality_hub_factory_line.json
+        │   ├── quality_hub_factory_line.py
         │   └── __init__.py
         │
         ├── qc_weight_check/                  ── QCI
@@ -1335,6 +1410,7 @@ docs/
 | QCG | Work Order | `work_order` | Packaging run being checked |
 | QCH | Factory Line | `factory_line` | Line whose metal detector is being verified (CCP); its Metal Detector ID offers the detectors used on it |
 | Metal Detector | Factory Line | `factory_lines` (Metal Detector Factory Line) | The lines a detector is used on |
+| Quality Hub Settings | Factory Line | `*_lines` (Quality Hub Factory Line) | The lines each Quality Hub tab records on |
 | QCI | Item | `item_code` | Finished product being weight-checked |
 | QCI | Batch | `batch_no` | The finished goods batch |
 | Live Monitor | Quality Inspection Reading | (SQL join) | Rejected readings displayed in "Recent Out-of-Range" panel |
@@ -1372,7 +1448,7 @@ These fixtures are exported/imported with `bench export-fixtures` / `bench impor
 
 ### Factory Line Setup
 
-Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link key across all QC record DocTypes. Each **Metal Detector** names the lines it is used on: a metal detector log offers it on those only.
+Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link key across all QC record DocTypes. Each **Metal Detector** names the lines it is used on: a metal detector log offers it on those only. **Quality Hub Settings** gives each Quality Hub tab the lines it records on; a tab given none offers every line.
 
 ### Deployment Steps
 
