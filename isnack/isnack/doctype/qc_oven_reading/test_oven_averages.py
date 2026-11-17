@@ -1,11 +1,12 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
-"""Reading averages of the extruder records and the old oven records (no database)."""
+"""Reading averages of the extruder and frying records and the old oven records (no database)."""
 
 import unittest
 from types import SimpleNamespace
 
+from isnack.isnack.doctype.qc_frying_line_record.qc_frying_line_record import QCFryingLineRecord
 from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import average, oven_averages
 from isnack.isnack.doctype.qc_oven_record.qc_oven_record import QCOvenRecord
 from isnack.isnack.doctype.qc_puffs_extruder_record.qc_puffs_extruder_record import QCPuffsExtruderRecord
@@ -112,6 +113,37 @@ class TestExtruderRecords(unittest.TestCase):
 				)
 				record_type.validate(rec)
 				self.assertEqual(self._new_averages(record_type, rec), (14.0, 180, 4.0), (record_type.__name__, blank))
+
+
+def _frying(oil_temperature=None, product_moisture=None):
+	return SimpleNamespace(oil_temperature=oil_temperature, product_moisture=product_moisture)
+
+
+class TestFryingRecord(unittest.TestCase):
+	"""A Frying Line record averages its readings' oil temperature and moisture
+	content, leaving out a reading left blank, as the extruder records do."""
+
+	def _averages(self, readings):
+		rec = SimpleNamespace(readings=readings)
+		QCFryingLineRecord.validate(rec)
+		return rec.avg_oil_temperature, rec.avg_product_moisture, rec.out_of_range_count
+
+	def test_averages_the_readings_that_have_a_value(self):
+		oil, moisture, out_of_range = self._averages([_frying(178, 1.5), _frying(176, 1.7), _frying(180, None)])
+		self.assertAlmostEqual(oil, 178)
+		self.assertAlmostEqual(moisture, 1.6)
+		self.assertEqual(out_of_range, 0)
+
+	def test_a_blank_reading_is_left_out_once_saved_as_0(self):
+		# blank in the dialog: None on the first save, 0.0 when saved again or submitted
+		for blank in (None, 0.0):
+			readings = [_frying(180, 2.0), _frying(170, blank), _frying(blank, 1.0), _frying(blank, blank)]
+			self.assertEqual(self._averages(readings), (175, 1.5, 0), blank)
+
+	def test_no_readings(self):
+		self.assertEqual(self._averages([]), (0, 0, 0))
+		self.assertEqual(self._averages(None), (0, 0, 0))
+		self.assertEqual(self._averages([_frying(0.0, 0.0), _frying()]), (0, 0, 0))
 
 
 class TestOvenRecord(unittest.TestCase):

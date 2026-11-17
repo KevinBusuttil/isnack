@@ -4,12 +4,15 @@
 import frappe
 from frappe.model.document import Document
 
+from isnack.isnack.doctype.qc_oven_reading.qc_oven_reading import average
+
 
 class QCFryingLineRecord(Document):
     def validate(self):
+        # an oil temperature or moisture of 0 is a reading left blank (Frappe
+        # saves a blank Float as 0), as on the extruder records: left out of
+        # the average, so saving again or submitting gives the same one
         readings = self.readings or []
-        oil_temps = [r.oil_temperature for r in readings if r.oil_temperature is not None]
-        moistures = [r.product_moisture for r in readings if r.product_moisture is not None]
-        self.avg_oil_temperature = sum(oil_temps) / len(oil_temps) if oil_temps else 0
-        self.avg_product_moisture = sum(moistures) / len(moistures) if moistures else 0
+        self.avg_oil_temperature = average(readings, "oil_temperature", zero_is_blank=True)
+        self.avg_product_moisture = average(readings, "product_moisture", zero_is_blank=True)
         self.out_of_range_count = 0  # placeholder for future spec-based logic
