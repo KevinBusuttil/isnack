@@ -187,10 +187,17 @@ class TestFryingAveragesPatch(unittest.TestCase):
 		self.assertIn("Avg Moisture Content (%) 1.067 → 1.6", text)
 
 	def test_a_record_whose_averages_stand_is_left_alone(self, _table_exists):
-		doc = _frying_record(177.0, 1.6, [_stored(178, 1.5), _stored(176, 1.7)])
+		# stored as the column keeps them, to 9 decimals: 533 / 3 and 4.9 / 3
+		thirds = _frying_record(177.666666667, 1.633333333, [_stored(178, 1.5), _stored(176, 1.6), _stored(179, 1.8)])
+		# readings to the 9 decimals the column keeps, averaging a hair below a 5
+		# at the 7th decimal, which the column holds as that 5: rounding each to
+		# 6 places would part them (…937 and …938)
+		on_the_half = _frying_record(
+			178.0, 1.6479375, [_stored(178, 1.647937499), _stored(178, 1.6479375), _stored(178, 1.6479375)]
+		)
 		blank_row_only = _frying_record(0, 0, [_stored(0, 0)])
-		self._run({"QCD-2026-00002": doc, "QCD-2026-00003": blank_row_only})
-		for record in (doc, blank_row_only):
+		self._run({"QCD-2026-00002": thirds, "QCD-2026-00005": on_the_half, "QCD-2026-00003": blank_row_only})
+		for record in (thirds, on_the_half, blank_row_only):
 			record.db_set.assert_not_called()
 			record.add_comment.assert_not_called()
 

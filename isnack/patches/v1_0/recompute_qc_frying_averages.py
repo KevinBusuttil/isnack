@@ -32,10 +32,14 @@ def execute():
         doc = frappe.get_doc("QC Frying Line Record", name)
         readings = doc.readings or []
         after = {field: average(readings, reading, zero_is_blank=True) for field, reading, _label in AVERAGES}
+        # the column keeps 9 decimals, so an average that stands differs by
+        # less than 1e-9 from the one worked out again; a reading left blank
+        # that was counted moves it by far more. (No flt(x, precision): its
+        # rounding follows System Settings and could part two equal values.)
         changed = [
             (label, flt(doc.get(field)), after[field])
             for field, _reading, label in AVERAGES
-            if flt(after[field], 6) != flt(doc.get(field), 6)
+            if abs(after[field] - flt(doc.get(field))) > 1e-6
         ]
         if not changed:
             continue
@@ -44,6 +48,6 @@ def execute():
         doc.add_comment(
             "Info",
             "Averages worked out again, leaving readings left blank out: "
-            + "; ".join(f"{label} {flt(old, 3)} → {flt(new, 3)}" for label, old, new in changed)
+            + "; ".join(f"{label} {round(old, 3)} → {round(new, 3)}" for label, old, new in changed)
             + ".",
         )
