@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -44,8 +45,14 @@ class _Settings(frappe._dict):
         return [frappe._dict(factory_line=line) for line in self.lines.get(fieldname, [])]
 
 
+@contextmanager
 def _given(**lines):
-    return patch("frappe.get_cached_doc", return_value=_Settings(lines=lines))
+    """Quality Hub Settings giving ``lines``, on a site that has them. The
+    settings are read only once their DocType exists (frappe.db.exists), which
+    Frappe looks up with frappe.db.get_value: patched here, so a test that
+    patches get_value for the record an amendment amends sees only that call."""
+    with patch("frappe.db.exists", return_value=True), patch("frappe.get_cached_doc", return_value=_Settings(lines=lines)):
+        yield
 
 
 _META = patch("frappe.get_meta", return_value=SimpleNamespace(get_label=LABELS.get))
