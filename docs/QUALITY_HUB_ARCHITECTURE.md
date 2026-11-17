@@ -78,7 +78,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
-Access is restricted to the **Quality Controller**, **Quality Manager**, and **System Manager** roles. **Production Manager** has read-only visibility into all QC records (see [Section 7](#7-rbac--permissions)).
+The Quality Hub and Quality Explorer pages set no roles of their own (`"roles": []` in their page JSON), so any desk user can open them; what a user sees and may do there follows the QC record types' permissions. The **Quality Controller**, **Quality Manager**, and **System Manager** roles record and review QC records, and **Production Manager** has read-only visibility into all of them (see [Section 7](#7-rbac--permissions)).
 
 ### Position Within the isnack MES Architecture
 
