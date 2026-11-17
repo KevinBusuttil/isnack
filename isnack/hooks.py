@@ -16,6 +16,9 @@ app_include_js = [
     "/assets/isnack/js/trial_balance.js",
     "/assets/isnack/js/manual_line_pricing.js",
     "/assets/isnack/js/sales_item_group_filter.js",
+    # the factory lines Quality Hub Settings gives each Quality Hub tab, on the
+    # hub's dialogs and its records' forms
+    "/assets/isnack/js/quality_hub_lines.js",
 ]
 
 # include js, css files in header of web template
@@ -186,6 +189,19 @@ doc_events = {
     },
     "Asset Maintenance Log": {
         "validate": "isnack.overrides.asset_maintenance_log.set_operational_defaults",
+    },
+    # a QC record's Factory Line is one Quality Hub Settings gives its tab
+    **{
+        doctype: {"validate": "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line"}
+        for doctype in (
+            "QC Puffs Extruder Record",
+            "QC Rice Extruder Record",
+            "QC Frying Line Record",
+            "QC Tasting Record",
+            "QC Packaging Check",
+            "QC Weight Check",
+            "QC Metal Detector Log",
+        )
     },
 }
 

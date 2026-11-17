@@ -705,6 +705,88 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 		self.assertEqual(out["line_onchange"], 4)
 
 
+class TestFactoryLinesByTab(unittest.TestCase):
+    """Since 2026-11 each tab's dialog offers the factory lines Quality Hub
+    Settings gives the tab (quality_hub_lines.js, which the records' forms use
+    too), and takes the only one when there is just one."""
+
+    def setUp(self):
+        with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+            self.script = fh.read()
+
+    def _method(self, signature):
+        start = self.script.index(f"    {signature} {{")
+        return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+    def test_each_dialog_is_restricted(self):
+        self.assertIn("this.restrict_factory_line(dialog, [doctype]);", self._method("open_new_record(doctype)"))
+        # the Packaging and Weight form: a line both checks may be on
+        self.assertIn(
+            "this.restrict_factory_line(dialog, records.map((record) => record.doctype));",
+            self._method("open_packaging_and_weight()"),
+        )
+        # loaded as the hub opens, ready for its dialogs
+        self.assertIn("if (isnack.quality_hub_lines) isnack.quality_hub_lines.load();", self._method("constructor(wrapper)"))
+
+    def test_the_settings_are_a_quick_link(self):
+        self.assertIn(
+            '${frappe.model.can_read("Quality Hub Settings") ? `<a class="btn btn-sm btn-default qh-quick-link" href="#" data-form="Quality Hub Settings">${__("Quality Hub Settings")}</a>` : ""}',
+            self.script,
+        )
+        self.assertIn('frappe.set_route("Form", form);', self.script)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+    def test_the_lines_offered_and_the_only_line(self):
+        method = self._method("restrict_factory_line(dialog, doctypes)")
+        script = (
+            f"class Hub {{\n{method}\n}}\n"
+            "const isnack = {};\n"
+            "const make_lines = (given) => ({\n"
+            "  asked: [],\n"
+            "  load() { return Promise.resolve(given); },\n"
+            "  query(doctypes, df) { this.asked.push([doctypes, !!df]); return {filters: [['Factory Line', 'name', 'in', given]]}; },\n"
+            "  only_line(doctypes) { return given.length === 1 ? given[0] : null; },\n"
+            "});\n"
+            "const make_dialog = (values, fields = ['factory_line']) => {\n"
+            "  const dict = {}; fields.forEach((f) => { dict[f] = {df: {}}; });\n"
+            "  return {values, set: [], get_field: (f) => dict[f], get_value: (f) => values[f],\n"
+            "    set_value(f, v) { this.set.push([f, v]); values[f] = v; }, dict};\n"
+            "};\n"
+            "const flush = () => new Promise((r) => setTimeout(r, 0));\n"
+            "(async () => {\n"
+            "  const out = {};\n"
+            "  const hub = new Hub();\n"
+            "  // a desk loaded before the settings came: nothing to do\n"
+            "  const early = make_dialog({});\n"
+            "  hub.restrict_factory_line(early, ['QC Tasting Record']); await flush();\n"
+            "  out.early = [early.dict.factory_line.get_query === undefined, early.set];\n"
+            "  isnack.quality_hub_lines = make_lines(['CORN EXTRUSION']);\n"
+            "  const one = make_dialog({});\n"
+            "  hub.restrict_factory_line(one, ['QC Puffs Extruder Record']); await flush(); await flush();\n"
+            "  out.query = one.dict.factory_line.get_query();\n"
+            "  out.asked = isnack.quality_hub_lines.asked;\n"
+            "  out.one = one.set;\n"
+            "  // a line there already, a tab of two lines, a dialog with no line: left as they are\n"
+            "  const picked = make_dialog({factory_line: 'CORN MIX'});\n"
+            "  hub.restrict_factory_line(picked, ['QC Puffs Extruder Record']); await flush(); await flush();\n"
+            "  isnack.quality_hub_lines = make_lines(['PACKING LINE 1', 'PACKING LINE 2']);\n"
+            "  const two = make_dialog({});\n"
+            "  hub.restrict_factory_line(two, ['QC Packaging Check', 'QC Weight Check']); await flush(); await flush();\n"
+            "  const none = make_dialog({}, ['supplier']);\n"
+            "  hub.restrict_factory_line(none, ['QC Receiving Record']); await flush(); await flush();\n"
+            "  out.left = [picked.set, two.set, none.set];\n"
+            "  console.log(JSON.stringify(out));\n"
+            "})();\n"
+        )
+        out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out["early"], [True, []])
+        self.assertEqual(out["query"], {"filters": [["Factory Line", "name", "in", ["CORN EXTRUSION"]]]})
+        # asked with the field's df, for the note under the lines
+        self.assertEqual(out["asked"], [[["QC Puffs Extruder Record"], True]])
+        self.assertEqual(out["one"], [["factory_line", "CORN EXTRUSION"]])
+        self.assertEqual(out["left"], [[], [], []])
+
+
 class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):
 		for doctype in QC_DOCTYPES.values():

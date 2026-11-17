@@ -374,6 +374,9 @@ isnack.quality_hub.QualityHub = class {
 
         this.active_tab = "monitor";
         this.active_process_sub = "puffs";
+        // the factory lines each tab records on (Quality Hub Settings), ready
+        // for its dialogs; each dialog loads them again as it opens
+        if (isnack.quality_hub_lines) isnack.quality_hub_lines.load();
         this.make_layout();
         this.bind_tabs();
         this.start_clock();
@@ -576,6 +579,7 @@ isnack.quality_hub.QualityHub = class {
                             <a class="btn btn-sm btn-default qh-ql-amber qh-quick-link" href="#" data-doctype="Metal Detector">${__("Metal Detectors")}</a>
                             <a class="btn btn-sm btn-default qh-ql-teal qh-quick-link" href="#" data-doctype="QC Weight Check">${__("Weight Checks")}</a>
                             <a class="btn btn-sm btn-default qh-ql-blue qh-quick-link" href="#" data-page="quality-explorer">${__("Quality Explorer")}</a>
+                            ${frappe.model.can_read("Quality Hub Settings") ? `<a class="btn btn-sm btn-default qh-quick-link" href="#" data-form="Quality Hub Settings">${__("Quality Hub Settings")}</a>` : ""}
                         </div>
                     </div>
                 </div>
@@ -625,8 +629,11 @@ isnack.quality_hub.QualityHub = class {
             const $link = $(e.currentTarget);
             const doctype = $link.data("doctype");
             const page = $link.data("page");
+            const form = $link.data("form");
             if (doctype) {
                 frappe.set_route("List", doctype);
+            } else if (form) {
+                frappe.set_route("Form", form);
             } else if (page) {
                 frappe.set_route(page);
             }
@@ -689,9 +696,26 @@ isnack.quality_hub.QualityHub = class {
         dialog.show();
         dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
         this.empty_cleared_links(dialog);
+        this.restrict_factory_line(dialog, [doctype]);
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
         tables.forEach((table) => this.render_child_editor(dialog, table));
+    }
+
+    /** The Factory Line of a dialog recording ``doctypes``: the lines Quality
+     *  Hub Settings gives their tab (every line when it gives none), as the
+     *  records' forms offer them; their only line, when there is just one. */
+    restrict_factory_line(dialog, doctypes) {
+        const lines = isnack.quality_hub_lines;
+        const field = dialog.get_field("factory_line");
+        // (a desk loaded before the settings came has no lines to give)
+        if (!field || !lines) return;
+        // a Dialog has no set_query: the Link reads get_query from its control
+        field.get_query = () => lines.query(doctypes, field.df);
+        lines.load().then(() => {
+            const line = lines.only_line(doctypes);
+            if (line && !dialog.get_value("factory_line")) dialog.set_value("factory_line", line);
+        });
     }
 
     /** A Link the dialog fills fields from (``fetch_from``: the Metal Detector,
@@ -801,6 +825,8 @@ isnack.quality_hub.QualityHub = class {
             this.child_tables(record.config).forEach((table) => this.render_child_editor(dialog, table));
             if (!record.can_create) this.toggle_combined_record(dialog, records, record);
         });
+        // the Record Details are both checks': a line both may be on
+        this.restrict_factory_line(dialog, records.map((record) => record.doctype));
         this.setup_packaging_and_weight(dialog);
     }
 

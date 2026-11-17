@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "creation": "2026-11-17 09:00:00.000000",
+ "description": "The Quality Hub's settings: the factory lines each of its tabs records on.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "factory_lines_section",
+  "puffs_extruder_lines",
+  "rice_extruder_lines",
+  "frying_line_lines",
+  "factory_lines_column",
+  "tasting_lines",
+  "packaging_and_weight_lines",
+  "metal_detector_lines"
+ ],
+ "fields": [
+  {
+   "description": "The factory lines each Quality Hub tab records on. A tab offers only its lines, on the Quality Hub and on its records' forms, and fills in its line when it has just one; a record of it on another line is refused. A tab with no lines offers every line.",
+   "fieldname": "factory_lines_section",
+   "fieldtype": "Section Break",
+   "label": "Factory Lines by Tab"
+  },
+  {
+   "fieldname": "puffs_extruder_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Puffs Extruder (QCB)",
+   "options": "Quality Hub Factory Line"
+  },
+  {
+   "fieldname": "rice_extruder_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Rice Extruder (QCC)",
+   "options": "Quality Hub Factory Line"
+  },
+  {
+   "fieldname": "frying_line_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Frying Line (QCD)",
+   "options": "Quality Hub Factory Line"
+  },
+  {
+   "fieldname": "factory_lines_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tasting_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Tasting (QCF)",
+   "options": "Quality Hub Factory Line"
+  },
+  {
+   "fieldname": "packaging_and_weight_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "Packaging and Weight Checks (QCG/QCI)",
+   "options": "Quality Hub Factory Line"
+  },
+  {
+   "fieldname": "metal_detector_lines",
+   "fieldtype": "Table MultiSelect",
+   "label": "CCP & Metal (QCH)",
+   "options": "Quality Hub Factory Line"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Quality Hub Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "share": 1,
+   "write": 1,
+   "role": "System Manager"
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "share": 1,
+   "write": 1,
+   "role": "Quality Manager"
+  },
+  {
+   "read": 1,
+   "role": "Quality Controller"
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
