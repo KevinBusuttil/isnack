@@ -120,7 +120,7 @@
   {
    "fieldname": "avg_moisture_corn_content",
    "fieldtype": "Float",
-   "label": "Avg Moisture Corn Content (%)",
+   "label": "Avg Moisture Rice Content (%)",
    "read_only": 1,
    "depends_on": "eval:(doc.rice_readings || []).length"
   },
@@ -229,7 +229,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-11 10:00:00.000000",
+ "modified": "2026-11-18 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Rice Extruder Record",

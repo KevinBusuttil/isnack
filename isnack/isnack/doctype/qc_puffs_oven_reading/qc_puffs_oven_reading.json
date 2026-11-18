@@ -9,18 +9,23 @@
   "time_slot",
   "oven_temp",
   "belt_speed",
-  "moisture"
+  "moisture",
+  "tank_temp",
+  "motor_speed",
+  "flavour_speed"
  ],
  "fields": [
   {
    "fieldname": "time_slot",
    "fieldtype": "Time",
+   "columns": 1,
    "in_list_view": 1,
    "label": "Time Slot"
   },
   {
    "fieldname": "oven_temp",
    "fieldtype": "Float",
+   "columns": 1,
    "in_list_view": 1,
    "label": "Oven Temp (\u00b0C)"
   },
@@ -33,15 +38,35 @@
   {
    "fieldname": "moisture",
    "fieldtype": "Float",
+   "columns": 1,
    "in_list_view": 1,
    "label": "Moisture (%)"
+  },
+  {
+   "fieldname": "tank_temp",
+   "fieldtype": "Float",
+   "columns": 1,
+   "in_list_view": 1,
+   "label": "Slurry Tank Temp (\u00b0C)"
+  },
+  {
+   "fieldname": "motor_speed",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Mixer Speed (Hz)"
+  },
+  {
+   "fieldname": "flavour_speed",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Flavour Speed (Hz)"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-11-10 15:00:00.000000",
+ "modified": "2026-11-18 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Puffs Oven Reading",

@@ -11,7 +11,7 @@ from isnack.utils import earlier_readings
 # table that takes new readings instead.
 EARLIER_TABLES = {
     "readings": ("Readings (Earlier Layout)", "Readings"),
-    "oven_readings": ("Oven Readings (Earlier Layout)", "Oven Readings"),
+    "oven_readings": ("Oven Readings (Earlier Layout)", "Oven / Slurry Readings"),
 }
 
 # The summary fields of each table, shown only when it has rows (depends_on).

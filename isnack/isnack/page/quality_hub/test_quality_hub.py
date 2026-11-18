@@ -112,7 +112,7 @@ class TestFryingReadings(unittest.TestCase):
 class TestExtruderReadings(unittest.TestCase):
 	"""Puffs and Rice have their own readings since 2026-11; their earlier ones are kept."""
 
-	READINGS = [
+	PUFFS_READINGS = [
 		("time_slot", "Time", "Time Slot"),
 		("moisture_corn_content", "Float", "Moisture Corn Content (%)"),
 		("start_temp", "Float", "Start Temp (°C)"),
@@ -120,15 +120,21 @@ class TestExtruderReadings(unittest.TestCase):
 		("feed_motor", "Float", "Feed Motor (Hz)"),
 		("cutter_speed", "Float", "Cutter Speed (Hz)"),
 	]
-	PUFFS_OVEN = [
+	# the rice's moisture (2026-11; Moisture Corn Content until then), under
+	# the same fieldname, so the readings recorded stay where they are
+	RICE_READINGS = [
+		PUFFS_READINGS[0],
+		("moisture_corn_content", "Float", "Moisture Rice Content (%)"),
+		*PUFFS_READINGS[2:],
+	]
+	# the same on both since 2026-11: the oven, and the slurry's tank, mixer
+	# and flavour (the Puffs had the oven's alone; the Rice read Tank Temp and
+	# Motor Speed); the extruder's own Motor Speed, in its readings, keeps its label
+	OVEN_SLURRY = [
 		("time_slot", "Time", "Time Slot"),
 		("oven_temp", "Float", "Oven Temp (°C)"),
 		("belt_speed", "Float", "Belt Speed (Hz)"),
 		("moisture", "Float", "Moisture (%)"),
-	]
-	# the slurry's tank and mixer (2026-11; Tank Temp and Motor Speed until
-	# then); the extruder's own Motor Speed, in READINGS, keeps its label
-	RICE_OVEN = PUFFS_OVEN + [
 		("tank_temp", "Float", "Slurry Tank Temp (°C)"),
 		("motor_speed", "Float", "Mixer Speed (Hz)"),
 		("flavour_speed", "Float", "Flavour Speed (Hz)"),
@@ -138,7 +144,7 @@ class TestExtruderReadings(unittest.TestCase):
 	RECORDS = {
 		"QC Puffs Extruder Record": (
 			("puffs_readings", "QC Puffs Extruder Reading"),
-			("puffs_oven_readings", "QC Puffs Oven Reading", "Oven Readings"),
+			("puffs_oven_readings", "QC Puffs Oven Reading", "Oven / Slurry Readings"),
 			"avg_puffs_oven_moisture",
 			"qc_puffs_extruder_record",
 		),
@@ -152,10 +158,10 @@ class TestExtruderReadings(unittest.TestCase):
 
 	def test_the_reading_columns(self):
 		for child, expected in (
-			("QC Puffs Extruder Reading", self.READINGS),
-			("QC Puffs Oven Reading", self.PUFFS_OVEN),
-			("QC Rice Extruder Reading", self.READINGS),
-			("QC Rice Oven Reading", self.RICE_OVEN),
+			("QC Puffs Extruder Reading", self.PUFFS_READINGS),
+			("QC Puffs Oven Reading", self.OVEN_SLURRY),
+			("QC Rice Extruder Reading", self.RICE_READINGS),
+			("QC Rice Oven Reading", self.OVEN_SLURRY),
 		):
 			doc = _doctype(child)
 			self.assertEqual(doc["istable"], 1, child)
@@ -165,6 +171,19 @@ class TestExtruderReadings(unittest.TestCase):
 			# units for the row number and a spare, and drops the columns past 10
 			self.assertTrue(all(f.get("in_list_view") for f in doc["fields"]), child)
 			self.assertLessEqual(sum(f.get("columns") or 2 for f in doc["fields"]), 10, child)
+
+	def test_the_puffs_takes_its_oven_and_slurry_readings_as_the_rice_does(self):
+		# the same columns, widths and labels (2026-11; the Puffs had the oven's alone)
+		puffs, rice = _doctype("QC Puffs Oven Reading"), _doctype("QC Rice Oven Reading")
+		self.assertEqual(puffs["field_order"], rice["field_order"])
+		self.assertEqual(puffs["fields"], rice["fields"])
+
+	def test_the_rice_records_its_rice_moisture(self):
+		# Moisture Rice Content on the Rice, as its average (2026-11; Moisture Corn
+		# Content until then); the Puffs keeps its corn
+		for doctype, grain in (("QC Puffs Extruder Record", "Corn"), ("QC Rice Extruder Record", "Rice")):
+			label = _fields(_doctype(doctype))["avg_moisture_corn_content"]["label"]
+			self.assertEqual(label, f"Avg Moisture {grain} Content (%)", doctype)
 
 	def test_the_record_takes_them_in_its_readings_and_oven_readings(self):
 		for doctype, ((table, child), (oven_table, oven_child, oven_label), oven_moisture, _script) in self.RECORDS.items():
@@ -203,6 +222,7 @@ class TestExtruderReadings(unittest.TestCase):
 			self.assertEqual(fields["oven_readings"]["options"], "QC Oven Reading", doctype)
 			section = fields["earlier_readings_section"]
 			self.assertEqual(section["fieldtype"], "Section Break", doctype)
+			self.assertIn("new readings go in Readings and Oven / Slurry Readings above.", section["description"], doctype)
 			self.assertIn("doc.readings", section["depends_on"], doctype)
 			self.assertIn("doc.oven_readings", section["depends_on"], doctype)
 			earlier = {
@@ -262,16 +282,19 @@ class TestExtruderReadings(unittest.TestCase):
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js"), encoding="utf-8") as fh:
 			script = fh.read()
 		column = re.compile(r'\{ fieldname: "(\w+)", fieldtype: "(\w+)", label: __\("([^"]+)"\) \}')
-		for doctype, after, oven in (
-			("QC Puffs Extruder Record", "QC Rice Extruder Record", self.PUFFS_OVEN),
-			("QC Rice Extruder Record", "QC Frying Line Record", self.RICE_OVEN),
+		for doctype, after, readings in (
+			("QC Puffs Extruder Record", "QC Rice Extruder Record", self.PUFFS_READINGS),
+			("QC Rice Extruder Record", "QC Frying Line Record", self.RICE_READINGS),
 		):
 			start = script.index(f'"{doctype}": {{')
 			block = script[start : script.index(f'"{after}": {{', start)]
 			extra, parent = block.split("parent_fields: [")
+			oven = extra[extra.index("extra_child_tables: [") :]
 			own = parent.split("child_fields: [")[1]
-			self.assertEqual(column.findall(extra), oven, doctype)
-			self.assertEqual(column.findall(own), self.READINGS, doctype)
+			self.assertEqual(column.findall(oven), self.OVEN_SLURRY, doctype)
+			self.assertEqual(column.findall(own), readings, doctype)
+			label = re.search(r'child_label: __\("([^"]+)"\)', oven).group(1)
+			self.assertEqual(label, "Oven / Slurry Readings", doctype)
 
 	def test_the_dialog_takes_the_new_tables(self):
 		for doctype, ((table, child), (oven_table, oven_child, _label), *_rest) in self.RECORDS.items():
