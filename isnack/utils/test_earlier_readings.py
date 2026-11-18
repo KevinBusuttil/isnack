@@ -132,7 +132,7 @@ class _NoNewRowsInTheEarlierTables:
 class TestPuffsEarlierTables(_NoNewRowsInTheEarlierTables, unittest.TestCase):
     RECORD = QCPuffsExtruderRecord
     DOCTYPE = "QC Puffs Extruder Record"
-    OVEN_INSTEAD = "Oven Readings"
+    OVEN_INSTEAD = "Oven / Slurry Readings"
     TABLES = ("puffs_readings", "puffs_oven_readings")
 
 

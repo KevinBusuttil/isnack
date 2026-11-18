@@ -127,12 +127,12 @@
   {
    "fieldname": "oven_readings_section",
    "fieldtype": "Section Break",
-   "label": "Oven Readings"
+   "label": "Oven / Slurry Readings"
   },
   {
    "fieldname": "puffs_oven_readings",
    "fieldtype": "Table",
-   "label": "Oven Readings",
+   "label": "Oven / Slurry Readings",
    "options": "QC Puffs Oven Reading"
   },
   {
@@ -153,7 +153,7 @@
    "fieldname": "earlier_readings_section",
    "fieldtype": "Section Break",
    "label": "Earlier Readings",
-   "description": "Readings recorded in the earlier layout, before the readings changed. They can be corrected on a draft; new readings go in Readings and Oven Readings above.",
+   "description": "Readings recorded in the earlier layout, before the readings changed. They can be corrected on a draft; new readings go in Readings and Oven / Slurry Readings above.",
    "depends_on": "eval:(doc.readings || []).length || (doc.oven_readings || []).length"
   },
   {
@@ -229,7 +229,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-10 17:00:00.000000",
+ "modified": "2026-11-18 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Puffs Extruder Record",

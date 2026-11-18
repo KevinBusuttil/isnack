@@ -62,9 +62,9 @@ The **Quality Hub** is isnack's third specialist interface, sitting alongside th
 
 Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, Oven, Tasting, Packaging, Metal Detector, Weight Check) is mapped 1-to-1 to a submittable Frappe DocType. The Quality Hub page surfaces the DocTypes through a unified, tabbed interface, and the backend triggers automatic field calculations on submission.
 
-**Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven Readings** section under their own readings (on QCC, **Oven / Slurry Readings** since 2026-11). QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
+**Oven record retired (2026-10).** Oven readings are now taken on the Puffs Extruder (QCB) and Rice Extruder (QCC) records, in an **Oven / Slurry Readings** section under their own readings (**Oven Readings**, with the oven's columns alone, on both until 2026-11: QCC's was renamed when it took the slurry's columns, QCB's when it took the Rice's). QC Oven Record (QCE) stays, so old records remain readable in the desk and in the Quality Explorer, but the Quality Hub no longer offers, counts or expects it (`RETIRED_QC_CODES` in `quality_hub.py`).
 
-**Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading, shown as **Oven / Slurry Readings**). Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
+**Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading); both oven tables are shown as **Oven / Slurry Readings**. Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
 
 **Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer shows it with no result.
 
@@ -79,6 +79,10 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 **Metal detector log: the detector and each test's time and test piece mandatory (2026-11).** On a log made since, the **Metal Detector ID** is mandatory, and so are each test's **Test Time** and **Test Piece Type**; and a log is not submitted without a test (`before_submit`: the Quality Hub already asked for one before it saved, the desk form did not). The fields are not `reqd` on the doctypes, as a log made before keeps what it recorded (a draft, an amendment, a restore): the controller requires them on a log made since (`require_detector_and_tests`), and the form script marks them required there, as the Quality Hub dialog does. A draft from before that a log made since could not be (no detector, a test without a time or a test piece) is marked earlier layout when it is deleted (`on_trash`), and so is one deleted before the deploy (the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout`), so a restore brings it back (`finished_the_new_way`). Test Piece Type starts blank (a blank first option: a Select starts at its first option, so every new test read Fe until someone changed it), and Frappe no longer fills in a test's Test Time or Test Piece Type when it saves the log (`QCMetalDetectorTest.__setup__`; it gave a Time the time of saving), so a test sent without them is refused rather than given them.
 
 **Rice extruder: the slurry's tank and mixer (2026-11).** On the Rice Extruder's **Oven / Slurry Readings**, `tank_temp` reads **Slurry Tank Temp (°C)** and `motor_speed` **Mixer Speed (Hz)** (Tank Temp and Motor Speed until then). Only the labels changed, so the readings recorded stay where they are. The extruder's own Motor Speed, in its Readings, keeps its label.
+
+**Puffs extruder: Oven / Slurry Readings, as on the Rice (2026-11).** The Puffs Extruder's oven readings are its **Oven / Slurry Readings** (Oven Readings until then), with the Rice's columns: QC Puffs Oven Reading took **Slurry Tank Temp (°C)** (`tank_temp`), **Mixer Speed (Hz)** (`motor_speed`) and **Flavour Speed (Hz)** (`flavour_speed`), and the Rice's column widths, on the desk form and in the Quality Hub dialog. The two oven tables stay separate doctypes with the same fields. Oven readings recorded before read 0 in the three new columns, as Frappe saves a blank number; none are averaged.
+
+**Rice extruder: the rice's moisture (2026-11).** On the Rice Extruder, `moisture_corn_content` reads **Moisture Rice Content (%)** in its Readings, and its average `avg_moisture_corn_content` **Avg Moisture Rice Content (%)** (Moisture Corn Content until then). Only the labels changed, so the readings recorded stay where they are. The Puffs Extruder keeps **Moisture Corn Content (%)**.
 
 **Factory lines by tab (2026-11).** [Quality Hub Settings](#quality-hub-settings) gives each Quality Hub tab that records a factory line the lines it records on: Puffs Extruder, Rice Extruder, Frying Line, Tasting, Packaging and Weight Checks (one list for both checks, which its form records together) and CCP & Metal. A tab's New dialog, and its records' desk forms, offer only those lines, and fill in the line when the tab has just one; the records refuse another line (`check_factory_line`, a `validate` doc event), an amendment keeping the line of the record it amends. A tab given no lines offers every line, as before the settings came. Receiving has no factory line.
 
@@ -220,8 +224,8 @@ A delivery is inspected before any line or Work Order touches it, so QCA has no 
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `puffs_readings` | Table → QC Puffs Extruder Reading | Readings | Child table (since 2026-11) |
 | `avg_moisture_corn_content` | Float | Avg Moisture Corn Content (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are readings |
-| `oven_readings_section` | Section Break | Oven Readings | — |
-| `puffs_oven_readings` | Table → QC Puffs Oven Reading | Oven Readings | Child table, optional (since 2026-11) |
+| `oven_readings_section` | Section Break | Oven / Slurry Readings | — (Oven Readings until 2026-11) |
+| `puffs_oven_readings` | Table → QC Puffs Oven Reading | Oven / Slurry Readings | Child table, optional (since 2026-11; labelled Oven Readings at first) |
 | `avg_oven_temp` | Float | Avg Oven Temp (°C) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
 | `avg_puffs_oven_moisture` | Float | Avg Oven Moisture (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
 | `earlier_readings_section` | Section Break | Earlier Readings | shown only when `readings` or `oven_readings` has rows |
@@ -243,14 +247,14 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 ### QCC — QC Rice Extruder Record
 
 **Naming:** `QCC-.YYYY.-.#####`  
-**Purpose:** Shift-level extruder process record for rice extruder lines, with per-time-slot readings. Laid out as QCB, with an oven and slurry table of its own.
+**Purpose:** Shift-level extruder process record for rice extruder lines, with per-time-slot readings. Laid out as QCB, with tables of its own: its Readings record the rice's moisture, and its Oven / Slurry Readings have the same columns as QCB's.
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
 | `product_item` | Link → Item | Product Item | `link_filters`: item group Finished Goods |
 | `product_name` | Data | Product Name | `fetch_from: product_item.item_name`, `read_only: 1` |
 | `rice_readings` | Table → QC Rice Extruder Reading | Readings | Child table (since 2026-11) |
-| `avg_moisture_corn_content` | Float | Avg Moisture Corn Content (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are readings |
+| `avg_moisture_corn_content` | Float | Avg Moisture Rice Content (%) | `read_only: 1` — auto-calculated; shown (and printed) when there are readings (Avg Moisture Corn Content (%) until 2026-11) |
 | `oven_readings_section` | Section Break | Oven / Slurry Readings | — |
 | `rice_oven_readings` | Table → QC Rice Oven Reading | Oven / Slurry Readings | Child table, optional (since 2026-11) |
 | `avg_oven_temp` | Float | Avg Oven Temp (°C) | `read_only: 1` — auto-calculated; shown (and printed) when there are oven readings |
@@ -483,25 +487,30 @@ The desk grid has 10 units for columns; two narrow ones let all six show.
 
 ### QC Puffs Oven Reading
 
-**Used by:** QC Puffs Extruder Record (QCB) as `puffs_oven_readings` (since 2026-11)
+**Used by:** QC Puffs Extruder Record (QCB) as `puffs_oven_readings`, labelled **Oven / Slurry Readings** (since 2026-11). The same fields as QC Rice Oven Reading since 2026-11, when it took the slurry's three (it had the oven's four until then); kept apart so each line's readings can change on their own.
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
-| `time_slot` | Time | Time Slot | ✅ |
-| `oven_temp` | Float | Oven Temp (°C) | ✅ |
+| `time_slot` | Time | Time Slot | ✅ (`columns: 1`) |
+| `oven_temp` | Float | Oven Temp (°C) | ✅ (`columns: 1`) |
 | `belt_speed` | Float | Belt Speed (Hz) | ✅ |
-| `moisture` | Float | Moisture (%) | ✅ |
+| `moisture` | Float | Moisture (%) | ✅ (`columns: 1`) |
+| `tank_temp` | Float | Slurry Tank Temp (°C) | ✅ (`columns: 1`; since 2026-11) |
+| `motor_speed` | Float | Mixer Speed (Hz) | ✅ (the slurry mixer's; since 2026-11) |
+| `flavour_speed` | Float | Flavour Speed (Hz) | ✅ (since 2026-11) |
+
+Seven columns in the desk grid's 10 units, as QC Rice Oven Reading's. Oven readings recorded before the slurry's columns came read 0 in them, as Frappe saves a blank number.
 
 ---
 
 ### QC Rice Extruder Reading
 
-**Used by:** QC Rice Extruder Record (QCC) as `rice_readings` (since 2026-11). Same columns as QC Puffs Extruder Reading, kept apart so each line's readings can change on their own.
+**Used by:** QC Rice Extruder Record (QCC) as `rice_readings` (since 2026-11). Same columns as QC Puffs Extruder Reading, kept apart so each line's readings can change on their own; its moisture is the rice's since 2026-11.
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
 | `time_slot` | Time | Time Slot | ✅ (`columns: 1`) |
-| `moisture_corn_content` | Float | Moisture Corn Content (%) | ✅ |
+| `moisture_corn_content` | Float | Moisture Rice Content (%) | ✅ (Moisture Corn Content (%) until 2026-11; the fieldname is kept) |
 | `start_temp` | Float | Start Temp (°C) | ✅ (`columns: 1`) |
 | `motor_speed` | Float | Motor Speed (Hz) | ✅ |
 | `feed_motor` | Float | Feed Motor (Hz) | ✅ |
@@ -1090,7 +1099,7 @@ Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#qual
 
 **Process (`process`)**
 - Sub-nav pills: Puffs Extruder (QCB) · Rice Extruder (QCC) · Frying Line (QCD)
-- The New Record dialog for QCB and QCC has two row editors, each in its own section: **Readings** (at least one row) and **Oven Readings** (optional; **Oven / Slurry Readings** on QCC). A dialog config lists extra tables under `extra_child_tables`; `create_qc_record` takes them through `optional_child_tables` in `QC_DIALOG_CONFIG`. QCB's are `puffs_readings` and `puffs_oven_readings`; QCC's are `rice_readings` and `rice_oven_readings`, the latter labelled **Oven / Slurry Readings**
+- The New Record dialog for QCB and QCC has two row editors, each in its own section: **Readings** (at least one row) and **Oven / Slurry Readings** (optional; the same columns on both since 2026-11, when QCB's **Oven Readings** took the slurry's). A dialog config lists extra tables under `extra_child_tables`; `create_qc_record` takes them through `optional_child_tables` in `QC_DIALOG_CONFIG`. QCB's are `puffs_readings` and `puffs_oven_readings`; QCC's are `rice_readings` and `rice_oven_readings`. QCC's Readings record **Moisture Rice Content (%)**, QCB's **Moisture Corn Content (%)**
 - Filter bar: date · work_order · factory_line · docstatus · Filter button · New Record button
 - Single panel with record list datatable
 - Active sub-nav pill updates `active_process_sub` and re-loads records
@@ -1378,7 +1387,7 @@ isnack/
         │   ├── qc_puffs_extruder_reading.py
         │   └── __init__.py
         │
-        ├── qc_puffs_oven_reading/            ── child (QCB)
+        ├── qc_puffs_oven_reading/            ── child (QCB, Oven / Slurry Readings)
         │   ├── qc_puffs_oven_reading.json
         │   ├── qc_puffs_oven_reading.py
         │   └── __init__.py

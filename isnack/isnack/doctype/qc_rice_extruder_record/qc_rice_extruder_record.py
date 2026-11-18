@@ -26,7 +26,7 @@ SUMMARIES = {
 class QCRiceExtruderRecord(Document):
     def validate(self):
         self.close_earlier_tables()
-        # a corn moisture, oven temperature or oven moisture of 0 is a reading
+        # a rice moisture, oven temperature or oven moisture of 0 is a reading
         # left blank
         readings = self.rice_readings or []
         self.avg_moisture_corn_content = average(readings, "moisture_corn_content", zero_is_blank=True)

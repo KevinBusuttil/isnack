@@ -64,7 +64,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         extra_child_tables: [
             {
                 child_table_field: "puffs_oven_readings",
-                child_label: __("Oven Readings"),
+                child_label: __("Oven / Slurry Readings"),
                 child_in_dedicated_section: true,
                 min_rows: 0,
                 child_fields: [
@@ -72,6 +72,9 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
                     { fieldname: "oven_temp", fieldtype: "Float", label: __("Oven Temp (°C)") },
                     { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed (Hz)") },
                     { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
+                    { fieldname: "tank_temp", fieldtype: "Float", label: __("Slurry Tank Temp (°C)") },
+                    { fieldname: "motor_speed", fieldtype: "Float", label: __("Mixer Speed (Hz)") },
+                    { fieldname: "flavour_speed", fieldtype: "Float", label: __("Flavour Speed (Hz)") },
                 ],
             },
         ],
@@ -142,7 +145,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
         child_fields: [
             { fieldname: "time_slot", fieldtype: "Time", label: __("Time Slot") },
-            { fieldname: "moisture_corn_content", fieldtype: "Float", label: __("Moisture Corn Content (%)") },
+            { fieldname: "moisture_corn_content", fieldtype: "Float", label: __("Moisture Rice Content (%)") },
             { fieldname: "start_temp", fieldtype: "Float", label: __("Start Temp (°C)") },
             { fieldname: "motor_speed", fieldtype: "Float", label: __("Motor Speed (Hz)") },
             { fieldname: "feed_motor", fieldtype: "Float", label: __("Feed Motor (Hz)") },
