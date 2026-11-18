@@ -167,7 +167,7 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
 | `record_date` | Date | Record Date | `reqd: 1`, `default: "Today"` |
-| `shift` | Select | Shift | `reqd: 1`, options: Morning / Afternoon / Night |
+| `shift` | Select | Shift | `reqd: 1`, options: (blank) / Morning / Afternoon / Night: a new record starts blank (2026-11; at Morning until then), as in the Quality Hub's dialogs |
 | `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
 | `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
 | `operator_name` | Data | Operator Name | `reqd: 1` |

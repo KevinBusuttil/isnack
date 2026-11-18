@@ -315,6 +315,25 @@ class TestOverallStatusStartsBlank(unittest.TestCase):
 			self.assertTrue(field["options"].startswith("\n"), doctype)
 
 
+class TestShiftStartsBlank(unittest.TestCase):
+	def test_a_new_record_names_no_shift_until_someone_picks_one(self):
+		# a Select without a blank first option starts at that option, so every
+		# new record on the desk read Morning (until 2026-11); Shift is mandatory,
+		# so it is picked
+		for code, doctype in QC_DOCTYPES.items():
+			field = _fields(_doctype(doctype))["shift"]
+			self.assertEqual(field["options"], "\nMorning\nAfternoon\nNight", doctype)
+			self.assertEqual(field.get("reqd"), 1, doctype)
+			self.assertNotIn("default", field, doctype)
+
+	def test_as_in_the_quality_hub(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js"), encoding="utf-8") as fh:
+			script = fh.read()
+		shifts = re.findall(r'\{ fieldname: "shift", fieldtype: "Select", label: __\("Shift"\), reqd: 1, options: "([^"]*)" \}', script)
+		self.assertEqual(len(shifts), len(qh.QC_DIALOG_CONFIG))
+		self.assertEqual(set(shifts), {"\\nMorning\\nAfternoon\\nNight"})
+
+
 class TestLineAndWorkOrderMandatory(unittest.TestCase):
 	def test_every_record_type_but_receiving(self):
 		for code, doctype in QC_DOCTYPES.items():

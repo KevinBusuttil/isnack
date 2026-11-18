@@ -38,7 +38,7 @@
    "fieldname": "shift",
    "fieldtype": "Select",
    "label": "Shift",
-   "options": "Morning\nAfternoon\nNight",
+   "options": "\nMorning\nAfternoon\nNight",
    "reqd": 1
   },
   {
@@ -162,7 +162,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-16 16:00:00.000000",
+ "modified": "2026-11-18 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Metal Detector Log",
