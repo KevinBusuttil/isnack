@@ -364,16 +364,6 @@ def create_qc_records(details=None, records=None, submit=False):
     return [_record_summary(doc) for doc in docs]
 
 
-@frappe.whitelist()
-def get_work_order_product(work_order=None):
-    """The item a Work Order makes, which the Packaging and Weight form fills
-    in as the weight check's Item Code. None when the user may not read the
-    Work Order: they pick the item themselves."""
-    if not work_order or not frappe.has_permission("Work Order", "read", doc=work_order):
-        return None
-    return frappe.db.get_value("Work Order", work_order, "production_item")
-
-
 def _record_summary(doc):
     return {
         "name": doc.name,

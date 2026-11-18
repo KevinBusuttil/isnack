@@ -22,6 +22,11 @@ RETIRED_SAMPLE_FIELDS = ("tare_weight",)
 EARLIER_FIELDS = ("tu1_limit", "tu2_limit", "tu1_failures", "tu2_failures", "overall_status", "remarks")
 EARLIER_SAMPLE_FIELDS = ("tare_weight", "net_weight", "in_range")
 
+# Taken off the check after them: the Item Code and Batch No (the Work Order
+# names the product). A check that holds them (made before, or amended from
+# one that did) shows them, read-only; a new one is not given them.
+NAMED_PRODUCT_FIELDS = ("item_code", "batch_no")
+
 
 class QCWeightCheck(Document):
     def validate(self):
@@ -31,6 +36,8 @@ class QCWeightCheck(Document):
         if not earlier:
             self.refuse_retired_values()
             self.require_sample_status()
+            self.require_nominal_weight()
+            self.require_sample_figures()
 
         tu1 = self.tu1_limit or 0
         tu2 = self.tu2_limit or 0
@@ -75,6 +82,10 @@ class QCWeightCheck(Document):
             s.get(fieldname) for s in self.samples or [] for fieldname in RETIRED_SAMPLE_FIELDS
         ):
             frappe.throw(_("This page is out of date. Reload it and enter the check again."))
+        # a new check names no item or batch (an amendment keeps those of the
+        # check it amends; a Duplicate leaves them out)
+        if self.is_new() and not self.amended_from and any(self.get(fieldname) for fieldname in NAMED_PRODUCT_FIELDS):
+            frappe.throw(_("This page is out of date. Reload it and enter the check again."))
 
     def require_sample_status(self):
         """Each sample's Status is mandatory on a check made since 2026-11. Not
@@ -89,6 +100,29 @@ class QCWeightCheck(Document):
                     "this page is out of date: reload it and enter the check again."
                 ).format(", ".join(missing))
             )
+
+    def require_nominal_weight(self):
+        """The Nominal Weight is mandatory (the doctype marks it so) and more
+        than 0. Frappe saves a blank number as 0, which its mandatory check lets
+        through. Not on a check made before, which keeps its figures as they
+        were."""
+        if flt(self.nominal_weight) <= 0:
+            frappe.throw(_("Nominal Weight (g) must be more than 0."))
+
+    def require_sample_figures(self):
+        """Each sample's Sample No and Gross Weight are mandatory (the doctype
+        marks them so) and more than 0, as the Nominal Weight is. Not on a check
+        made before, whose samples are kept as they were."""
+        for fieldname, label in (("sample_no", _("Sample No")), ("gross_weight", _("Gross Weight (g)"))):
+            rows = [str(s.idx or i) for i, s in enumerate(self.samples or [], 1) if flt(s.get(fieldname)) <= 0]
+            if rows:
+                frappe.throw(_("{0} must be more than 0 in Samples (row {1}).").format(label, ", ".join(rows)))
+
+    def before_submit(self):
+        # a check is its samples: the Quality Hub asks for one before it saves
+        # a check, and a check is not submitted without one, however it is saved
+        if not self.samples:
+            frappe.throw(_("Add at least one row in Samples to submit the check."))
 
     def on_trash(self):
         """A draft from before the change, unmarked (it held no limit, Overall

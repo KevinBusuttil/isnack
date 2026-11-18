@@ -306,20 +306,19 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product ─────────────────────────────────────────────
             // (Product & Limits until the TU1 and TU2 limits came off the
-            // check, in 2026-11)
+            // check, in 2026-11; the Item Code and Batch No came off after
+            // them: the Work Order names the product)
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") },
-            { fieldname: "item_code", fieldtype: "Link", label: __("Item Code"), options: "Item" },
-            { fieldname: "batch_no", fieldtype: "Link", label: __("Batch No"), options: "Batch" },
-            { fieldname: "cb_product", fieldtype: "Column Break" },
-            { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)") },
+            { fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)"), reqd: 1 },
             // (so did the Outcome section, Overall Status and Remarks, and each
             // sample's tare: a sample has a Status and Remarks of its own)
         ],
+        // each sample numbered and weighed, both more than 0 (``positive``)
         child_fields: [
-            { fieldname: "sample_no", fieldtype: "Int", label: __("Sample No") },
-            { fieldname: "gross_weight", fieldtype: "Float", label: __("Gross Weight (g)") },
-            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
+            { fieldname: "sample_no", fieldtype: "Int", label: __("Sample No"), reqd: 1, positive: 1 },
+            { fieldname: "gross_weight", fieldtype: "Float", label: __("Gross Weight (g)"), reqd: 1, positive: 1 },
             { fieldname: "status", fieldtype: "Select", label: __("Status"), options: "\nPass\nFail", reqd: 1 },
+            { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
     },
 };
@@ -827,7 +826,6 @@ isnack.quality_hub.QualityHub = class {
         });
         // the Record Details are both checks': a line both may be on
         this.restrict_factory_line(dialog, records.map((record) => record.doctype));
-        this.setup_packaging_and_weight(dialog);
     }
 
     /** A dialog config's Record Details (its first section) and the rest. */
@@ -856,56 +854,6 @@ isnack.quality_hub.QualityHub = class {
         this.child_tables(record.config).forEach((table) => {
             dialog.set_df_property(`section_break_${table.child_table_field}`, "hidden", on ? 0 : 1);
         });
-    }
-
-    /** Fill the weight check's Item Code from the Work Order's product, and
-     *  offer only that item's batches. */
-    setup_packaging_and_weight(dialog) {
-        const on_change = (fieldname, handler) => {
-            const field = dialog.get_field(fieldname);
-            if (!field) return;
-            const orig = field.df.onchange;
-            field.df.onchange = (...args) => {
-                const result = orig ? orig.apply(field, args) : undefined;
-                handler();
-                return result;
-            };
-        };
-
-        // a Link runs its change again when it is left with the same value
-        let work_order_was = dialog.get_value("work_order");
-        let item_code_was = dialog.get_value("item_code");
-        on_change("work_order", () => {
-            const work_order = dialog.get_value("work_order");
-            if (work_order === work_order_was) return;
-            work_order_was = work_order;
-            if (!work_order) return;
-            frappe.call({
-                method: "isnack.isnack.page.quality_hub.quality_hub.get_work_order_product",
-                args: { work_order },
-                callback: (r) => {
-                    // the Work Order may have changed again while this was on its way
-                    if (r.message && dialog.get_value("work_order") === work_order && dialog.get_value("item_code") !== r.message) {
-                        dialog.set_value("item_code", r.message);
-                    }
-                },
-            });
-        });
-        // another item: its batch is picked again
-        on_change("item_code", () => {
-            const item_code = dialog.get_value("item_code");
-            if (item_code === item_code_was) return;
-            item_code_was = item_code;
-            dialog.set_value("batch_no", "");
-        });
-
-        const batch = dialog.get_field("batch_no");
-        if (batch) {
-            batch.get_query = () => {
-                const item_code = dialog.get_value("item_code");
-                return { filters: item_code ? { item: item_code, disabled: 0 } : { disabled: 0 } };
-            };
-        }
     }
 
     /** A dialog redraws a field it has no document for as ``value || null``,
@@ -1143,6 +1091,13 @@ isnack.quality_hub.QualityHub = class {
             if (missing.length) {
                 frappe.msgprint(missing.map(({ label, rows }) =>
                     __("{0} is required in {1} (row {2}).", [label, table.child_label, rows.join(", ")])
+                ).join("<br>"));
+                return false;
+            }
+            const not_positive = this.not_positive_child_values(dialog, table);
+            if (not_positive.length) {
+                frappe.msgprint(not_positive.map(({ label, rows }) =>
+                    __("{0} must be more than 0 in {1} (row {2}).", [label, table.child_label, rows.join(", ")])
                 ).join("<br>"));
                 return false;
             }
@@ -1405,6 +1360,7 @@ isnack.quality_hub.QualityHub = class {
         };
         const input_type = type_map[field.fieldtype] || "text";
         const step_attr = field.fieldtype === "Float" ? 'step="any"' : "";
+        const min_attr = field.fieldtype === "Int" && field.positive ? 'min="1"' : "";
         const display_value = value === null || value === undefined ? "" : value;
 
         return `
@@ -1416,6 +1372,7 @@ isnack.quality_hub.QualityHub = class {
                 placeholder="${escaped_label}"
                 value="${frappe.utils.escape_html(display_value)}"
                 ${step_attr}
+                ${min_attr}
             />
         `;
     }
@@ -1479,6 +1436,27 @@ isnack.quality_hub.QualityHub = class {
                     .filter(Boolean),
             }))
             .filter(({ rows: missing_rows }) => missing_rows.length);
+    }
+
+    /** The columns that must be more than 0 (``positive``) holding 0 or less
+     *  in a row that has values: [{label, rows}], as missing_child_values. The
+     *  server says so too, but numbers the rows it keeps, not the editor's. */
+    not_positive_child_values(dialog, table) {
+        const entered = table.child_fields.filter((field) => !field.compute);
+        const rows = dialog.__child_rows[table.child_table_field] || [];
+        return entered
+            .filter((field) => field.positive)
+            .map((field) => ({
+                label: field.label,
+                rows: rows
+                    .map((row, index) => (
+                        this.child_row_entered(row, entered) && this.child_row_has_values(row, [field]) && !(Number(row[field.fieldname]) > 0)
+                            ? index + 1
+                            : null
+                    ))
+                    .filter(Boolean),
+            }))
+            .filter(({ rows: wrong_rows }) => wrong_rows.length);
     }
 
     /** Whether the user entered a row: a value in it other than a column's

@@ -5,16 +5,16 @@ it, say how each one does, and show which record types are missing.
 
 What belongs to what
 --------------------
-A QC record names a batch (``batch_no``: receiving, tasting, weight checks), a
-Work Order (``work_order``: every record type but receiving), or both. The
-explorer collects the batches and Work Orders the subject stands for, then
-reads every record that names one of them:
+A QC record names a batch (``batch_no``: receiving, tasting, and the weight
+checks made before 2026-11), a Work Order (``work_order``: every record type
+but receiving), or both. The explorer collects the batches and Work Orders the
+subject stands for, then reads every record that names one of them:
 
 * Batch: the batch itself, the Work Orders that produced it (read off the
   stock ledger by the Batch Explorer's rules, ``batch_explorer._batch_roles``)
   and any Work Order the batch's own QC records name. A Work Order that has not
-  booked its Manufacture entry yet is not on the ledger, but its weight and
-  tasting records still name it.
+  booked its Manufacture entry yet is not on the ledger, but its tasting
+  records (and weight checks made before 2026-11) still name it.
 * Work Order: the Work Order itself and the finished-goods batches its
   Manufacture entries made.
 * Ingredients, for both: the raw-material batches those Work Orders consumed,

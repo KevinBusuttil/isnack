@@ -451,8 +451,8 @@ class TestWeightCheckSchema(unittest.TestCase):
 	def test_each_sample_has_a_status_and_remarks(self):
 		self.assertEqual(self.sample["field_order"], [f["fieldname"] for f in self.sample["fields"]])
 		order = self.sample["field_order"]
-		# Remarks next to the Gross Weight, then the Status
-		self.assertEqual(order[:4], ["sample_no", "gross_weight", "remarks", "status"])
+		# the Status next to the Gross Weight, then the Remarks
+		self.assertEqual(order[:4], ["sample_no", "gross_weight", "status", "remarks"])
 		status = self.sample_fields["status"]
 		self.assertEqual((status["fieldtype"], status["label"], status["options"]), ("Select", "Status", "\nPass\nFail"))
 		# mandatory on a check made since, not on one made before (a draft, an
@@ -468,8 +468,16 @@ class TestWeightCheckSchema(unittest.TestCase):
 		self.assertEqual((self.sample_fields["remarks"]["fieldtype"], self.sample_fields["remarks"]["label"]), ("Small Text", "Remarks"))
 		# the desk grid: those four, within its 10 units for columns
 		listed = [f for f in self.sample["fields"] if f.get("in_list_view")]
-		self.assertEqual([f["fieldname"] for f in listed], ["sample_no", "gross_weight", "remarks", "status"])
+		self.assertEqual([f["fieldname"] for f in listed], ["sample_no", "gross_weight", "status", "remarks"])
 		self.assertLessEqual(sum(f.get("columns") or 2 for f in listed), 10)
+
+	def test_each_sample_is_numbered_and_weighed(self):
+		# mandatory on every check (a blank is saved as 0, which a check made
+		# before keeps); the check refuses 0 or less on one made since
+		for fieldname, fieldtype in (("sample_no", "Int"), ("gross_weight", "Float")):
+			f = self.sample_fields[fieldname]
+			self.assertEqual((f["fieldtype"], f.get("reqd"), f.get("in_list_view")), (fieldtype, 1, 1), fieldname)
+		self.assertEqual(self.sample_fields["sample_no"].get("description"), "1 or more.")
 
 	def test_a_samples_earlier_layout(self):
 		from isnack.isnack.doctype.qc_weight_check.qc_weight_check import EARLIER_SAMPLE_FIELDS
@@ -503,6 +511,18 @@ class TestWeightCheckSchema(unittest.TestCase):
 			("Check", 1, 1, 1, 1),
 		)
 
+	def test_the_nominal_weight_is_mandatory(self):
+		self.assertEqual(self.fields["nominal_weight"].get("reqd"), 1)
+
+	def test_no_item_or_batch_on_a_check_made_since(self):
+		# read-only, so shown only on a check that holds them (one made
+		# before, or an amendment of one); out of a Duplicate
+		for fieldname in ("item_code", "batch_no"):
+			f = self.fields[fieldname]
+			self.assertEqual((f.get("read_only"), f.get("no_copy"), f.get("reqd")), (1, 1, None), fieldname)
+			self.assertIn("checks made before 2026-11", f["description"], fieldname)
+		self.assertEqual((self.fields["item_name"].get("read_only"), self.fields["item_name"].get("no_copy")), (1, 1))
+
 	def _dialog(self):
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
 			script = fh.read()
@@ -515,12 +535,19 @@ class TestWeightCheckSchema(unittest.TestCase):
 		for fieldname in ("tu1_limit", "tu2_limit", "overall_status", "remarks", "sb_outcome"):
 			self.assertNotIn(f'fieldname: "{fieldname}"', parent)
 		self.assertNotIn('label: __("Outcome")', parent)
-		# no limits left in it: the section reads Product
+		# no limits left in it: the section reads Product, and holds the
+		# Nominal Weight alone (no Item Code or Batch No since 2026-11)
 		self.assertIn('{ fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") }', parent)
+		for fieldname in ("item_code", "batch_no", "cb_product"):
+			self.assertNotIn(f'fieldname: "{fieldname}"', parent)
+		self.assertEqual(re.findall(r'fieldname: "(\w+)"', parent)[-2:], ["sb_product", "nominal_weight"])
+		self.assertIn('{ fieldname: "nominal_weight", fieldtype: "Float", label: __("Nominal Weight (g)"), reqd: 1 }', parent)
 		self.assertNotIn("tare_weight", child)
 		self.assertEqual(
-			re.findall(r'fieldname: "(\w+)"', child), ["sample_no", "gross_weight", "remarks", "status"]
+			re.findall(r'fieldname: "(\w+)"', child), ["sample_no", "gross_weight", "status", "remarks"]
 		)
+		self.assertIn('{ fieldname: "sample_no", fieldtype: "Int", label: __("Sample No"), reqd: 1, positive: 1 }', child)
+		self.assertIn('{ fieldname: "gross_weight", fieldtype: "Float", label: __("Gross Weight (g)"), reqd: 1, positive: 1 }', child)
 		self.assertIn('{ fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") }', child)
 		self.assertIn('{ fieldname: "status", fieldtype: "Select", label: __("Status"), options: "\\nPass\\nFail", reqd: 1 }', child)
 
@@ -531,6 +558,74 @@ class TestWeightCheckSchema(unittest.TestCase):
 		self.assertIn('class="qh-child-reqd"', script)
 		with open(os.path.join(os.path.dirname(__file__), "quality_hub.css")) as fh:
 			self.assertIn(".qh-child-reqd {", fh.read())
+
+
+class TestSamplesNumberedAndWeighed(unittest.TestCase):
+	"""Since 2026-11 each weight sample needs a Sample No and a Gross Weight, both
+	more than 0; the dialog says which row before the server is asked."""
+
+	def setUp(self):
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			self.script = fh.read()
+
+	def _method(self, signature):
+		start = self.script.index(f"    {signature} {{")
+		return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+	def _sample_columns(self):
+		start = self.script.index('"QC Weight Check": {')
+		block = self.script[start : self.script.index("\n};", start)]
+		columns = block.split("child_fields: [", 1)[1]
+		return columns[: columns.index("\n        ],")]
+
+	def test_a_number_starts_at_1(self):
+		self.assertIn("""const min_attr = field.fieldtype === "Int" && field.positive ? 'min="1"' : "";""", self.script)
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_the_samples_a_save_takes(self):
+		# the dialog's own code, run on the Samples' own columns
+		methods = "\n".join(
+			self._method(m)
+			for m in (
+				"add_child_rows(dialog, config, payload)",
+				"get_non_empty_child_rows(dialog, table)",
+				"missing_child_values(dialog, table)",
+				"not_positive_child_values(dialog, table)",
+				"child_row_entered(row, fields)",
+				"child_row_has_values(row, fields)",
+			)
+		)
+		script = (
+			"const __ = (msg, args) => (args ? msg.replace(/\\{(\\d)\\}/g, (_m, i) => args[i]) : msg);\n"
+			"const messages = [];\n"
+			"const frappe = {msgprint: (message) => messages.push(message)};\n"
+			f"class Hub {{\n    child_tables(config) {{ return [config]; }}\n{methods}\n}}\n"
+			f"const table = {{child_table_field: 'samples', child_label: 'Samples', min_rows: 1, child_fields: [{self._sample_columns()}]}};\n"
+			"const run = (rows) => {\n"
+			"  messages.length = 0;\n"
+			"  const payload = {};\n"
+			"  const saved = new Hub().add_child_rows({__child_rows: {samples: rows}}, table, payload);\n"
+			"  return {saved, messages: messages.slice(), samples: payload.samples || null};\n"
+			"};\n"
+			"const blank = {sample_no: '', gross_weight: '', status: '', remarks: ''};\n"
+			"console.log(JSON.stringify({\n"
+			"  good: run([{...blank, sample_no: 1, gross_weight: 40.6, status: 'Pass'}, blank]),\n"
+			"  unnumbered: run([{...blank, gross_weight: 40.6, status: 'Pass'}, {...blank, sample_no: 2, status: 'Pass'}]),\n"
+			"  zero: run([blank, {...blank, sample_no: 0, gross_weight: 40.6, status: 'Pass'}, {...blank, sample_no: 3, gross_weight: -1, status: 'Fail'}]),\n"
+			"  none: run([blank]),\n"
+			"}));\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		# numbered and weighed: saved, the empty row left out
+		self.assertEqual(out["good"], {"saved": True, "messages": [], "samples": [{"sample_no": 1, "gross_weight": 40.6, "status": "Pass", "remarks": ""}]})
+		# left blank: required, row by row as the editor numbers them
+		self.assertEqual(out["unnumbered"]["messages"], ["Sample No is required in Samples (row 1).<br>Gross Weight (g) is required in Samples (row 2)."])
+		# 0 or less: more than 0 (the empty first row still counts in the numbering)
+		self.assertEqual(out["zero"]["messages"], ["Sample No must be more than 0 in Samples (row 2).<br>Gross Weight (g) must be more than 0 in Samples (row 3)."])
+		# no sample: not saved, Save Draft or Save & Submit
+		self.assertEqual(out["none"]["messages"], ["Add at least one row in Samples."])
+		for case in ("unnumbered", "zero", "none"):
+			self.assertEqual((out[case]["saved"], out[case]["samples"]), (False, None), case)
 
 
 class TestMetalDetectorLogDialog(unittest.TestCase):
@@ -1085,7 +1180,7 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 			{"doctype": "QC Packaging Check", "payload": {"print_quality_ok": 1, "qty_wasted": 0.8, "remarks": "Film changed"}},
 			{
 				"doctype": "QC Weight Check",
-				"payload": {"item_code": "SP-40", "nominal_weight": 40, "samples": [{"sample_no": 1, "gross_weight": 40.6, "status": "Pass"}]},
+				"payload": {"nominal_weight": 40, "samples": [{"sample_no": 1, "gross_weight": 40.6, "status": "Pass"}]},
 			},
 		]
 
@@ -1119,7 +1214,7 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 			self.assertEqual({k: data[k] for k in self.DETAILS}, self.DETAILS)
 		self.assertEqual(packaging["remarks"], "Film changed")
 		self.assertNotIn("remarks", weight)
-		self.assertNotIn("item_code", packaging)
+		self.assertNotIn("nominal_weight", packaging)
 		docs["QC Weight Check"].append.assert_called_once_with("samples", {"sample_no": 1, "gross_weight": 40.6, "status": "Pass"})
 		docs["QC Packaging Check"].append.assert_not_called()
 
@@ -1185,16 +1280,12 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 				qh.create_qc_records(details=self.DETAILS, records=records)
 		get_doc.assert_not_called()
 
-	def test_the_work_orders_product(self):
-		with patch("frappe.has_permission", return_value=False), patch.object(frappe.local, "db", MagicMock()) as db:
-			self.assertIsNone(qh.get_work_order_product("MFG-WO-2026-00412"))
-			db.get_value.assert_not_called()
-		with patch("frappe.has_permission", return_value=True) as perm, patch.object(frappe.local, "db", MagicMock()) as db:
-			db.get_value.return_value = "SP-40"
-			self.assertEqual(qh.get_work_order_product("MFG-WO-2026-00412"), "SP-40")
-			perm.assert_called_once_with("Work Order", "read", doc="MFG-WO-2026-00412")
-			db.get_value.assert_called_once_with("Work Order", "MFG-WO-2026-00412", "production_item")
-		self.assertIsNone(qh.get_work_order_product(""))
+	def test_no_item_from_the_work_order(self):
+		# the weight check names no item since 2026-11: nothing fills one in
+		self.assertFalse(hasattr(qh, "get_work_order_product"))
+		script = self._script()
+		for gone in ("get_work_order_product", "setup_packaging_and_weight", "item_code_was"):
+			self.assertNotIn(gone, script)
 
 	@staticmethod
 	def _script():
