@@ -126,9 +126,11 @@ class TestExtruderReadings(unittest.TestCase):
 		("belt_speed", "Float", "Belt Speed (Hz)"),
 		("moisture", "Float", "Moisture (%)"),
 	]
+	# the slurry's tank and mixer (2026-11; Tank Temp and Motor Speed until
+	# then); the extruder's own Motor Speed, in READINGS, keeps its label
 	RICE_OVEN = PUFFS_OVEN + [
-		("tank_temp", "Float", "Tank Temp (°C)"),
-		("motor_speed", "Float", "Motor Speed (Hz)"),
+		("tank_temp", "Float", "Slurry Tank Temp (°C)"),
+		("motor_speed", "Float", "Mixer Speed (Hz)"),
 		("flavour_speed", "Float", "Flavour Speed (Hz)"),
 	]
 	# record: (its readings table and child doctype, its oven table, child doctype and
@@ -253,6 +255,23 @@ class TestExtruderReadings(unittest.TestCase):
 		self.assertIn("screw_speed_rpm", _fields(_doctype("QC Extruder Reading")))
 		self.assertIn("zone_1_temp", _fields(_doctype("QC Oven Reading")))
 		self.assertEqual(_fields(_doctype("QC Oven Record"))["readings"]["options"], "QC Oven Reading")
+
+	def test_the_dialog_reads_as_the_doctypes(self):
+		# the Quality Hub dialog's columns, as the desk form's: the oven (or
+		# slurry) readings, then the extruder's own
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js"), encoding="utf-8") as fh:
+			script = fh.read()
+		column = re.compile(r'\{ fieldname: "(\w+)", fieldtype: "(\w+)", label: __\("([^"]+)"\) \}')
+		for doctype, after, oven in (
+			("QC Puffs Extruder Record", "QC Rice Extruder Record", self.PUFFS_OVEN),
+			("QC Rice Extruder Record", "QC Frying Line Record", self.RICE_OVEN),
+		):
+			start = script.index(f'"{doctype}": {{')
+			block = script[start : script.index(f'"{after}": {{', start)]
+			extra, parent = block.split("parent_fields: [")
+			own = parent.split("child_fields: [")[1]
+			self.assertEqual(column.findall(extra), oven, doctype)
+			self.assertEqual(column.findall(own), self.READINGS, doctype)
 
 	def test_the_dialog_takes_the_new_tables(self):
 		for doctype, ((table, child), (oven_table, oven_child, _label), *_rest) in self.RECORDS.items():
@@ -671,7 +690,8 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 		self.parent, self.child = self.script[start : self.script.index("\n    },\n", start)].split("child_fields: [")
 
 	def test_the_detector_is_picked_and_its_details_filled_in(self):
-		self.assertIn('{ fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" }', self.parent)
+		# mandatory (2026-11)
+		self.assertIn('{ fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector", reqd: 1 }', self.parent)
 		for fieldname, fieldtype, label, source in (
 			("detector_make_model", "Data", "Make/Model", "make_model"),
 			("last_calibration_date", "Date", "Last Calibration Date", "last_calibration_date"),
@@ -691,6 +711,10 @@ class TestMetalDetectorLogDialog(unittest.TestCase):
 	def test_the_tests(self):
 		self.assertEqual(re.findall(r'fieldname: "(\w+)"', self.child), ["test_time", "test_piece_type", "test_piece_size_mm", "detected"])
 		self.assertIn('{ fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 }', self.child)
+		# each test's time and test piece are mandatory (2026-11): the header is
+		# marked and a save names the rows without them (missing_child_values)
+		self.assertIn('{ fieldname: "test_time", fieldtype: "Time", label: __("Test Time"), reqd: 1 }', self.child)
+		self.assertIn('{ fieldname: "test_piece_type", fieldtype: "Select", label: __("Test Piece Type"), options: "\\nFe\\nNon-Fe\\nStainless", reqd: 1 }', self.child)
 
 	def _method(self, signature):
 		start = self.script.index(f"    {signature} {{")
@@ -1154,8 +1178,9 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")
 	def test_a_blank_select_stays_blank(self, get_meta, get_doc):
-		# Test Piece Type is "Fe\nNon-Fe\nStainless": left unset, Frappe would
-		# record an Fe test piece nobody picked
+		# a Select left unset takes its first option when Frappe saves the record
+		# (Shift: Morning), which nobody picked: a blank one is sent as blank, for
+		# the record to ask for it
 		get_meta.side_effect = lambda doctype: (
 			self._meta(["record_date"], selects=["shift"])
 			if doctype == "QC Metal Detector Log"

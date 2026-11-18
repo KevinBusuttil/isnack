@@ -3,8 +3,9 @@
 
 """The metal detector log with its detector picked from the Metal Detectors
 used on its factory line, without a calibration certificate, a corrective
-action or each test's sensitivity setting and remarks (2026-11), and the logs
-made before, which keep them (no database)."""
+action or each test's sensitivity setting and remarks, its detector and each
+test's time and test piece mandatory (2026-11), and the logs made before, which
+keep what they recorded (no database)."""
 
 import datetime
 import json
@@ -16,12 +17,14 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import frappe
+from frappe.model.base_document import BaseDocument
 from isnack.isnack.doctype.qc_metal_detector_log.qc_metal_detector_log import (
 	RETIRED_FIELDS,
 	RETIRED_TEST_FIELDS,
 	QCMetalDetectorLog,
 	belongs_to_earlier_layout,
 )
+from isnack.isnack.doctype.qc_metal_detector_test.qc_metal_detector_test import QCMetalDetectorTest
 from isnack.patches.v1_0 import metal_detector_lines_from_qc_logs as lines_module
 from isnack.patches.v1_0 import metal_detectors_from_qc_logs as seed_module
 from isnack.patches.v1_0 import qc_metal_detector_log_corrective_action as corrective_module
@@ -55,6 +58,9 @@ class _Log(_Row):
 	check_metal_detector = QCMetalDetectorLog.check_metal_detector
 	check_detector_on_line = QCMetalDetectorLog.check_detector_on_line
 	keep_details_verified_under = QCMetalDetectorLog.keep_details_verified_under
+	require_detector_and_tests = QCMetalDetectorLog.require_detector_and_tests
+	before_submit = QCMetalDetectorLog.before_submit
+	on_trash = QCMetalDetectorLog.on_trash
 
 	def is_new(self):
 		return not self.saved
@@ -80,16 +86,17 @@ def _log(*tests, cls=_Log, **values):
 
 
 class TestTheLog(unittest.TestCase):
-	def test_all_tests_passed_when_each_test_piece_was_detected(self):
-		doc = _log(_test(1), _test(1, test_piece_type="Non-Fe"))
+	@patch("frappe.db.exists", return_value=True)
+	def test_all_tests_passed_when_each_test_piece_was_detected(self, _exists):
+		doc = _log(_test(1), _test(1, test_piece_type="Non-Fe"), metal_detector_id="MD-1")
 		doc.validate()
 		self.assertEqual(doc.all_tests_passed, 1)
 
-		doc = _log(_test(1), _test(0, test_piece_type="Stainless"))
+		doc = _log(_test(1), _test(0, test_piece_type="Stainless"), metal_detector_id="MD-1")
 		doc.validate()
 		self.assertEqual(doc.all_tests_passed, 0)
 
-		doc = _log()
+		doc = _log(metal_detector_id="MD-1")
 		doc.validate()
 		self.assertEqual(doc.all_tests_passed, 0)
 
@@ -106,9 +113,10 @@ class TestTheLog(unittest.TestCase):
 			with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
 				doc.validate()
 
-	def test_nothing_said_is_nothing_kept_out_of_sight(self):
+	@patch("frappe.db.exists", return_value=True)
+	def test_nothing_said_is_nothing_kept_out_of_sight(self, _exists):
 		# a stray space or line break: no value, and none kept
-		doc = _log(_test(sensitivity_setting=" ", test_remarks="\n"), calibration_certificate=" ", corrective_action=" \n")
+		doc = _log(_test(sensitivity_setting=" ", test_remarks="\n"), calibration_certificate=" ", corrective_action=" \n", metal_detector_id="MD-1")
 		doc.validate()
 		self.assertEqual(
 			(doc.calibration_certificate, doc.corrective_action, doc.tests[0].sensitivity_setting, doc.tests[0].test_remarks),
@@ -149,9 +157,92 @@ class TestTheDetector(unittest.TestCase):
 				doc.validate()
 
 	def test_no_detector(self, exists):
-		_log(_test(), metal_detector_id=None).validate()
-		_log(_test(), metal_detector_id=None, factory_line="FRYING").validate()
+		# mandatory on a log made since (TestDetectorAndTestsMandatory); one
+		# made before, without one, is not looked for
+		_log(_test(), metal_detector_id=None, earlier_layout=1).validate()
+		_log(_test(), metal_detector_id=None, factory_line="FRYING", earlier_layout=1).validate()
 		exists.assert_not_called()
+
+
+class TestDetectorAndTestsMandatory(unittest.TestCase):
+	"""Since 2026-11 the Metal Detector ID, and each test's Test Time and Test
+	Piece Type, are mandatory; a log made before keeps what it recorded."""
+
+	@patch("frappe.db.exists", return_value=True)
+	def test_a_log_made_since_names_its_detector(self, exists):
+		for detector in (None, "", "  "):
+			with self.subTest(detector=detector), self.assertRaisesRegex(frappe.ValidationError, r"Metal Detector ID is required\."):
+				_log(_test(), metal_detector_id=detector).validate()
+		exists.assert_not_called()
+
+	@patch("frappe.db.exists", return_value=True)
+	def test_each_test_has_its_time_and_test_piece(self, _exists):
+		doc = _log(_test(idx=1), _test(test_time=None, idx=2), _test(test_time="", idx=3), metal_detector_id="MD-1")
+		with self.assertRaisesRegex(frappe.ValidationError, r"Test Time is required in Tests \(row 2, 3\)\."):
+			doc.validate()
+		doc = _log(_test(idx=1), _test(test_piece_type="", idx=2), _test(test_piece_type=None, idx=3), metal_detector_id="MD-1")
+		with self.assertRaisesRegex(frappe.ValidationError, r"Test Piece Type is required in Tests \(row 2, 3\)\."):
+			doc.validate()
+
+	@patch("frappe.db.exists", return_value=True)
+	def test_a_test_at_midnight_has_a_time(self, _exists):
+		# a Time reads as a timedelta, and 00:00 is a time
+		_log(_test(test_time=datetime.timedelta(0)), metal_detector_id="MD-1").validate()
+
+	@patch("frappe.db.exists")
+	def test_not_on_a_log_made_before(self, exists):
+		doc = _log(_test(test_time=None, test_piece_type=""), earlier_layout=1, metal_detector_id=None)
+		doc.validate()
+		exists.assert_not_called()
+		self.assertEqual(doc.all_tests_passed, 1)
+
+
+class TestSubmitted(unittest.TestCase):
+	def test_not_without_a_test(self):
+		# the Quality Hub asks for one before it saves; the desk form, before it submits
+		for earlier in (0, 1):
+			with self.subTest(earlier=earlier), self.assertRaisesRegex(
+				frappe.ValidationError, r"Add at least one row in Tests to submit the log\."
+			):
+				_log(earlier_layout=earlier, metal_detector_id="MD-1").before_submit()
+		_log(_test(), metal_detector_id="MD-1").before_submit()
+
+
+class TestATestAsSent(unittest.TestCase):
+	def test_frappe_fills_in_neither_its_time_nor_its_test_piece(self):
+		# saving a log, Frappe gives a new test what it was not sent from a new
+		# test's defaults (a Time the time of saving, a Select its first option):
+		# not these two, which the log asks for instead
+		defaults = {"test_time": "16:13:00", "test_piece_type": "Fe", "test_piece_size_mm": 0.2}
+		with patch.object(QCMetalDetectorTest, "_get_table_fields", return_value=()), patch(
+			"frappe.get_meta", side_effect=AssertionError("no meta")
+		):
+			test = QCMetalDetectorTest.__new__(QCMetalDetectorTest)
+			BaseDocument.__init__(test, {"doctype": "QC Metal Detector Test", "parentfield": "tests"})
+			test.update_if_missing(defaults)
+			self.assertEqual([test.get(f) for f in defaults], [None, None, 0.2])
+			# what Frappe gives any other row
+			test.dont_update_if_missing = []
+			test.update_if_missing(defaults)
+			self.assertEqual([test.get(f) for f in defaults], ["16:13:00", "Fe", 0.2])
+
+
+class TestDeleted(unittest.TestCase):
+	def test_a_draft_from_before_a_restore_could_not_finish_keeps_the_earlier_layout(self):
+		# a restore is saved as a new log made since, which cannot fill in what
+		# is missing: the snapshot keeps the earlier layout
+		for doc in (
+			_log(_test(), saved=_log(), metal_detector_id=None),
+			_log(_test(test_time=None), saved=_log(), metal_detector_id="MD-1"),
+			_log(_test(test_piece_type=""), saved=_log(), metal_detector_id="MD-1"),
+		):
+			doc.on_trash()
+			self.assertEqual(doc.earlier_layout, 1)
+
+	def test_a_log_made_since_is_deleted_as_it_is(self):
+		for doc in (_log(_test(), saved=_log(), metal_detector_id="MD-1"), _log(saved=_log(), metal_detector_id="MD-1")):
+			doc.on_trash()
+			self.assertEqual(doc.earlier_layout, 0)
 
 
 _ON_LINES = {"MD-1": ("CORN EXTRUSION", "FRYING"), "MD-2": ("RICE EXTRUSION",)}
@@ -291,13 +382,14 @@ class TestTheMarkStays(unittest.TestCase):
 		get_value.assert_called_once_with("QC Metal Detector Log", "QCH-2026-00003", "earlier_layout")
 		self.assertEqual((doc.earlier_layout, doc.calibration_certificate), (1, "/files/cert.pdf"))
 
+	@patch("frappe.db.exists", return_value=True)
 	@patch("frappe.db.get_value", return_value=0)
-	def test_an_amendment_of_a_log_made_since(self, _get_value):
-		doc = _log(_test(), amended_from="QCH-2026-00009")
+	def test_an_amendment_of_a_log_made_since(self, _get_value, _exists):
+		doc = _log(_test(), amended_from="QCH-2026-00009", metal_detector_id="MD-1")
 		doc.validate()
 		self.assertEqual(doc.earlier_layout, 0)
 		with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
-			_log(_test(test_remarks="ok"), amended_from="QCH-2026-00009").validate()
+			_log(_test(test_remarks="ok"), amended_from="QCH-2026-00009", metal_detector_id="MD-1").validate()
 
 
 class TestWhichLogsKeepTheEarlierLayout(unittest.TestCase):
@@ -362,20 +454,30 @@ class TestEarlierLayoutPatch(unittest.TestCase):
 		forget.assert_called_once_with("QC Metal Detector Log", "QC Metal Detector Test", RETIRED_TEST_FIELDS)
 
 	def test_a_log_deleted_before_is_restored_as_it_was(self, _has, get_all, sql, set_value, _forget):
-		with_remarks = {"doctype": "QC Metal Detector Log", "name": "QCH-7", "docstatus": 0, "tests": [{"detected": 1, "test_remarks": "ok"}]}
-		blank = {"doctype": "QC Metal Detector Log", "name": "QCH-8", "docstatus": 0, "tests": [{"detected": 1}]}
-		submitted = {"doctype": "QC Metal Detector Log", "name": "QCH-9", "docstatus": 2, "tests": []}
+		def log(name, tests, docstatus=0, **values):
+			return {"doctype": "QC Metal Detector Log", "name": name, "docstatus": docstatus, "metal_detector_id": "MD-1", "tests": tests, **values}
+
+		done = {"detected": 1, "test_time": "08:00:00", "test_piece_type": "Fe"}
+		with_remarks = log("QCH-7", [{**done, "test_remarks": "ok"}])
+		submitted = log("QCH-9", [], docstatus=2)
+		# what a log made since must have and a restore could not fill in
+		no_detector = log("QCH-10", [done], metal_detector_id=None)
+		no_type = log("QCH-11", [{**done, "test_piece_type": ""}])
+		# all a log made since must be: restored as it is
+		blank = log("QCH-8", [done])
+		no_tests = log("QCH-12", [])
+		deleted = (with_remarks, submitted, no_detector, no_type, blank, no_tests)
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Metal Detector Test": [],
 			"QC Metal Detector Log": [],
-			"Deleted Document": [_record(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate((with_remarks, blank, submitted), 1)],
+			"Deleted Document": [_record(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate(deleted, 1)],
 		}[doctype]
 
 		patch_module.execute()
 
 		self.assertEqual(get_all.call_args.kwargs["filters"], {"deleted_doctype": "QC Metal Detector Log", "restored": 0})
 		sql.assert_not_called()
-		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-3"])
+		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2", "DD-3", "DD-4"])
 		self.assertEqual(json.loads(set_value.call_args_list[0].args[3]), {**with_remarks, "earlier_layout": 1})
 		self.assertEqual(set_value.call_args_list[0].kwargs, {"update_modified": False})
 
@@ -801,6 +903,43 @@ class TestTheForm(unittest.TestCase):
 		self.assertEqual(out["changed_again"], "MD-1")
 
 
+class TestTheFormMarksThem(unittest.TestCase):
+	"""The form marks the Metal Detector ID and the tests' time and test piece
+	required on a log made since, not on one made before."""
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the form script")
+	def test_on_a_log_made_since_only(self):
+		with open(os.path.join(os.path.dirname(__file__), "qc_metal_detector_log.js")) as fh:
+			form_script = fh.read()
+		script = (
+			"let handlers;\n"
+			"const frappe = {ui: {form: {on: (doctype, h) => { handlers = h; }}}};\n"
+			f"{form_script}\n"
+			"const run = (earlier, drawn) => {\n"
+			"  const calls = [];\n"
+			"  const grid = {visible_columns: drawn.map(([fieldname, reqd]) => [{fieldname, reqd}, 2]),\n"
+			"    toggle_reqd: (f, on) => calls.push(['grid', f, on]), reset_grid: () => calls.push(['reset'])};\n"
+			"  const frm = {doc: {earlier_layout: earlier}, fields_dict: {tests: {grid}}, toggle_reqd: (f, on) => calls.push(['form', f, on])};\n"
+			"  handlers.refresh(frm);\n"
+			"  return calls;\n"
+			"};\n"
+			"const unmarked = [['test_time', 0], ['test_piece_type', 0], ['detected', 0]];\n"
+			"const marked = [['test_time', 1], ['test_piece_type', 1], ['detected', 0]];\n"
+			"console.log(JSON.stringify({since_drawn_unmarked: run(0, unmarked), since_drawn_marked: run(0, marked),\n"
+			"  before_drawn_marked: run(1, marked), before_drawn_unmarked: run(1, unmarked), nothing_drawn: run(0, [])}));\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		since = [["form", "metal_detector_id", True], ["grid", "test_time", True], ["grid", "test_piece_type", True]]
+		before = [["form", "metal_detector_id", False], ["grid", "test_time", False], ["grid", "test_piece_type", False]]
+		# marked on a log made since, not on one made before; the header drawn
+		# again only when its marks are the other log's
+		self.assertEqual(out["since_drawn_unmarked"], since + [["reset"]])
+		self.assertEqual(out["since_drawn_marked"], since)
+		self.assertEqual(out["before_drawn_marked"], before + [["reset"]])
+		self.assertEqual(out["before_drawn_unmarked"], before)
+		self.assertEqual(out["nothing_drawn"], since)
+
+
 class TestTheDoctypes(unittest.TestCase):
 	def test_the_metal_detector(self):
 		doc = _doctype("Metal Detector")
@@ -899,6 +1038,17 @@ class TestTheDoctypes(unittest.TestCase):
 			self.assertGreater(order.index(fieldname), order.index("earlier_layout_section"), fieldname)
 			# out of the grid, of a Duplicate, and of a print without them
 			self.assertEqual((f.get("in_list_view"), f.get("no_copy"), f.get("print_hide_if_no_value")), (None, 1, 1), fieldname)
+
+	def test_mandatory_on_a_log_made_since_only(self):
+		# not reqd on the doctypes: a log made before keeps what it recorded (a
+		# draft, an amendment, a restore); the form marks them on a log made since
+		self.assertIsNone(_fields(_doctype("QC Metal Detector Log"))["metal_detector_id"].get("reqd"))
+		tests = _fields(_doctype("QC Metal Detector Test"))
+		for fieldname in ("test_time", "test_piece_type"):
+			self.assertIsNone(tests[fieldname].get("reqd"), fieldname)
+		# and the test piece starts blank: a Select starts at its first option
+		self.assertEqual(tests["test_piece_type"]["options"], "\nFe\nNon-Fe\nStainless")
+		self.assertNotIn("default", tests["test_piece_type"])
 
 	def test_the_patches_run_in_order(self):
 		with open(os.path.join(DOCTYPE_DIR, "..", "..", "patches.txt")) as fh:

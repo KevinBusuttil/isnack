@@ -117,8 +117,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
                     { fieldname: "oven_temp", fieldtype: "Float", label: __("Oven Temp (°C)") },
                     { fieldname: "belt_speed", fieldtype: "Float", label: __("Belt Speed (Hz)") },
                     { fieldname: "moisture", fieldtype: "Float", label: __("Moisture (%)") },
-                    { fieldname: "tank_temp", fieldtype: "Float", label: __("Tank Temp (°C)") },
-                    { fieldname: "motor_speed", fieldtype: "Float", label: __("Motor Speed (Hz)") },
+                    { fieldname: "tank_temp", fieldtype: "Float", label: __("Slurry Tank Temp (°C)") },
+                    { fieldname: "motor_speed", fieldtype: "Float", label: __("Mixer Speed (Hz)") },
                     { fieldname: "flavour_speed", fieldtype: "Float", label: __("Flavour Speed (Hz)") },
                 ],
             },
@@ -270,7 +270,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             // ── Section: Equipment ───────────────────────────────────────────
             { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
             // the detectors used on the Factory Line picked (setup_metal_detector_dialog)
-            { fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector" },
+            { fieldname: "metal_detector_id", fieldtype: "Link", label: __("Metal Detector ID"), options: "Metal Detector", reqd: 1 },
             // filled from the Metal Detector picked, as on the form (the
             // Calibration Certificate is kept on the Metal Detector since 2026-11)
             { fieldname: "detector_make_model", fieldtype: "Data", label: __("Make/Model"), read_only: 1, fetch_from: "metal_detector_id.make_model" },
@@ -282,8 +282,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
         ],
         // (each test's Sensitivity Setting and Remarks came off in 2026-11)
         child_fields: [
-            { fieldname: "test_time", fieldtype: "Time", label: __("Test Time") },
-            { fieldname: "test_piece_type", fieldtype: "Select", label: __("Test Piece Type"), options: "\nFe\nNon-Fe\nStainless" },
+            { fieldname: "test_time", fieldtype: "Time", label: __("Test Time"), reqd: 1 },
+            { fieldname: "test_piece_type", fieldtype: "Select", label: __("Test Piece Type"), options: "\nFe\nNon-Fe\nStainless", reqd: 1 },
             // as on the form; a row holding nothing else is not a test
             { fieldname: "test_piece_size_mm", fieldtype: "Float", label: __("Test Piece Size (mm)"), default: 0.2 },
             { fieldname: "detected", fieldtype: "Check", label: __("Detected (Pass)") },

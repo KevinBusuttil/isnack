@@ -109,10 +109,11 @@ class QCWeightCheck(Document):
         """Each sample's Sample No and Gross Weight are mandatory (the doctype
         marks them so) and more than 0, as the Nominal Weight is. Not on a check
         made before, whose samples are kept as they were."""
-        for fieldname, label in (("sample_no", _("Sample No")), ("gross_weight", _("Gross Weight (g)"))):
+        # (the labels are translated only when one is wrong)
+        for fieldname, label in (("sample_no", "Sample No"), ("gross_weight", "Gross Weight (g)")):
             rows = [str(s.idx or i) for i, s in enumerate(self.samples or [], 1) if flt(s.get(fieldname)) <= 0]
             if rows:
-                frappe.throw(_("{0} must be more than 0 in Samples (row {1}).").format(label, ", ".join(rows)))
+                frappe.throw(_("{0} must be more than 0 in Samples (row {1}).").format(_(label), ", ".join(rows)))
 
     def before_submit(self):
         # a check is its samples: the Quality Hub asks for one before it saves

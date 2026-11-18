@@ -26,7 +26,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Test Piece Type",
-   "options": "Fe\nNon-Fe\nStainless"
+   "options": "\nFe\nNon-Fe\nStainless"
   },
   {
    "fieldname": "test_piece_size_mm",
@@ -67,7 +67,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-11-16 10:00:00.000000",
+ "modified": "2026-11-18 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Metal Detector Test",

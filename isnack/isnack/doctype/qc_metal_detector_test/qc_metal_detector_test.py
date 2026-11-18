@@ -6,4 +6,11 @@ from frappe.model.document import Document
 
 
 class QCMetalDetectorTest(Document):
-	pass
+	def __setup__(self):
+		# On saving, Frappe gives a new test a Test Time it was not sent (the time
+		# of saving) and a Select its first option: a test sent without them (from a
+		# page loaded before 2026-11, or through the API) is refused rather than
+		# given them (QCMetalDetectorLog.require_detector_and_tests), and the tests
+		# of a log made before keep a missing time as it was when it is amended or
+		# restored. A Data Import still gives a blank Test Time the time of import.
+		self.dont_update_if_missing = ["test_time", "test_piece_type"]
