@@ -1221,8 +1221,8 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 	@patch("frappe.get_meta")
 	def test_a_blank_select_stays_blank(self, get_meta, get_doc):
 		# a Select left unset takes its first option when Frappe saves the record
-		# (Shift: Morning), which nobody picked: a blank one is sent as blank, for
-		# the record to ask for it
+		# (Shift's was Morning until 2026-11), which nobody picked: a blank one is
+		# sent as blank, for the record to ask for it
 		get_meta.side_effect = lambda doctype: (
 			self._meta(["record_date"], selects=["shift"])
 			if doctype == "QC Metal Detector Log"
