@@ -25,6 +25,7 @@ class QCMetalDetectorLog(Document):
         earlier_layout.keep_mark(self)
         if not earlier_layout.in_earlier_layout(self):
             self.refuse_retired_values()
+            self.require_detector_and_tests()
         self.check_metal_detector()
         self.check_detector_on_line()
         self.keep_details_verified_under()
@@ -47,6 +48,36 @@ class QCMetalDetectorLog(Document):
                     holder.set(fieldname, None)
         if any(holder.get(fieldname) for holder, fieldnames in holders for fieldname in fieldnames):
             frappe.throw(_("This page is out of date. Reload it and enter the log again."))
+
+    def require_detector_and_tests(self):
+        """The Metal Detector ID, and each test's Test Time and Test Piece Type,
+        are mandatory on a log made since 2026-11. Not on one made before (a
+        draft, an amendment, a restore), which keeps what it recorded: the
+        fields are not reqd on the doctype, and the form script marks them so
+        on the logs that need them."""
+        if not cstr(self.metal_detector_id).strip():
+            frappe.throw(_("Metal Detector ID is required."))
+        # (the labels are translated only when one is missing)
+        for fieldname, label in (("test_time", "Test Time"), ("test_piece_type", "Test Piece Type")):
+            rows = [str(t.idx or i) for i, t in enumerate(self.tests or [], 1) if not cstr(t.get(fieldname)).strip()]
+            if rows:
+                frappe.throw(_("{0} is required in Tests (row {1}).").format(_(label), ", ".join(rows)))
+
+    def before_submit(self):
+        # a log is its tests: the Quality Hub asks for one before it saves a
+        # log, and a log is not submitted without one, however it is saved
+        if not self.tests:
+            frappe.throw(_("Add at least one row in Tests to submit the log."))
+
+    def on_trash(self):
+        """A draft from before the change, unmarked (it held no certificate,
+        corrective action or test sensitivity or remarks), that a log made
+        since could not be (no Metal Detector ID, a test without a time or a
+        test piece type) could not be restored once deleted: a restore is saved
+        as a new log and cannot fill them in. Its snapshot (taken after this,
+        from the document) keeps the earlier layout."""
+        if not earlier_layout.in_earlier_layout(self) and not finished_the_new_way(self, self.tests or []):
+            self.earlier_layout = 1
 
     def check_metal_detector(self):
         """The Metal Detector ID names a Metal Detector. Frappe does not check a
@@ -118,6 +149,16 @@ def _same_id(one, other) -> bool:
     spaces aside (a log made before 2026-11 may spell it otherwise than its
     detector)."""
     return cstr(one).strip().casefold() == cstr(other).strip().casefold()
+
+
+def finished_the_new_way(log, tests=()) -> bool:
+    """Whether a log (a row or a dict, and its tests) is all a log made since
+    must be: a Metal Detector ID, and each test with a Test Time and a Test
+    Piece Type. A draft from before that is not cannot be restored as one made
+    since."""
+    return bool(cstr(log.get("metal_detector_id")).strip()) and all(
+        cstr(test.get("test_time")).strip() and cstr(test.get("test_piece_type")).strip() for test in tests
+    )
 
 
 def belongs_to_earlier_layout(log, tests=()) -> bool:

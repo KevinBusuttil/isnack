@@ -4,6 +4,7 @@ from isnack.isnack.doctype.qc_metal_detector_log.qc_metal_detector_log import (
     RETIRED_FIELDS,
     RETIRED_TEST_FIELDS,
     belongs_to_earlier_layout,
+    finished_the_new_way,
 )
 from isnack.utils import earlier_layout
 
@@ -19,9 +20,11 @@ def execute():
     are; so is ``modified`` (and so the version history), a plain update.
 
     A log deleted before is marked in its Deleted Document too, so a restore
-    brings it back as it was. A user who chose to see the sensitivity setting
-    or remarks in the Tests grid has the grid's columns forgotten, so a log
-    made since does not offer them.
+    brings it back as it was: one that keeps the earlier layout, or that a log
+    made since could not be (no Metal Detector ID, a test without a time or a
+    test piece type), which a restore could not fill in. A user who chose to
+    see the sensitivity setting or remarks in the Tests grid has the grid's
+    columns forgotten, so a log made since does not offer them.
     """
     if not frappe.db.has_column("QC Metal Detector Log", "earlier_layout"):
         return
@@ -38,6 +41,8 @@ def execute():
         "QC Metal Detector Log", [log.name for log in logs if belongs_to_earlier_layout(log, tests.get(log.name, ()))]
     )
     earlier_layout.mark_deleted_documents(
-        "QC Metal Detector Log", lambda data: belongs_to_earlier_layout(data, data.get("tests") or ())
+        "QC Metal Detector Log",
+        lambda data: belongs_to_earlier_layout(data, data.get("tests") or ())
+        or not finished_the_new_way(data, data.get("tests") or ()),
     )
     earlier_layout.forget_grid_columns("QC Metal Detector Log", "QC Metal Detector Test", RETIRED_TEST_FIELDS)

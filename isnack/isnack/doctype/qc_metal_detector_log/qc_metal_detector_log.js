@@ -8,7 +8,26 @@
 const metal_detectors_on_line = (factory_line) =>
 	factory_line ? [["Metal Detector Factory Line", "factory_line", "=", factory_line]] : [];
 
+// The Metal Detector ID, and each test's Test Time and Test Piece Type, are
+// mandatory on a log made since 2026-11; a log made before (earlier_layout)
+// keeps what it recorded. The doctype cannot say that per log, so the form
+// marks them (the log itself refuses a log made since without them:
+// QCMetalDetectorLog.require_detector_and_tests).
 frappe.ui.form.on("QC Metal Detector Log", {
+	refresh(frm) {
+		const since = !frm.doc.earlier_layout;
+		frm.toggle_reqd("metal_detector_id", since);
+		const grid = frm.fields_dict.tests.grid;
+		const columns = ["test_time", "test_piece_type"];
+		columns.forEach((fieldname) => grid.toggle_reqd(fieldname, since));
+		// the grid keeps the header it drew last, the previous log's included:
+		// draw it again when its marks are not this log's
+		const marked = (fieldname) => (grid.visible_columns || []).some(([df]) => df.fieldname === fieldname && df.reqd);
+		if ((grid.visible_columns || []).length && columns.some((fieldname) => !!marked(fieldname) !== since)) {
+			grid.reset_grid();
+		}
+	},
+
 	setup(frm) {
 		// no line yet: every detector, and no empty "Filters applied for" under them
 		frm.set_query("metal_detector_id", () =>

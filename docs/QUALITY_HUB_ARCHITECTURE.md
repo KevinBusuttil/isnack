@@ -76,6 +76,10 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Metal detectors by factory line; no corrective action (2026-11).** A Metal Detector is used on one or more factory lines (its **Factory Lines**, required). The log's **Metal Detector ID** offers the detectors used on the Factory Line picked, on the form and in the Quality Hub dialog; a detector picked that is not used on a line picked afterwards is taken off, and the log refuses one not used on its line (an amendment keeps the detector and line of the log it amends). The patch `isnack.patches.v1_0.metal_detector_lines_from_qc_logs` gives each detector the lines of the logs that name it. The **Corrective Action** came off the log: the logs holding one keep it in their Earlier Layout section, marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_corrective_action`.
 
+**Metal detector log: the detector and each test's time and test piece mandatory (2026-11).** On a log made since, the **Metal Detector ID** is mandatory, and so are each test's **Test Time** and **Test Piece Type**; and a log is not submitted without a test (`before_submit`: the Quality Hub already asked for one before it saved, the desk form did not). The fields are not `reqd` on the doctypes, as a log made before keeps what it recorded (a draft, an amendment, a restore): the controller requires them on a log made since (`require_detector_and_tests`), and the form script marks them required there, as the Quality Hub dialog does. A draft from before that a log made since could not be (no detector, a test without a time or a test piece) is marked earlier layout when it is deleted (`on_trash`), and so is one deleted before the deploy (the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout`), so a restore brings it back (`finished_the_new_way`).
+
+**Rice extruder: the slurry's tank and mixer (2026-11).** On the Rice Extruder's **Oven / Slurry Readings**, `tank_temp` reads **Slurry Tank Temp (°C)** and `motor_speed` **Mixer Speed (Hz)** (Tank Temp and Motor Speed until then). Only the labels changed, so the readings recorded stay where they are. The extruder's own Motor Speed, in its Readings, keeps its label.
+
 **Factory lines by tab (2026-11).** [Quality Hub Settings](#quality-hub-settings) gives each Quality Hub tab that records a factory line the lines it records on: Puffs Extruder, Rice Extruder, Frying Line, Tasting, Packaging and Weight Checks (one list for both checks, which its form records together) and CCP & Metal. A tab's New dialog, and its records' desk forms, offer only those lines, and fill in the line when the tab has just one; the records refuse another line (`check_factory_line`, a `validate` doc event), an amendment keeping the line of the record it amends. A tab given no lines offers every line, as before the settings came. Receiving has no factory line.
 
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
@@ -342,7 +346,7 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `metal_detector_id` | Link → Metal Detector | Metal Detector ID | Data until 2026-11: the patch `metal_detectors_from_qc_logs` made a Metal Detector of each ID the logs named. Offers the detectors used on the `factory_line` (`qc_metal_detector_log.js`, the Quality Hub dialog) |
+| `metal_detector_id` | Link → Metal Detector | Metal Detector ID | Data until 2026-11: the patch `metal_detectors_from_qc_logs` made a Metal Detector of each ID the logs named. Offers the detectors used on the `factory_line` (`qc_metal_detector_log.js`, the Quality Hub dialog). Mandatory on a log made since 2026-11 (`require_detector_and_tests`; the form script marks it, `frm.toggle_reqd`), not `reqd` on the doctype, so a log made before keeps what it recorded |
 | `detector_make_model` | Data | Make/Model | `fetch_from: metal_detector_id.make_model`, `read_only: 1` |
 | `last_calibration_date` | Date | Last Calibration Date | `fetch_from: metal_detector_id.last_calibration_date`, `read_only: 1` |
 | `next_calibration_date` | Date | Next Calibration Date | `fetch_from: metal_detector_id.next_calibration_date`, `read_only: 1` |
@@ -515,8 +519,8 @@ The desk grid has 10 units for columns; two narrow ones let all six show.
 | `oven_temp` | Float | Oven Temp (°C) | ✅ (`columns: 1`) |
 | `belt_speed` | Float | Belt Speed (Hz) | ✅ |
 | `moisture` | Float | Moisture (%) | ✅ (`columns: 1`) |
-| `tank_temp` | Float | Tank Temp (°C) | ✅ (`columns: 1`) |
-| `motor_speed` | Float | Motor Speed (Hz) | ✅ |
+| `tank_temp` | Float | Slurry Tank Temp (°C) | ✅ (`columns: 1`; Tank Temp (°C) until 2026-11) |
+| `motor_speed` | Float | Mixer Speed (Hz) | ✅ (the slurry mixer's; Motor Speed (Hz) until 2026-11) |
 | `flavour_speed` | Float | Flavour Speed (Hz) | ✅ |
 
 Seven columns in the desk grid's 10 units: four are narrow (the full label shows on hover).
@@ -585,8 +589,8 @@ The desk grid shows the taster, all five scores and the Overall % (`columns`: ta
 
 | Fieldname | Fieldtype | Label | `in_list_view` |
 |---|---|---|---|
-| `test_time` | Time | Test Time | ✅ |
-| `test_piece_type` | Select | Test Piece Type | ✅ (options: Fe / Non-Fe / Stainless) |
+| `test_time` | Time | Test Time | ✅ (mandatory on a log made since 2026-11: the log requires it, the form script marks the column, `grid.toggle_reqd`; not `reqd` on the doctype) |
+| `test_piece_type` | Select | Test Piece Type | ✅ (options: Fe / Non-Fe / Stainless; mandatory on a log made since 2026-11, as Test Time) |
 | `test_piece_size_mm` | Float | Test Piece Size (mm) | ✅ (`default: 0.2`, since 2026-11) |
 | `detected` | Check | Detected (Pass) | ✅ |
 | `earlier_layout_section` | Section Break | Earlier Layout | — (in the row's form, shown only on a log made before 2026-11: `eval:parent.earlier_layout`) |
@@ -811,6 +815,11 @@ validate():
                                         # setting or remarks:
             blank a value of only spaces
             throw "This page is out of date"   # a form or hub page from before
+        require_detector_and_tests():   # not reqd on the doctypes: a log made before keeps
+                                        # what it recorded
+            if no metal_detector_id: throw "Metal Detector ID is required."
+            if a test has no test_time, then no test_piece_type:
+                throw "<Test Time | Test Piece Type> is required in Tests (row …)."
     check_metal_detector()              # the ID names a Metal Detector (Frappe does not check
                                         # a Link that fields are fetched from)
     check_detector_on_line()            # the detector is used on the log's factory line; an
@@ -821,11 +830,21 @@ validate():
         all_tests_passed = 1 if all(t.detected == True for t in tests) else 0
     else:
         all_tests_passed = 0
+
+before_submit():
+    if no tests:                        # the hub asks for one before it saves
+        throw "Add at least one row in Tests to submit the log."
+
+on_trash():
+    if not earlier_layout and not finished_the_new_way(self, tests):
+        earlier_layout = 1              # an unmarked draft from before: no detector, or a test
+                                        # without a time or a test piece; in memory: its
+                                        # Deleted Document can be restored
 ```
 
 The Corrective Action came off in 2026-11 (it was mandatory when `all_tests_passed = 0`, through `mandatory_depends_on`); a log holding one keeps it in the Earlier Layout section, marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_corrective_action` whatever its state (a log made since the Metal Detector change, unmarked till then, too), and in its Deleted Document when it was deleted before. A draft so marked shows the other retired fields too, blank.
 
-The Make/Model and calibration dates are Frappe's to fetch from the Metal Detector as it validates the link (see the schema above); the controller only puts back an amendment's. The logs made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a calibration certificate, a corrective action or a test's sensitivity setting or remarks; marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout`, which also marks a log deleted before in its Deleted Document when it keeps the earlier layout, and forgets the Tests grid columns a user had chosen when they show the sensitivity setting or remarks: `earlier_layout.forget_grid_columns(…, fieldnames)`) keep them, and can correct them on a draft or an amendment. A log made since records none. Until the migrate adds the mark, every log is treated as one made before. There is no `before_print`: a log made since cannot hold them, and the standard print leaves out a field without a value.
+The Make/Model and calibration dates are Frappe's to fetch from the Metal Detector as it validates the link (see the schema above); the controller only puts back an amendment's. The logs made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a calibration certificate, a corrective action or a test's sensitivity setting or remarks; marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout`, which also marks a log deleted before in its Deleted Document when it keeps the earlier layout or is not all a log made since must be (`finished_the_new_way`: no Metal Detector ID, a test without a Test Time or Test Piece Type), which a restore could not fill in, and forgets the Tests grid columns a user had chosen when they show the sensitivity setting or remarks: `earlier_layout.forget_grid_columns(…, fieldnames)`) keep them, and can correct them on a draft or an amendment. A log made since records none. Until the migrate adds the mark, every log is treated as one made before. There is no `before_print`: a log made since cannot hold them, and the standard print leaves out a field without a value.
 
 The patch `isnack.patches.v1_0.metal_detectors_from_qc_logs` (run before it) makes a Metal Detector of each Metal Detector ID the logs name, and the logs deleted before (their Deleted Documents: a restore needs the detector): an ID differing only in case or surrounding spaces is one detector, named as the newest log spells it; it takes the Make/Model, the calibration dates (the two together) and the certificate of the newest log holding each, a cancelled log only when no other does, a deleted one only when no log there is does. The database matches a log's ID to its detector whatever its case or trailing spaces, but not a leading space, tab or line break: a log whose ID has one is given the detector's name (a plain update, `modified` left alone), and so is a log deleted before, in its Deleted Document, so a restore leads to its detector. The other logs are left as they are. An ID that cannot name a record (one with `<` or `>`) is reported in the migrate output and left out; a draft naming it is saved again with a detector picked. It makes the detectors without their Factory Lines (`ignore_mandatory`), which come next:
 
@@ -1101,7 +1120,7 @@ Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#qual
   - Amber warning (`.qh-ccp-alert-warn`) when no records for today
 - Filter bar: date · metal_detector_id · docstatus · Filter button · New Record button
 - Single panel with record list datatable
-- The New Record dialog: **Metal Detector ID** picks a Metal Detector (a Link; a new one can be made from it, in a quick entry over the dialog), which fills **Make/Model**, **Last Calibration Date** and **Next Calibration Date** (read-only, `fetch_from`, as on the form); no Calibration Certificate, and no Corrective Action, since 2026-11. The Tests editor has Test Time, Test Piece Type, Test Piece Size (mm) and Detected (Pass); no Sensitivity Setting or Remarks since 2026-11. A page loaded before that change still sends them: the log refuses them with "This page is out of date" (`QCMetalDetectorLog.validate`)
+- The New Record dialog: **Metal Detector ID**, required (since 2026-11), picks a Metal Detector (a Link; a new one can be made from it, in a quick entry over the dialog), which fills **Make/Model**, **Last Calibration Date** and **Next Calibration Date** (read-only, `fetch_from`, as on the form); no Calibration Certificate, and no Corrective Action, since 2026-11. The Tests editor has Test Time, Test Piece Type, Test Piece Size (mm) and Detected (Pass); no Sensitivity Setting or Remarks since 2026-11. Test Time and Test Piece Type are required columns since 2026-11 (`reqd` on a child field: the header is marked and Save names the rows without them, `missing_child_values`). A page loaded before that change still sends them: the log refuses them with "This page is out of date" (`QCMetalDetectorLog.validate`)
 - The Metal Detector ID offers the detectors used on the Factory Line picked (every one before a line is picked, with no filter, so no empty "Filters applied for" row under them: `isnack.quality_hub.metal_detectors_on_line`, set as the Link's `get_query` by `setup_metal_detector_dialog`). A detector picked that is not used on a line picked afterwards is taken off, with its details, and the user is told (`drop_detector_off_line`; an answer that comes after the line or detector changed again is left to that change). The desk form does the same (`qc_metal_detector_log.js`)
 - Test Piece Size starts at 0.2 in each new row (`default` on a child field, `make_empty_child_row`). A row holding nothing but its defaults is not a test (`child_row_entered`): it is not saved, and Save asks for a test when there is no other
 - Emptying the Metal Detector ID empties Make/Model and the dates. A dialog's Link has no document and compares what is typed with the value before last, so emptying it after a first pick goes unseen (Frappe v15): the dialog sets a Link that fields are fetched from empty when it is left empty (`empty_cleared_links`, also on the tasting's Batch No). A detector made from the Link's **Create a new Metal Detector** is picked and its details shown; Frappe's quick entry sets a copy of the Link (`deep_clone`), so the dialog's own values for them stay blank, and the log takes them from the detector when it is saved
