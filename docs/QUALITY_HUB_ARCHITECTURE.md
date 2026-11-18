@@ -70,6 +70,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section; their Samples grid keeps the columns it was made with (Gross, Tare, Net Weight, In Range; no Status or Remarks), set by the form script: the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
 
+**Weight check: no item or batch; numbered and weighed (2026-11).** The QC Weight Check no longer records an **Item Code** or **Batch No**: its Work Order names the product. Both fields are `read_only` and `no_copy`, so a check that holds them (one made before, or an amendment or a restore of one) shows them and a Duplicate leaves them out, while a new check does not show them (Frappe hides a read-only field without a value); nothing fills them in any more (the Quality Hub form filled in the Work Order's item until then). The check does not refuse them: a restore is saved as a new check, and a User Permission on an item fills one in on a new check. The Quality Explorer still finds a check made before by its batch, and one made since by its Work Order. The **Nominal Weight** is mandatory, and so are each sample's **Sample No** and **Gross Weight** (`reqd`); on a check made since, all three must be more than 0, as Frappe saves a blank number as 0 and its mandatory check lets a 0 through. In the Samples the **Status** comes before the **Remarks**. A check is not submitted without a sample (`before_submit`): the Quality Hub already asked for one before it saved, the desk form did not.
+
 **Metal detector log changed (2026-11).** The QC Metal Detector Log (QCH) picks its **Metal Detector ID** from a new master, **Metal Detector**, which holds each detector's Make/Model, Last and Next Calibration Date and Calibration Certificate. The log's Make/Model and calibration dates are filled from the detector picked and cannot be edited (`fetch_from`, `read_only`); they are taken when the log is saved, so a submitted log keeps the calibration it was verified under, and so does its amendment (of the same detector). The Calibration Certificate is kept on the Metal Detector only, and each test's Sensitivity Setting and Remarks came off; Test Piece Size (mm) starts at 0.2. The patch `isnack.patches.v1_0.metal_detectors_from_qc_logs` makes a Metal Detector of each ID the logs named (and the logs deleted before, for a restore), with the details of the newest log holding each, so their links lead somewhere and a draft can still be saved; the log refuses an ID that names no Metal Detector. The logs made before keep their certificate and their tests' sensitivity settings and remarks, in **Earlier Layout** sections: the patch `isnack.patches.v1_0.qc_metal_detector_log_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding any of them; a draft holding none is finished the new way.
 
 **Metal detectors by factory line; no corrective action (2026-11).** A Metal Detector is used on one or more factory lines (its **Factory Lines**, required). The log's **Metal Detector ID** offers the detectors used on the Factory Line picked, on the form and in the Quality Hub dialog; a detector picked that is not used on a line picked afterwards is taken off, and the log refuses one not used on its line (an amendment keeps the detector and line of the log it amends). The patch `isnack.patches.v1_0.metal_detector_lines_from_qc_logs` gives each detector the lines of the logs that name it. The **Corrective Action** came off the log: the logs holding one keep it in their Earlier Layout section, marked by the patch `isnack.patches.v1_0.qc_metal_detector_log_corrective_action`.
@@ -407,14 +409,14 @@ Quality Manager and System Manager set it; a Quality Controller reads it. The hu
 ### QCI — QC Weight Check
 
 **Naming:** `QCI-.YYYY.-.#####`  
-**Purpose:** Weight control for finished goods, sample by sample: each sample's gross weight, Status (Pass / Fail) and Remarks, with the average, standard deviation and min/max. Until 2026-11 it took TU1/TU2 limits, tares and an Overall Status instead; the checks made before keep those, in an Earlier Layout section.
+**Purpose:** Weight control for finished goods, sample by sample: each sample's number, gross weight, Status (Pass / Fail) and Remarks, with the average, standard deviation and min/max, against the nominal weight. Its Work Order names the product. Until 2026-11 it took TU1/TU2 limits, tares and an Overall Status instead, and named an item and a batch; the checks made before keep those (the limits, tares and status in an Earlier Layout section).
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `item_code` | Link → Item | Item Code | — |
-| `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
-| `batch_no` | Link → Batch | Batch No | — |
-| `nominal_weight` | Float | Nominal Weight (g) | — |
+| `item_code` | Link → Item | Item Code | `read_only: 1`, `no_copy: 1` — held by checks made before 2026-11 (and their amendments and restores), shown only on them; nothing fills it in |
+| `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1`, `no_copy: 1` |
+| `batch_no` | Link → Batch | Batch No | `read_only: 1`, `no_copy: 1` — as Item Code; the Quality Explorer still finds a check made before by it |
+| `nominal_weight` | Float | Nominal Weight (g) | `reqd: 1`; more than 0 on a check made since 2026-11 (`require_nominal_weight`) |
 | `samples` | Table → QC Weight Sample | Samples | Child table |
 | `sample_count` | Int | Sample Count | `read_only: 1` — auto-calculated |
 | `average_weight` | Float | Average Weight (g) | `read_only: 1` — auto-calculated (of the net weights: the gross weights since 2026-11) |
@@ -621,16 +623,16 @@ The log's Metal Detector ID is filtered on it: `[["Metal Detector Factory Line",
 
 | Fieldname | Fieldtype | Label | `in_list_view` | Notes |
 |---|---|---|---|---|
-| `sample_no` | Int | Sample No | ✅ | — |
-| `gross_weight` | Float | Gross Weight (g) | ✅ | — |
-| `remarks` | Small Text | Remarks | ✅ | `columns: 4`; `depends_on: eval:!parent.earlier_layout` |
+| `sample_no` | Int | Sample No | ✅ | `reqd: 1`; more than 0 on a check made since 2026-11 (`QCWeightCheck.require_sample_figures`) |
+| `gross_weight` | Float | Gross Weight (g) | ✅ | `reqd: 1`; more than 0 on a check made since 2026-11, as Sample No |
 | `status` | Select | Status | ✅ | options: (blank) / Pass / Fail; `depends_on: eval:!parent.earlier_layout`; mandatory on a check made since 2026-11 (`QCWeightCheck.require_sample_status`; the form script `qc_weight_check.js` marks the column with `grid.toggle_reqd`), not on one made before |
+| `remarks` | Small Text | Remarks | ✅ | `columns: 4`; `depends_on: eval:!parent.earlier_layout` |
 | `earlier_layout_section` | Section Break | Earlier Layout | — | in the row's form, shown only on a check made before 2026-11 (`eval:parent.earlier_layout`) |
 | `tare_weight` | Float | Tare Weight (g) | — | `no_copy`, `print_hide_if_no_value`; earlier layout |
 | `net_weight` | Float | Net Weight (g) | — | `read_only: 1`, `no_copy`, `print_hide_if_no_value` — Gross − Tare, calculated by parent `validate()` (the gross weight since 2026-11) |
 | `in_range` | Check | In Range | — | `read_only: 1`, `no_copy`, `print_hide_if_no_value` — on a check made before, 1 if `net_weight >= tu2_limit` |
 
-The grid's columns follow the check: on one made since, Sample No, Gross Weight, Remarks and Status (the doctype's `in_list_view`); on one made before, Sample No, Gross Weight, Tare Weight, Net Weight and In Range, as it was made. The form script `qc_weight_check.js` sets them (`grid.update_docfield_property(…, "in_list_view", …)`, `grid.reset_grid()`); the doctype cannot say either per check.
+The grid's columns follow the check: on one made since, Sample No, Gross Weight, Status and Remarks (the doctype's `in_list_view`); on one made before, Sample No, Gross Weight, Tare Weight, Net Weight and In Range, as it was made. The form script `qc_weight_check.js` sets them (`grid.update_docfield_property(…, "in_list_view", …)`, `grid.reset_grid()`); the doctype cannot say either per check.
 
 ---
 
@@ -846,6 +848,10 @@ validate():
         if any sample has no Status:
             throw "Status is required in Samples (row …). If the Samples table has
                    no Status column, this page is out of date: reload it …"
+        if nominal_weight <= 0:             # reqd lets the 0 of a blank through
+            throw "Nominal Weight (g) must be more than 0."
+        if any sample's sample_no <= 0, then any sample's gross_weight <= 0:
+            throw "<Sample No | Gross Weight (g)> must be more than 0 in Samples (row …)."
 
     tu1 = tu1_limit or 0
     tu2 = tu2_limit or 0
@@ -871,16 +877,22 @@ validate():
         overall_status = "Fail" if any sample's Status is Fail
                          else "Pass" if every one is Pass else ""
 
+before_submit():
+    if no samples:                      # the hub asks for one before it saves
+        throw "Add at least one row in Samples to submit the check."
+
 before_print():
     if not earlier_layout:              # print ignores depends_on
         blank EARLIER_FIELDS and each sample's EARLIER_SAMPLE_FIELDS (in memory)
 
 on_trash():
-    if not earlier_layout and a sample has no Status:   # an unmarked draft from before
-        earlier_layout = 1              # in memory: its Deleted Document can be restored
+    if not earlier_layout and not finished_the_new_way(self, samples):
+        earlier_layout = 1              # an unmarked draft from before: a sample with no Status,
+                                        # a Nominal Weight, Sample No or Gross Weight of 0 or less;
+                                        # in memory: its Deleted Document can be restored
 ```
 
-The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a TU limit, an Overall Status, Remarks or a tare; marked by the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout`, which also marks a check deleted before in its Deleted Document when it keeps the earlier layout or its samples have no Status, which a restore could not give them, and forgets the Samples grid columns users had chosen, which would keep Status and Remarks out of the grid: `earlier_layout.forget_grid_columns`) keep their limits, tares and the Overall Status they were given, reckoned as before. Each sample's Status is mandatory on a check made since, not on one made before: a draft finished now, an amendment or a restore of one keeps the Overall Status it was given. The doctype cannot say that per check, so the Status field is not `reqd`; the controller requires it, and the form script `qc_weight_check.js` marks the column required on the checks that need it (`grid.toggle_reqd`).
+The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier_layout`: submitted or cancelled, or a draft holding a TU limit, an Overall Status, Remarks or a tare; marked by the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout`, which also marks a check deleted before in its Deleted Document when it keeps the earlier layout or is not all a check made since must be (`finished_the_new_way`: a sample with no Status, a Nominal Weight, Sample No or Gross Weight of 0 or less), which a restore could not fill in, and forgets the Samples grid columns users had chosen, which would keep Status and Remarks out of the grid: `earlier_layout.forget_grid_columns`) keep their limits, tares and the Overall Status they were given, reckoned as before. Each sample's Status is mandatory on a check made since, not on one made before: a draft finished now, an amendment or a restore of one keeps the Overall Status it was given. The doctype cannot say that per check, so the Status field is not `reqd`; the controller requires it, and the form script `qc_weight_check.js` marks the column required on the checks that need it (`grid.toggle_reqd`). Sample No, Gross Weight and Nominal Weight are `reqd` on every check, as they always existed (a blank in a check made before reads 0, which the mandatory check lets through); the controller requires them more than 0 on a check made since only, so a check made before is kept, amended and restored as it was.
 
 ---
 
@@ -1074,11 +1086,11 @@ Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#qual
   - Two ticks at the top, **Packaging Check (QCG)** and **Weight Check (QCI)**, both ticked. Unticking one hides its sections and stops asking for its required fields (a dialog asks for a required field even hidden), so the form also records either check on its own. One of the two stays ticked; a record type the user may not create is unticked and cannot be ticked.
   - The Record Details once (the first section of both dialogs below, the same fields: a test pins it), written to both records.
   - Then each record's own fields, taken from its dialog config, under the headings **Packaging Check (QCG)** (with the QCG-007 instruction; Qty Wasted and Remarks in the same section) and **Weight Check (QCI)**, then the Samples editor. The packaging Remarks go to the packaging check only: the weight check's record-level Remarks is retired.
-  - Picking the Work Order fills the weight check's Item Code with the Work Order's product (`get_work_order_product`, only when the user may read the Work Order); Batch No offers that item's batches, and a change of item clears it (another Work Order of the same item keeps it).
+  - Until 2026-11, picking the Work Order filled the weight check's Item Code with the Work Order's product (`get_work_order_product`, since removed) and Batch No offered that item's batches; the weight check names neither since.
   - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a Check filter that would hide a saved check is cleared (the Date, Work Order and Status filters stay, and can still hide them).
   - A dialog draws a field it has no document for as `value || null`, which loses a 0, and Frappe redraws a required field holding 0 as it reads the dialog. So a dialog's values are read once (on Save Draft, those its button already read), a required 0 is drawn again after the read (`read_dialog_values`), and the tick keeps a 0 when it changes a field's `reqd` (`set_dialog_df_property`): a Qty Wasted of 0 saves.
 - The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
-- The Weight Check dialog: Record Details, Product (Item Code, Batch No, Nominal Weight; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Remarks, Status); no Outcome section. Status is a required column (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
+- The Weight Check dialog: Record Details, Product (the Nominal Weight, required; Item Code and Batch No until 2026-11; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Status, Remarks); no Outcome section. Sample No, Gross Weight and Status are required columns (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`), and Sample No and Gross Weight must be more than 0 (`positive`: Save names the rows, `not_positive_child_values`, numbered as the editor shows them; Sample No's input starts at 1). A save needs a sample, Save Draft as well as Save & Submit (`min_rows: 1`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
 - The two dialogs above are no longer opened from the tab: the combined form is built from them
 - Filter bar: date · work_order · check · docstatus · Filter button · New Packaging and Weight Check button
 - Single panel with record list datatable
@@ -1413,8 +1425,9 @@ docs/
 | QCH | Factory Line | `factory_line` | Line whose metal detector is being verified (CCP); its Metal Detector ID offers the detectors used on it |
 | Metal Detector | Factory Line | `factory_lines` (Metal Detector Factory Line) | The lines a detector is used on |
 | Quality Hub Settings | Factory Line | `*_lines` (Quality Hub Factory Line) | The lines each Quality Hub tab records on |
-| QCI | Item | `item_code` | Finished product being weight-checked |
-| QCI | Batch | `batch_no` | The finished goods batch |
+| QCI | Work Order | `work_order` | The production run checked; it names the product |
+| QCI | Item | `item_code` | Finished product being weight-checked (checks made before 2026-11) |
+| QCI | Batch | `batch_no` | The finished goods batch (checks made before 2026-11) |
 | Live Monitor | Quality Inspection Reading | (SQL join) | Rejected readings displayed in "Recent Out-of-Range" panel |
 | Live Monitor | Quality Feedback | `status` | Open non-conformance count (if module is in use) |
 

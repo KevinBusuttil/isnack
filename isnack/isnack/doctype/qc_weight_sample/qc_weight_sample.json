@@ -8,8 +8,8 @@
  "field_order": [
   "sample_no",
   "gross_weight",
-  "remarks",
   "status",
+  "remarks",
   "earlier_layout_section",
   "tare_weight",
   "net_weight",
@@ -20,21 +20,16 @@
    "fieldname": "sample_no",
    "fieldtype": "Int",
    "in_list_view": 1,
-   "label": "Sample No"
+   "label": "Sample No",
+   "reqd": 1,
+   "description": "1 or more."
   },
   {
    "fieldname": "gross_weight",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Gross Weight (g)"
-  },
-  {
-   "fieldname": "remarks",
-   "fieldtype": "Small Text",
-   "label": "Remarks",
-   "in_list_view": 1,
-   "columns": 4,
-   "depends_on": "eval:!parent.earlier_layout"
+   "label": "Gross Weight (g)",
+   "reqd": 1
   },
   {
    "fieldname": "status",
@@ -44,6 +39,14 @@
    "in_list_view": 1,
    "columns": 2,
    "description": "Mandatory on a check made since 2026-11 (the check and its form script see to it). A check made before keeps the Overall Status it was given and its samples as they were: no Status or Remarks.",
+   "depends_on": "eval:!parent.earlier_layout"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks",
+   "in_list_view": 1,
+   "columns": 4,
    "depends_on": "eval:!parent.earlier_layout"
   },
   {
@@ -82,7 +85,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-11-12 22:00:00.000000",
+ "modified": "2026-11-18 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Weight Sample",

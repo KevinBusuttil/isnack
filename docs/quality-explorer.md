@@ -35,7 +35,7 @@ Each record shows its result (Overall Status; "All tests passed" for a metal det
 
 ## Which records belong
 
-A QC record names a batch (`batch_no`: receiving, tasting, weight checks), a Work Order (`work_order`: every type but receiving), or both. The explorer collects the batches and Work Orders the subject stands for and reads every record that names one of them:
+A QC record names a batch (`batch_no`: receiving, tasting, and the weight checks made before 2026-11), a Work Order (`work_order`: every type but receiving), or both. The explorer collects the batches and Work Orders the subject stands for and reads every record that names one of them:
 
 | Exploring | Batches | Work Orders |
 |---|---|---|

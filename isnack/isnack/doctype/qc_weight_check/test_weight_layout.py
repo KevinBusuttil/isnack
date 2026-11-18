@@ -1,9 +1,10 @@
 # Copyright (c) 2026, Busuttil Technologies Limited and contributors
 # For license information, please see license.txt
 
-"""The weight check judged sample by sample (2026-11), and the checks made
-before, which keep their TU limits, tare, Overall Status and Remarks (no
-database)."""
+"""The weight check judged sample by sample (2026-11), each sample numbered and
+weighed, its product named by the Work Order alone; and the checks made before,
+which keep their TU limits, tare, Overall Status and Remarks, and the Item Code
+and Batch No they name (no database)."""
 
 import json
 import unittest
@@ -35,6 +36,9 @@ class _Check(_Row):
 	before_print = QCWeightCheck.before_print
 	refuse_retired_values = QCWeightCheck.refuse_retired_values
 	require_sample_status = QCWeightCheck.require_sample_status
+	require_nominal_weight = QCWeightCheck.require_nominal_weight
+	require_sample_figures = QCWeightCheck.require_sample_figures
+	before_submit = QCWeightCheck.before_submit
 	on_trash = QCWeightCheck.on_trash
 
 	def is_new(self):
@@ -49,11 +53,14 @@ class _BeforeMigrate(_Check):
 
 
 def _sample(gross=None, status=None, tare=None, **other):
-	return _Row({"remarks": None, **other}, gross_weight=gross, status=status, tare_weight=tare)
+	return _Row({"remarks": None, "sample_no": 1, **other}, gross_weight=gross, status=status, tare_weight=tare)
 
 
 def _check(*samples, cls=_Check, **values):
-	doc = cls(dict.fromkeys(EARLIER_FIELDS), doctype="QC Weight Check", samples=list(samples), earlier_layout=0, amended_from=None, saved=None)
+	doc = cls(
+		dict.fromkeys(EARLIER_FIELDS),
+		doctype="QC Weight Check", samples=list(samples), earlier_layout=0, amended_from=None, saved=None, nominal_weight=100,
+	)
 	doc.update(values)
 	return doc
 
@@ -111,6 +118,74 @@ class TestJudgedSampleBySample(unittest.TestCase):
 		doc = _check(_sample(100, "Fail"), overall_status="Pass")
 		doc.validate()
 		self.assertEqual(doc.overall_status, "Fail")
+
+
+class TestTheProductIsTheWorkOrders(unittest.TestCase):
+	"""The Item Code and Batch No came off the check (2026-11): nothing fills
+	them in, and one that holds them keeps them, read-only."""
+
+	def test_a_new_check_holding_them_is_saved(self):
+		# a restore is saved as a new check, and so is one a User Permission on
+		# an item fills in: neither is refused for it
+		doc = _check(_sample(40.6, "Pass"), item_code="SP-40", batch_no="B-0412")
+		doc.validate()
+		self.assertEqual((doc.item_code, doc.batch_no), ("SP-40", "B-0412"))
+
+	def test_a_check_that_holds_them_keeps_them(self):
+		# saved before the change
+		saved = _check(_sample(40.6, "Pass"), item_code="SP-40", batch_no="B-0412", saved=_check())
+		saved.validate()
+		self.assertEqual((saved.item_code, saved.batch_no), ("SP-40", "B-0412"))
+		# amended from a check that holds them
+		amended = _check(_sample(40.6, "Pass"), item_code="SP-40", batch_no="B-0412", amended_from="QCI-2026-00001")
+		with patch("frappe.db.get_value", return_value=0):
+			amended.validate()
+		self.assertEqual((amended.item_code, amended.batch_no), ("SP-40", "B-0412"))
+
+
+class TestNumberedAndWeighed(unittest.TestCase):
+	"""Since 2026-11 the Nominal Weight and each sample's Sample No and Gross
+	Weight are mandatory, and more than 0: Frappe saves a blank number as 0."""
+
+	def test_the_nominal_weight(self):
+		for nominal in (None, 0, -40):
+			with self.subTest(nominal=nominal), self.assertRaisesRegex(frappe.ValidationError, r"Nominal Weight \(g\) must be more than 0\."):
+				_check(_sample(40.6, "Pass"), nominal_weight=nominal).validate()
+
+	def test_each_sample_is_numbered_from_1(self):
+		doc = _check(
+			_sample(40.6, "Pass", sample_no=1, idx=1), _sample(40.2, "Pass", sample_no=0, idx=2),
+			_sample(40.1, "Pass", sample_no=None, idx=3), _sample(40.0, "Pass", sample_no=-4, idx=4),
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, r"Sample No must be more than 0 in Samples \(row 2, 3, 4\)\."):
+			doc.validate()
+
+	def test_and_weighed(self):
+		doc = _check(_sample(40.6, "Pass", idx=1), _sample(0, "Pass", sample_no=2, idx=2), _sample(None, "Fail", sample_no=3, idx=3))
+		with self.assertRaisesRegex(frappe.ValidationError, r"Gross Weight \(g\) must be more than 0 in Samples \(row 2, 3\)\."):
+			doc.validate()
+
+	def test_numbered_and_weighed_it_is_saved(self):
+		doc = _check(_sample(40.6, "Pass", sample_no=1), _sample(39.8, "Fail", sample_no=2), nominal_weight=40)
+		doc.validate()
+		self.assertEqual((doc.sample_count, doc.overall_status), (2, "Fail"))
+
+	def test_not_on_a_check_made_before(self):
+		# kept as it was made: no nominal weight, a sample unnumbered and unweighed
+		doc = _check(_sample(None, sample_no=None), earlier_layout=1, nominal_weight=0, overall_status="Pass")
+		doc.validate()
+		self.assertEqual(doc.overall_status, "Pass")
+
+
+class TestSubmitted(unittest.TestCase):
+	def test_not_without_a_sample(self):
+		# the Quality Hub asks for one before it saves; the desk form, before it submits
+		for earlier in (0, 1):
+			with self.subTest(earlier=earlier), self.assertRaisesRegex(
+				frappe.ValidationError, r"Add at least one row in Samples to submit the check\."
+			):
+				_check(earlier_layout=earlier).before_submit()
+		_check(_sample(40.6, "Pass")).before_submit()
 
 
 class TestTheChecksMadeBefore(unittest.TestCase):
@@ -204,6 +279,19 @@ class TestDeleted(unittest.TestCase):
 		doc.on_trash()
 		self.assertEqual(doc.earlier_layout, 0)
 
+	def test_so_is_a_draft_from_before_it_could_not_be_restored_as(self):
+		# a restore is saved as a new check made since, which cannot fill in a
+		# figure left blank (read 0): the snapshot keeps the earlier layout
+		for samples, values in (
+			((), {"nominal_weight": 0}),  # no samples, no Nominal Weight
+			((_sample(100, "Pass", sample_no=0),), {}),  # a sample not numbered
+			((_sample(None, "Pass"),), {}),  # nor weighed
+		):
+			with self.subTest(samples=samples, values=values):
+				doc = _check(*samples, saved=_check(), **values)
+				doc.on_trash()
+				self.assertEqual(doc.earlier_layout, 1)
+
 
 @patch("isnack.utils.earlier_layout.forget_grid_columns")
 @patch("frappe.db.set_value")
@@ -239,22 +327,30 @@ class TestPatch(unittest.TestCase):
 		forget.assert_called_once_with("QC Weight Check", "QC Weight Sample")
 
 	def test_a_check_deleted_before_is_restored_as_it_was(self, _has, get_all, sql, set_value, _forget):
-		with_tare = {"doctype": "QC Weight Check", "name": "QCI-7", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 2}]}
+		def check(name, samples, **values):
+			return {"doctype": "QC Weight Check", "name": name, "docstatus": 0, "nominal_weight": 40, "samples": samples, **values}
+
+		with_tare = check("QCI-7", [{"sample_no": 1, "gross_weight": 100, "tare_weight": 2}])
 		# gross weights only: its samples have no Status, which a restore could not give them
-		blank = {"doctype": "QC Weight Check", "name": "QCI-8", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 0}]}
-		no_samples = {"doctype": "QC Weight Check", "name": "QCI-9", "docstatus": 0, "samples": []}
-		judged = {"doctype": "QC Weight Check", "name": "QCI-10", "docstatus": 0, "samples": [{"gross_weight": 100, "status": "Pass"}]}
+		blank = check("QCI-8", [{"sample_no": 1, "gross_weight": 100, "tare_weight": 0}])
+		# a figure left blank (read 0), which a restore could not fill in
+		no_nominal = check("QCI-9", [], nominal_weight=0)
+		unnumbered = check("QCI-10", [{"sample_no": 0, "gross_weight": 100, "status": "Pass"}])
+		# all a check made since must be: restored as it is
+		no_samples = check("QCI-11", [])
+		judged = check("QCI-12", [{"sample_no": 1, "gross_weight": 100, "status": "Pass"}])
+		deleted = (with_tare, blank, no_nominal, unnumbered, no_samples, judged)
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Weight Sample": [],
 			"QC Weight Check": [],
-			"Deleted Document": [_row(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate((with_tare, blank, no_samples, judged), 1)],
+			"Deleted Document": [_row(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate(deleted, 1)],
 		}[doctype]
 
 		patch_module.execute()
 
 		self.assertEqual(get_all.call_args.kwargs["filters"], {"deleted_doctype": "QC Weight Check", "restored": 0})
 		sql.assert_not_called()
-		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2"])
+		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2", "DD-3", "DD-4"])
 		args, kwargs = set_value.call_args_list[0]
 		self.assertEqual(args[0::2], ("Deleted Document", "data"))
 		self.assertEqual(json.loads(args[3]), {**with_tare, "earlier_layout": 1})

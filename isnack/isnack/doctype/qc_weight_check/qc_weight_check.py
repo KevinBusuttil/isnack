@@ -22,6 +22,11 @@ RETIRED_SAMPLE_FIELDS = ("tare_weight",)
 EARLIER_FIELDS = ("tu1_limit", "tu2_limit", "tu1_failures", "tu2_failures", "overall_status", "remarks")
 EARLIER_SAMPLE_FIELDS = ("tare_weight", "net_weight", "in_range")
 
+# Taken off the check after them: the Item Code and Batch No (the Work Order
+# names the product). They stay on the doctype, read-only and kept off a
+# Duplicate, so a check that holds them (made before, or an amendment or a
+# restore of one) shows them and nothing fills them in on a new one.
+
 
 class QCWeightCheck(Document):
     def validate(self):
@@ -31,6 +36,8 @@ class QCWeightCheck(Document):
         if not earlier:
             self.refuse_retired_values()
             self.require_sample_status()
+            self.require_nominal_weight()
+            self.require_sample_figures()
 
         tu1 = self.tu1_limit or 0
         tu2 = self.tu2_limit or 0
@@ -90,12 +97,37 @@ class QCWeightCheck(Document):
                 ).format(", ".join(missing))
             )
 
+    def require_nominal_weight(self):
+        """The Nominal Weight is mandatory (the doctype marks it so) and more
+        than 0. Frappe saves a blank number as 0, which its mandatory check lets
+        through. Not on a check made before, which keeps its figures as they
+        were."""
+        if flt(self.nominal_weight) <= 0:
+            frappe.throw(_("Nominal Weight (g) must be more than 0."))
+
+    def require_sample_figures(self):
+        """Each sample's Sample No and Gross Weight are mandatory (the doctype
+        marks them so) and more than 0, as the Nominal Weight is. Not on a check
+        made before, whose samples are kept as they were."""
+        for fieldname, label in (("sample_no", _("Sample No")), ("gross_weight", _("Gross Weight (g)"))):
+            rows = [str(s.idx or i) for i, s in enumerate(self.samples or [], 1) if flt(s.get(fieldname)) <= 0]
+            if rows:
+                frappe.throw(_("{0} must be more than 0 in Samples (row {1}).").format(label, ", ".join(rows)))
+
+    def before_submit(self):
+        # a check is its samples: the Quality Hub asks for one before it saves
+        # a check, and a check is not submitted without one, however it is saved
+        if not self.samples:
+            frappe.throw(_("Add at least one row in Samples to submit the check."))
+
     def on_trash(self):
         """A draft from before the change, unmarked (it held no limit, Overall
-        Status, Remarks or tare), whose samples have no Status, could not be
-        restored once deleted: a restore cannot give them one. Its snapshot
-        (taken after this, from the document) keeps the earlier layout."""
-        if not earlier_layout.in_earlier_layout(self) and any(not s.get("status") for s in self.samples or []):
+        Status, Remarks or tare), that a check made since could not be (a
+        sample without a Status, a Nominal Weight, Sample No or Gross Weight
+        left blank) could not be restored once deleted: a restore is saved as a
+        new check and cannot fill them in. Its snapshot (taken after this, from
+        the document) keeps the earlier layout."""
+        if not earlier_layout.in_earlier_layout(self) and not finished_the_new_way(self, self.samples or []):
             self.earlier_layout = 1
 
     def before_print(self, settings=None):
@@ -120,6 +152,16 @@ def sample_result(samples) -> str:
     if "Fail" in statuses:
         return "Fail"
     return "Pass" if all(status == "Pass" for status in statuses) else ""
+
+
+def finished_the_new_way(check, samples=()) -> bool:
+    """Whether a check (a row or a dict) is all a check made since must be: each
+    sample with a Status, a Sample No and a Gross Weight above 0, and the
+    Nominal Weight above 0. A draft from before that is not cannot be restored
+    as one made since."""
+    return flt(check.get("nominal_weight")) > 0 and all(
+        s.get("status") and flt(s.get("sample_no")) > 0 and flt(s.get("gross_weight")) > 0 for s in samples
+    )
 
 
 def belongs_to_earlier_layout(check, samples=()) -> bool:

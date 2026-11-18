@@ -95,25 +95,33 @@
    "fieldname": "item_code",
    "fieldtype": "Link",
    "label": "Item Code",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Recorded on checks made before 2026-11. A check made since names no item or batch: its Work Order names the product."
   },
   {
    "fieldname": "item_name",
    "fieldtype": "Data",
    "label": "Item Name",
    "fetch_from": "item_code.item_name",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "batch_no",
    "fieldtype": "Link",
    "label": "Batch No",
-   "options": "Batch"
+   "options": "Batch",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Recorded on checks made before 2026-11; a check made since names none."
   },
   {
    "fieldname": "nominal_weight",
    "fieldtype": "Float",
-   "label": "Nominal Weight (g)"
+   "label": "Nominal Weight (g)",
+   "reqd": 1
   },
   {
    "fieldname": "samples",
@@ -218,7 +226,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-12 22:00:00.000000",
+ "modified": "2026-11-18 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Weight Check",
