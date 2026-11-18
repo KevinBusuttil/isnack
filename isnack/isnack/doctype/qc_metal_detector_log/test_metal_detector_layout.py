@@ -17,12 +17,14 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import frappe
+from frappe.model.base_document import BaseDocument
 from isnack.isnack.doctype.qc_metal_detector_log.qc_metal_detector_log import (
 	RETIRED_FIELDS,
 	RETIRED_TEST_FIELDS,
 	QCMetalDetectorLog,
 	belongs_to_earlier_layout,
 )
+from isnack.isnack.doctype.qc_metal_detector_test.qc_metal_detector_test import QCMetalDetectorTest
 from isnack.patches.v1_0 import metal_detector_lines_from_qc_logs as lines_module
 from isnack.patches.v1_0 import metal_detectors_from_qc_logs as seed_module
 from isnack.patches.v1_0 import qc_metal_detector_log_corrective_action as corrective_module
@@ -204,6 +206,25 @@ class TestSubmitted(unittest.TestCase):
 			):
 				_log(earlier_layout=earlier, metal_detector_id="MD-1").before_submit()
 		_log(_test(), metal_detector_id="MD-1").before_submit()
+
+
+class TestATestAsSent(unittest.TestCase):
+	def test_frappe_fills_in_neither_its_time_nor_its_test_piece(self):
+		# saving a log, Frappe gives a new test what it was not sent from a new
+		# test's defaults (a Time the time of saving, a Select its first option):
+		# not these two, which the log asks for instead
+		defaults = {"test_time": "16:13:00", "test_piece_type": "Fe", "test_piece_size_mm": 0.2}
+		with patch.object(QCMetalDetectorTest, "_get_table_fields", return_value=()), patch(
+			"frappe.get_meta", side_effect=AssertionError("no meta")
+		):
+			test = QCMetalDetectorTest.__new__(QCMetalDetectorTest)
+			BaseDocument.__init__(test, {"doctype": "QC Metal Detector Test", "parentfield": "tests"})
+			test.update_if_missing(defaults)
+			self.assertEqual([test.get(f) for f in defaults], [None, None, 0.2])
+			# what Frappe gives any other row
+			test.dont_update_if_missing = []
+			test.update_if_missing(defaults)
+			self.assertEqual([test.get(f) for f in defaults], ["16:13:00", "Fe", 0.2])
 
 
 class TestDeleted(unittest.TestCase):
@@ -1025,6 +1046,9 @@ class TestTheDoctypes(unittest.TestCase):
 		tests = _fields(_doctype("QC Metal Detector Test"))
 		for fieldname in ("test_time", "test_piece_type"):
 			self.assertIsNone(tests[fieldname].get("reqd"), fieldname)
+		# and the test piece starts blank: a Select starts at its first option
+		self.assertEqual(tests["test_piece_type"]["options"], "\nFe\nNon-Fe\nStainless")
+		self.assertNotIn("default", tests["test_piece_type"])
 
 	def test_the_patches_run_in_order(self):
 		with open(os.path.join(DOCTYPE_DIR, "..", "..", "patches.txt")) as fh:

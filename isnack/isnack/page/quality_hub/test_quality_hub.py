@@ -256,6 +256,23 @@ class TestExtruderReadings(unittest.TestCase):
 		self.assertIn("zone_1_temp", _fields(_doctype("QC Oven Reading")))
 		self.assertEqual(_fields(_doctype("QC Oven Record"))["readings"]["options"], "QC Oven Reading")
 
+	def test_the_dialog_reads_as_the_doctypes(self):
+		# the Quality Hub dialog's columns, as the desk form's: the oven (or
+		# slurry) readings, then the extruder's own
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js"), encoding="utf-8") as fh:
+			script = fh.read()
+		column = re.compile(r'\{ fieldname: "(\w+)", fieldtype: "(\w+)", label: __\("([^"]+)"\) \}')
+		for doctype, after, oven in (
+			("QC Puffs Extruder Record", "QC Rice Extruder Record", self.PUFFS_OVEN),
+			("QC Rice Extruder Record", "QC Frying Line Record", self.RICE_OVEN),
+		):
+			start = script.index(f'"{doctype}": {{')
+			block = script[start : script.index(f'"{after}": {{', start)]
+			extra, parent = block.split("parent_fields: [")
+			own = parent.split("child_fields: [")[1]
+			self.assertEqual(column.findall(extra), oven, doctype)
+			self.assertEqual(column.findall(own), self.READINGS, doctype)
+
 	def test_the_dialog_takes_the_new_tables(self):
 		for doctype, ((table, child), (oven_table, oven_child, _label), *_rest) in self.RECORDS.items():
 			config = qh.QC_DIALOG_CONFIG[doctype]
@@ -1161,8 +1178,9 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")
 	def test_a_blank_select_stays_blank(self, get_meta, get_doc):
-		# Test Piece Type is "Fe\nNon-Fe\nStainless": left unset, Frappe would
-		# record an Fe test piece nobody picked
+		# a Select left unset takes its first option when Frappe saves the record
+		# (Shift: Morning), which nobody picked: a blank one is sent as blank, for
+		# the record to ask for it
 		get_meta.side_effect = lambda doctype: (
 			self._meta(["record_date"], selects=["shift"])
 			if doctype == "QC Metal Detector Log"
