@@ -572,14 +572,43 @@ class TestSamplesNumberedAndWeighed(unittest.TestCase):
 		start = self.script.index(f"    {signature} {{")
 		return self.script[start : self.script.index("\n    }\n", start) + 6]
 
-	def _sample_columns(self):
+	def _weight_block(self):
 		start = self.script.index('"QC Weight Check": {')
-		block = self.script[start : self.script.index("\n};", start)]
-		columns = block.split("child_fields: [", 1)[1]
+		return self.script[start : self.script.index("\n};", start)]
+
+	def _sample_columns(self):
+		columns = self._weight_block().split("child_fields: [", 1)[1]
 		return columns[: columns.index("\n        ],")]
 
-	def test_a_number_starts_at_1(self):
-		self.assertIn("""const min_attr = field.fieldtype === "Int" && field.positive ? 'min="1"' : "";""", self.script)
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_a_number_is_drawn_as_it_is(self):
+		# the dialog's own code, with Frappe's escape_html (which draws any
+		# falsy value as nothing): a 0 is drawn as 0, so a redraw (Add Row,
+		# Duplicate, Delete) does not hide one; a Sample No starts at 1
+		script = (
+			"const __ = (msg) => msg;\n"
+			"const frappe = {utils: {escape_html: (txt) => (!txt ? '' : String(txt).replace(/&/g, '&amp;').replace(/\"/g, '&quot;'))}};\n"
+			f"class Hub {{\n{self._method('format_computed(field, value)')}\n{self._method('render_child_input(field, value, row_index)')}\n}}\n"
+			f"const [sample_no, gross_weight] = [{self._sample_columns()}];\n"
+			"const hub = new Hub();\n"
+			"const value = (html) => (html.match(/value=\"([^\"]*)\"/) || [])[1];\n"
+			"const min = (html) => (html.match(/min=\"([^\"]*)\"/) || [])[1] || null;\n"
+			"console.log(JSON.stringify({\n"
+			"  zero: value(hub.render_child_input(sample_no, 0, 0)), minus_zero: value(hub.render_child_input(gross_weight, -0, 0)),\n"
+			"  blank: value(hub.render_child_input(sample_no, '', 0)), unset: value(hub.render_child_input(sample_no, null, 0)),\n"
+			"  twelve: value(hub.render_child_input(sample_no, 12, 0)),\n"
+			"  sample_min: min(hub.render_child_input(sample_no, '', 0)), gross_min: min(hub.render_child_input(gross_weight, '', 0)),\n"
+			"}));\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		self.assertEqual(
+			out,
+			{"zero": "0", "minus_zero": "0", "blank": "", "unset": "", "twelve": "12", "sample_min": "1", "gross_min": None},
+		)
+
+	def _min_rows(self):
+		# the weight check's own: a save needs a sample
+		return int(re.search(r"\n        min_rows: (\d+),", self._weight_block()).group(1))
 
 	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
 	def test_the_samples_a_save_takes(self):
@@ -600,7 +629,7 @@ class TestSamplesNumberedAndWeighed(unittest.TestCase):
 			"const messages = [];\n"
 			"const frappe = {msgprint: (message) => messages.push(message)};\n"
 			f"class Hub {{\n    child_tables(config) {{ return [config]; }}\n{methods}\n}}\n"
-			f"const table = {{child_table_field: 'samples', child_label: 'Samples', min_rows: 1, child_fields: [{self._sample_columns()}]}};\n"
+			f"const table = {{child_table_field: 'samples', child_label: 'Samples', min_rows: {self._min_rows()}, child_fields: [{self._sample_columns()}]}};\n"
 			"const run = (rows) => {\n"
 			"  messages.length = 0;\n"
 			"  const payload = {};\n"

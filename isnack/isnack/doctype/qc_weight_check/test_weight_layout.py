@@ -121,14 +121,15 @@ class TestJudgedSampleBySample(unittest.TestCase):
 
 
 class TestTheProductIsTheWorkOrders(unittest.TestCase):
-	"""The Item Code and Batch No came off the check (2026-11): one that holds
-	them keeps them, read-only; a new one is not given them."""
+	"""The Item Code and Batch No came off the check (2026-11): nothing fills
+	them in, and one that holds them keeps them, read-only."""
 
-	def test_a_new_check_is_given_neither(self):
-		# a page loaded before the change fills in the Work Order's item
-		for values in ({"item_code": "SP-40"}, {"batch_no": "B-0412"}):
-			with self.subTest(values=values), self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
-				_check(_sample(40.6, "Pass"), **values).validate()
+	def test_a_new_check_holding_them_is_saved(self):
+		# a restore is saved as a new check, and so is one a User Permission on
+		# an item fills in: neither is refused for it
+		doc = _check(_sample(40.6, "Pass"), item_code="SP-40", batch_no="B-0412")
+		doc.validate()
+		self.assertEqual((doc.item_code, doc.batch_no), ("SP-40", "B-0412"))
 
 	def test_a_check_that_holds_them_keeps_them(self):
 		# saved before the change
@@ -278,6 +279,19 @@ class TestDeleted(unittest.TestCase):
 		doc.on_trash()
 		self.assertEqual(doc.earlier_layout, 0)
 
+	def test_so_is_a_draft_from_before_it_could_not_be_restored_as(self):
+		# a restore is saved as a new check made since, which cannot fill in a
+		# figure left blank (read 0): the snapshot keeps the earlier layout
+		for samples, values in (
+			((), {"nominal_weight": 0}),  # no samples, no Nominal Weight
+			((_sample(100, "Pass", sample_no=0),), {}),  # a sample not numbered
+			((_sample(None, "Pass"),), {}),  # nor weighed
+		):
+			with self.subTest(samples=samples, values=values):
+				doc = _check(*samples, saved=_check(), **values)
+				doc.on_trash()
+				self.assertEqual(doc.earlier_layout, 1)
+
 
 @patch("isnack.utils.earlier_layout.forget_grid_columns")
 @patch("frappe.db.set_value")
@@ -313,22 +327,30 @@ class TestPatch(unittest.TestCase):
 		forget.assert_called_once_with("QC Weight Check", "QC Weight Sample")
 
 	def test_a_check_deleted_before_is_restored_as_it_was(self, _has, get_all, sql, set_value, _forget):
-		with_tare = {"doctype": "QC Weight Check", "name": "QCI-7", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 2}]}
+		def check(name, samples, **values):
+			return {"doctype": "QC Weight Check", "name": name, "docstatus": 0, "nominal_weight": 40, "samples": samples, **values}
+
+		with_tare = check("QCI-7", [{"sample_no": 1, "gross_weight": 100, "tare_weight": 2}])
 		# gross weights only: its samples have no Status, which a restore could not give them
-		blank = {"doctype": "QC Weight Check", "name": "QCI-8", "docstatus": 0, "samples": [{"gross_weight": 100, "tare_weight": 0}]}
-		no_samples = {"doctype": "QC Weight Check", "name": "QCI-9", "docstatus": 0, "samples": []}
-		judged = {"doctype": "QC Weight Check", "name": "QCI-10", "docstatus": 0, "samples": [{"gross_weight": 100, "status": "Pass"}]}
+		blank = check("QCI-8", [{"sample_no": 1, "gross_weight": 100, "tare_weight": 0}])
+		# a figure left blank (read 0), which a restore could not fill in
+		no_nominal = check("QCI-9", [], nominal_weight=0)
+		unnumbered = check("QCI-10", [{"sample_no": 0, "gross_weight": 100, "status": "Pass"}])
+		# all a check made since must be: restored as it is
+		no_samples = check("QCI-11", [])
+		judged = check("QCI-12", [{"sample_no": 1, "gross_weight": 100, "status": "Pass"}])
+		deleted = (with_tare, blank, no_nominal, unnumbered, no_samples, judged)
 		get_all.side_effect = lambda doctype, **kw: {
 			"QC Weight Sample": [],
 			"QC Weight Check": [],
-			"Deleted Document": [_row(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate((with_tare, blank, no_samples, judged), 1)],
+			"Deleted Document": [_row(f"DD-{i}", data=json.dumps(d)) for i, d in enumerate(deleted, 1)],
 		}[doctype]
 
 		patch_module.execute()
 
 		self.assertEqual(get_all.call_args.kwargs["filters"], {"deleted_doctype": "QC Weight Check", "restored": 0})
 		sql.assert_not_called()
-		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2"])
+		self.assertEqual([c.args[1] for c in set_value.call_args_list], ["DD-1", "DD-2", "DD-3", "DD-4"])
 		args, kwargs = set_value.call_args_list[0]
 		self.assertEqual(args[0::2], ("Deleted Document", "data"))
 		self.assertEqual(json.loads(args[3]), {**with_tare, "earlier_layout": 1})

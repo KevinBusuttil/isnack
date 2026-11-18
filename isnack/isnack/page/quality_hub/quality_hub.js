@@ -1361,6 +1361,7 @@ isnack.quality_hub.QualityHub = class {
         const input_type = type_map[field.fieldtype] || "text";
         const step_attr = field.fieldtype === "Float" ? 'step="any"' : "";
         const min_attr = field.fieldtype === "Int" && field.positive ? 'min="1"' : "";
+        // as a string: escape_html draws any falsy value, a 0 among them, as nothing
         const display_value = value === null || value === undefined ? "" : value;
 
         return `
@@ -1370,7 +1371,7 @@ isnack.quality_hub.QualityHub = class {
                 data-row-index="${row_index}"
                 data-fieldname="${escaped_fieldname}"
                 placeholder="${escaped_label}"
-                value="${frappe.utils.escape_html(display_value)}"
+                value="${frappe.utils.escape_html(String(display_value))}"
                 ${step_attr}
                 ${min_attr}
             />

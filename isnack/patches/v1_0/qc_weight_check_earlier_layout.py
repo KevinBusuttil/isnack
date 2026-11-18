@@ -1,6 +1,6 @@
 import frappe
 
-from isnack.isnack.doctype.qc_weight_check.qc_weight_check import belongs_to_earlier_layout
+from isnack.isnack.doctype.qc_weight_check.qc_weight_check import belongs_to_earlier_layout, finished_the_new_way
 from isnack.utils import earlier_layout
 
 
@@ -16,8 +16,9 @@ def execute():
     version history), a plain update.
 
     A check deleted before is marked in its Deleted Document too, so a restore
-    brings it back as it was: one that keeps the earlier layout, or whose
-    samples have no Status (a restore could not give them one). The columns
+    brings it back as it was: one that keeps the earlier layout, or that a
+    check made since could not be (a sample without a Status, a Nominal Weight,
+    Sample No or Gross Weight left blank), which a restore could not fill in. The columns
     users chose for the Samples grid before are forgotten, so the grid shows
     the Status and Remarks.
     """
@@ -37,11 +38,12 @@ def execute():
     earlier_layout.mark_records(
         "QC Weight Check", [c.name for c in checks if belongs_to_earlier_layout(c, with_tare.get(c.name, ()))]
     )
-    # a restore cannot give a sample the Status it never had
+    # a restore cannot give a sample the Status it never had, nor fill in a
+    # figure left blank
     earlier_layout.mark_deleted_documents(
         "QC Weight Check",
         lambda data: belongs_to_earlier_layout(data, data.get("samples") or ())
-        or any(not s.get("status") for s in data.get("samples") or ()),
+        or not finished_the_new_way(data, data.get("samples") or ()),
     )
     # columns a user chose for the samples grid before (Tare, Net Weight, In
     # Range) would keep the Status and Remarks out of it
