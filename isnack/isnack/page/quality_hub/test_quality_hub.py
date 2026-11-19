@@ -989,12 +989,11 @@ class TestFactoryLinesByTab(unittest.TestCase):
 
 
 class TestWorkOrderByLine(unittest.TestCase):
-    """Since 2026-11 each dialog's Work Order offers the Work Orders of the
-    Factory Line picked, and on a packing line those of the lines it packs for;
-    one the line does not offer is taken off. A Process dialog's Product Item
-    offers the item the Work Order makes, which picking it fills in. The same
-    logic as the records' forms (quality_hub_lines.js, run by the settings'
-    TestTheWorkOrders)."""
+    """Since 2026-11 each dialog's Work Order offers the Work Orders on the
+    Factory Line picked, whatever the tab; one on another line is taken off. A
+    Process dialog's Product Item offers the item the Work Order makes, which
+    picking it fills in. The same logic as the records' forms
+    (quality_hub_lines.js, run by the settings' TestTheWorkOrders)."""
 
     def setUp(self):
         with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
@@ -1005,12 +1004,13 @@ class TestWorkOrderByLine(unittest.TestCase):
         return self.script[start : self.script.index("\n    }\n", start) + 6]
 
     def test_each_dialog_restricts_its_work_order(self):
+        call = re.compile(r"^ {8}this\.restrict_work_order\(dialog\);$", re.M)
         body = self._method("open_new_record(doctype)")
         # once its line is restricted; before the metal detector's, which wraps the line's onchange too
-        self.assertLess(body.index("this.restrict_factory_line(dialog, [doctype]);"), body.index("this.restrict_work_order(dialog);"))
-        self.assertLess(body.index("this.restrict_work_order(dialog);"), body.index("this.setup_dialog_specific_behaviour(dialog, doctype);"))
+        self.assertLess(body.index("this.restrict_factory_line(dialog, [doctype]);"), call.search(body).start())
+        self.assertLess(call.search(body).start(), body.index("this.setup_dialog_specific_behaviour(dialog, doctype);"))
         # the Packaging and Weight form: the Work Order both checks share
-        self.assertIn("this.restrict_work_order(dialog);", self._method("open_packaging_and_weight()"))
+        self.assertTrue(call.search(self._method("open_packaging_and_weight()")))
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
     def test_the_dialog_uses_the_lines(self):
@@ -1023,37 +1023,46 @@ class TestWorkOrderByLine(unittest.TestCase):
             "  work_order_query(line, df) { asked.push(['work_order_query', line, !!df]); return {filters: ['wo', line]}; },\n"
             "  product_query(work_order, df) { asked.push(['product_query', work_order, !!df]); return {filters: ['item', work_order]}; },\n"
             "  line_changed(record) { asked.push(['line_changed', record.get('factory_line'), record.get('work_order'), record.has('product_item'), record.alive()]); record.set('work_order', ''); },\n"
-            "  work_order_changed(record) { asked.push(['work_order_changed', record.get('work_order')]); record.set('product_item', 'FG10001'); },\n"
+            "  work_order_changed(record) { asked.push(['work_order_changed', record.get('work_order'), record.alive()]); record.set('product_item', 'FG10001'); },\n"
             "});\n"
-            "const make_dialog = (values, fields) => {\n"
-            "  const dict = {}; fields.forEach((f) => { dict[f] = {df: {}}; });\n"
-            "  if (dict.factory_line) dict.factory_line.df.onchange = () => { values.line_onchange = (values.line_onchange || 0) + 1; };\n"
-            "  return {values, set: [], get_field: (f) => dict[f], get_value: (f) => values[f],\n"
-            "    set_value(f, v) { this.set.push([f, v]); values[f] = v; }, dict};\n"
+            "// a Frappe dialog's Link: value as last set (set_input keeps the one before in last_value); the box's text apart\n"
+            "const make_dialog = (fields) => {\n"
+            "  const dict = {}; fields.forEach((f) => { dict[f] = {df: {}, value: '', last_value: undefined, typed: ''}; });\n"
+            "  if (dict.factory_line) dict.factory_line.df.onchange = () => { dict.factory_line.own = (dict.factory_line.own || 0) + 1; };\n"
+            "  const set_input = (f, v) => { dict[f].last_value = dict[f].value; dict[f].value = v; dict[f].typed = v; };\n"
+            "  return {display: true, set: [], dict, set_input, get_field: (f) => dict[f], get_value: (f) => dict[f] && dict[f].typed,\n"
+            "    set_value(f, v) { this.set.push([f, v]); set_input(f, v); }};\n"
             "};\n"
             "const out = {};\n"
             "const hub = new Hub();\n"
             "// a desk loaded before the Work Order rule came: nothing to do\n"
             "isnack.quality_hub_lines = {query() {}};\n"
-            "const early = make_dialog({}, ['factory_line', 'work_order']);\n"
+            "const early = make_dialog(['factory_line', 'work_order']);\n"
             "const early_onchange = early.dict.factory_line.df.onchange;\n"
             "hub.restrict_work_order(early);\n"
             "out.early = [early.dict.work_order.get_query === undefined, early.dict.factory_line.df.onchange === early_onchange,\n"
             "  early.dict.work_order.df.onchange === undefined];\n"
             "isnack.quality_hub_lines = make_lines();\n"
-            "// a Process dialog\n"
-            "const values = {factory_line: 'FRYING', work_order: 'WO-1', product_item: ''};\n"
-            "const puffs = make_dialog(values, ['factory_line', 'work_order', 'product_item']);\n"
+            "// a Process dialog, set up before its line is filled in\n"
+            "const puffs = make_dialog(['factory_line', 'work_order', 'product_item']);\n"
             "hub.restrict_work_order(puffs);\n"
+            "puffs.set_input('factory_line', 'FRYING'); puffs.set_input('work_order', 'WO-1');\n"
+            "// a line half typed in the box: the queries read the values set\n"
+            "puffs.dict.factory_line.typed = 'PACK';\n"
             "out.queries = [puffs.dict.work_order.get_query(), puffs.dict.product_item.get_query()];\n"
             "puffs.dict.work_order.df.onchange();\n"
+            "// the Work Order's box left as it was: Frappe runs its onchange again for the same value\n"
+            "puffs.set_input('work_order', 'WO-1'); puffs.dict.work_order.df.onchange();\n"
             "puffs.dict.factory_line.df.onchange();\n"
-            "out.puffs = puffs.set; out.line_onchange = values.line_onchange;\n"
+            "puffs.set_input('factory_line', 'FRYING'); puffs.dict.factory_line.df.onchange();\n"
+            "out.puffs = puffs.set.slice(); out.line_onchange = puffs.dict.factory_line.own;\n"
+            "// saved and closed: the lines are told it is gone\n"
+            "puffs.display = false; puffs.set_input('work_order', 'WO-2'); puffs.dict.work_order.df.onchange();\n"
             "// a dialog with no Product Item, and one with no Work Order (receiving)\n"
-            "const check = make_dialog({factory_line: 'PACKING LINE 1'}, ['factory_line', 'work_order']);\n"
+            "const check = make_dialog(['factory_line', 'work_order']);\n"
             "hub.restrict_work_order(check);\n"
             "out.check = [check.dict.work_order.get_query !== undefined, !!check.dict.work_order.df.onchange];\n"
-            "const receiving = make_dialog({}, ['supplier']);\n"
+            "const receiving = make_dialog(['supplier']);\n"
             "hub.restrict_work_order(receiving);\n"
             "out.asked = asked;\n"
             "console.log(JSON.stringify(out));\n"
@@ -1062,20 +1071,22 @@ class TestWorkOrderByLine(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr[-2000:])
         out = json.loads(run.stdout)
         self.assertEqual(out["early"], [True, True, True])
-        # the queries read the dialog's line and Work Order when the user searches
+        # the queries read the dialog's line and Work Order as set, when the user searches
         self.assertEqual(out["queries"], [{"filters": ["wo", "FRYING"]}, {"filters": ["item", "WO-1"]}])
         # the dialog's fields, read and set through the record the lines are given
         self.assertEqual(out["puffs"], [["product_item", "FG10001"], ["work_order", ""]])
-        # the line's own onchange still runs
-        self.assertEqual(out["line_onchange"], 1)
+        # the line's own onchange still runs, each time
+        self.assertEqual(out["line_onchange"], 2)
         self.assertEqual(out["check"], [True, True])
         self.assertEqual(
             out["asked"],
             [
                 ["work_order_query", "FRYING", True],
                 ["product_query", "WO-1", True],
-                ["work_order_changed", "WO-1"],
+                # once for the pick, not again for the same Work Order or line
+                ["work_order_changed", "WO-1", True],
                 ["line_changed", "FRYING", "WO-1", True, True],
+                ["work_order_changed", "WO-2", False],
             ],
         )
 

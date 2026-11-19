@@ -38,7 +38,6 @@
    - [QC Metal Detector Test](#qc-metal-detector-test)
    - [Metal Detector Factory Line](#metal-detector-factory-line)
    - [Quality Hub Factory Line](#quality-hub-factory-line)
-   - [Quality Hub Packing Line](#quality-hub-packing-line)
    - [QC Weight Sample](#qc-weight-sample)
 7. [RBAC / Permissions](#7-rbac--permissions)
 8. [Backend Controller Logic](#8-backend-controller-logic)
@@ -87,7 +86,7 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Factory lines by tab (2026-11).** [Quality Hub Settings](#quality-hub-settings) gives each Quality Hub tab that records a factory line the lines it records on: Puffs Extruder, Rice Extruder, Frying Line, Tasting, Packaging and Weight Checks (one list for both checks, which its form records together) and CCP & Metal. A tab's New dialog, and its records' desk forms, offer only those lines, and fill in the line when the tab has just one; the records refuse another line (`check_factory_line`, a `validate` doc event), an amendment keeping the line of the record it amends. A tab given no lines offers every line, as before the settings came. Receiving has no factory line.
 
-**Work Orders by line, and the item they make (2026-11).** A record's **Work Order** offers the Work Orders of its Factory Line (the Work Order's `custom_factory_line`, its **Factory Section**), none cancelled, on the Quality Hub's dialogs and on the records' desk forms; before a line is picked, every Work Order. A Work Order is planned on the line that makes its product (its BOM's default line), never on a packing line, so a record on a packing line also offers the Work Orders of the production lines it packs for, which [Quality Hub Settings](#quality-hub-settings) names in its **Packing Lines**. A Work Order the line does not offer is taken off, with an alert ("MFG-WO-2026-00096 is not a Work Order for PACKING LINE 2: pick one from the list."), when the line changes or when it is typed in full. On a Process record (QCB–QCD) the **Product Item** offers the item the Work Order makes, which picking the Work Order fills in (it can still be emptied); without a Work Order it offers Finished Goods items, as before. The doctypes' fixed Finished Goods filter (`link_filters`) came off: Frappe puts a field's `link_filters` in place of any query set on it. The pickers apply the rule; a save does not check it (`isnack/public/js/quality_hub_lines.js`).
+**Work Orders by line, and the item they make (2026-11).** A record's **Work Order** offers the Work Orders on its Factory Line, whatever the tab: those whose own line (`custom_factory_line`, the Work Order's **Factory Section**, filled from its BOM's default line) is the record's, none cancelled, on the Quality Hub's dialogs and on the records' desk forms; before a line is picked, every Work Order. A Work Order on another line is taken off, with an alert ("MFG-WO-2026-00096 is not on FRYING: pick a Work Order on that line."), when the line changes or when it is typed in full. A line no Work Order is planned on offers none, so the Packaging and Weight and CCP & Metal checks are recorded on the production line the product comes from (Quality Hub Settings gives those tabs production lines, and each Metal Detector lists them). On a Process record (QCB–QCD) the **Product Item** offers the item the Work Order makes, which picking the Work Order fills in (it can still be emptied); without a Work Order it offers Finished Goods items, as before. The doctypes' fixed Finished Goods filter (`link_filters`) came off: Frappe puts a field's `link_filters` in place of any query set on it. The pickers apply the rule; a save does not check it (`isnack/public/js/quality_hub_lines.js`). For a few hours main also had a Packing Lines table in Quality Hub Settings mapping packing lines to production lines; it came off, and the patch `isnack.patches.v1_0.remove_quality_hub_packing_line` deletes its doctype on a site migrated in between.
 
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
@@ -131,7 +130,7 @@ The Quality Hub and Quality Explorer pages set no roles of their own (`"roles": 
 
 ## 3. DocType Inventory
 
-All 24 DocTypes (9 parent records, 13 child tables, the Metal Detector master and the Quality Hub Settings) registered under the **Isnack** module:
+All 23 DocTypes (9 parent records, 12 child tables, the Metal Detector master and the Quality Hub Settings) registered under the **Isnack** module:
 
 | DocType Name | Type | Code | Child Table Of | File Path |
 |---|---|---|---|---|
@@ -157,7 +156,6 @@ All 24 DocTypes (9 parent records, 13 child tables, the Metal Detector master an
 | QC Metal Detector Test | Child | N/A | QCH | `isnack/isnack/doctype/qc_metal_detector_test/` |
 | Metal Detector Factory Line | Child | N/A | Metal Detector (its Factory Lines) | `isnack/isnack/doctype/metal_detector_factory_line/` |
 | Quality Hub Factory Line | Child | N/A | Quality Hub Settings (each tab's lines) | `isnack/isnack/doctype/quality_hub_factory_line/` |
-| Quality Hub Packing Line | Child | N/A | Quality Hub Settings (its Packing Lines) | `isnack/isnack/doctype/quality_hub_packing_line/` |
 | QC Weight Sample | Child | N/A | QCI | `isnack/isnack/doctype/qc_weight_sample/` |
 
 All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All child DocTypes have `"istable": 1` and `"editable_grid": 1`. The Metal Detector is a plain master (not submittable), with `"track_changes": 1`: each change of its calibration is kept in its version history. Quality Hub Settings is a single doctype (`"issingle": 1`), with `"track_changes": 1` too.
@@ -173,7 +171,7 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 | `record_date` | Date | Record Date | `reqd: 1`, `default: "Today"` |
 | `shift` | Select | Shift | `reqd: 1`, options: (blank) / Morning / Afternoon / Night: a new record starts blank (2026-11; at Morning until then), as in the Quality Hub's dialogs |
 | `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
-| `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE · offers the Work Orders of the record's Factory Line, and on a packing line of the lines it packs for (2026-11, [Quality Hub Settings](#quality-hub-settings)) |
+| `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE · offers the Work Orders on the record's Factory Line (2026-11; not on QCE, which no tab records) |
 | `operator_name` | Data | Operator Name | `reqd: 1` |
 | `qc_inspector` | Link → User | QC Inspector | `reqd: 1`, `default: "__user"` (auto-fills current user) |
 | `status` | Select | Status | options: Draft / Submitted / Rejected / Closed |
@@ -395,7 +393,7 @@ Permissions follow the log's: Quality Controller read, write and create; Quality
 ### Quality Hub Settings
 
 **Naming:** single doctype (`issingle: 1`, `track_changes: 1`)  
-**Purpose:** The factory lines each Quality Hub tab records on, and the production lines each packing line packs for (since 2026-11). Opened from the Quality Hub's **Quality Hub Settings** quick link.
+**Purpose:** The factory lines each Quality Hub tab records on (since 2026-11). Opened from the Quality Hub's **Quality Hub Settings** quick link.
 
 | Fieldname | Fieldtype | Label | Record types it restricts |
 |---|---|---|---|
@@ -406,22 +404,16 @@ Permissions follow the log's: Quality Controller read, write and create; Quality
 | `tasting_lines` | Table MultiSelect → Quality Hub Factory Line | Tasting (QCF) | QC Tasting Record |
 | `packaging_and_weight_lines` | Table MultiSelect → Quality Hub Factory Line | Packaging and Weight Checks (QCG/QCI) | QC Packaging Check, QC Weight Check (their form records both, with one line) |
 | `metal_detector_lines` | Table MultiSelect → Quality Hub Factory Line | CCP & Metal (QCH) | QC Metal Detector Log |
-| `packing_lines_section` | Section Break | Work Orders on Packing Lines | — |
-| `packing_lines` | Table → Quality Hub Packing Line | Packing Lines | every record with a Work Order: on a packing line, it offers the Work Orders of the production lines named for it, as well as its own |
 
 A tab given no lines records on any line: nothing is restricted until the settings are filled in. Each line is kept once in a tab (`validate`, case and surrounding spaces aside). Receiving (QCA) has no factory line, and the retired Oven Record (QCE) is not offered, so neither has a field.
-
-Work Orders are planned on the lines that make the product, never on a packing line, so the **Packing Lines** table names, a row each, the production lines a packing line packs for. A row is kept once (`validate`, case and surrounding spaces aside), and a row naming the packing line itself is dropped, as a line offers its own Work Orders already; a row missing either line is left for the mandatory check to refuse. With no rows, a packing line offers only its own Work Orders, so none: the table is filled in with the tabs' lines, after the update.
 
 The controller, `quality_hub_settings.py`, holds which field is each record type's (`TAB_FIELDS`), and:
 - `factory_lines(doctype)` — the lines records of `doctype` may be on, read from the cached settings (saving them clears the cache), each once: merging one listed line into another (Factory Line's Rename, "Merge with existing") rewrites the rows without the settings' `validate`. `[]` for any line, and before the migrate makes the settings (no `Quality Hub Settings` DocType yet: Frappe would find no controller to read them with, and raise `ImportError`).
 - `get_factory_lines()` — whitelisted: those of each restricted record type, by doctype, for the hub's dialogs and the records' forms.
-- `packing_lines()` — the production lines each packing line packs for, `{packing line: [production line, ...]}`, each once (case and spaces aside, as for the tabs' lines); `{}` before the migrate makes the settings or the table.
-- `get_packing_lines()` — whitelisted: `packing_lines()`, for the hub's dialogs and the records' forms.
-- `get_work_order_details(work_order)` — whitelisted: `{factory_line, production_item}` of a Work Order (`custom_factory_line`, `production_item`), for the pickers: a Work Order the record's line does not offer is taken off, and its item fills in a Process record's Product Item. `{}` for a Work Order there is not, or one the user may neither select nor read (the document's permission, User Permissions included): whoever may pick it may know both, as its search lists its item.
+- `get_work_order_details(work_order)` — whitelisted: `{factory_line, production_item}` of a Work Order (`custom_factory_line`, `production_item`), for the pickers: a Work Order on another line than the record's is taken off, and its item fills in a Process record's Product Item. `{}` for a Work Order there is not, or one the user may neither select nor read (the document's permission, User Permissions included): whoever may pick it may know both, as its search lists its item.
 - `check_factory_line(doc, method)` — the `validate` doc event of the seven restricted record types (`hooks.py`): refuses a Factory Line not given to the record's tab ("FRYING is not one of the factory lines Quality Hub Settings gives Puffs Extruder (QCB): CORN EXTRUSION."). The hub and the forms offer only those, but a Link takes any line typed in full. An amendment keeping the line of the record it amends is let through, as the Metal Detector Log keeps its detector: the tab may have left the line since. A draft is held to the lines as they are when it is saved again; a record with no line, or of a tab given none, is not checked.
 
-Quality Manager and System Manager set it; a Quality Controller reads it. The hub and the forms read the lines through `get_factory_lines` and `get_packing_lines`, whoever the user.
+Quality Manager and System Manager set it; a Quality Controller reads it. The hub and the forms read the lines through `get_factory_lines`, whoever the user.
 
 ---
 
@@ -641,16 +633,6 @@ The log's Metal Detector ID is filtered on it: `[["Metal Detector Factory Line",
 |---|---|---|---|
 | `factory_line` | Link → Factory Line | Factory Line | ✅ (`reqd`) |
 
----
-
-### Quality Hub Packing Line
-
-**Used by:** Quality Hub Settings (`packing_lines`: a row per production line a packing line packs for, since 2026-11)
-
-| Fieldname | Fieldtype | Label | `in_list_view` |
-|---|---|---|---|
-| `packing_line` | Link → Factory Line | Packing Line | ✅ (`reqd`) |
-| `production_line` | Link → Factory Line | Production Line | ✅ (`reqd`) |
 
 ---
 
@@ -952,13 +934,13 @@ The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier
 
 The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. Since 2026-11 it holds one entry per record type a Quality Hub tab restricts the line of (QC Puffs Extruder Record, QC Rice Extruder Record, QC Frying Line Record, QC Tasting Record, QC Packaging Check, QC Weight Check, QC Metal Detector Log): `validate` → `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line` ([Quality Hub Settings](#quality-hub-settings)). Frappe runs it after the record's own `validate`.
 
-`app_include_js` loads `/assets/isnack/js/quality_hub_lines.js` on every desk page: `isnack.quality_hub_lines`, the lines of each restricted record type and the production lines each packing line packs for (`load()`, from `get_factory_lines` and `get_packing_lines`) and the query offering the lines (`query(doctypes, df)`, the line when there is just one: `only_line(doctypes)`); the Work Order's query (`work_order_query(line, df)`: `[["Work Order", "custom_factory_line", "in", work_order_lines(line)], ["Work Order", "docstatus", "<", 2]]`, "Work Orders for <line>" under them, or every Work Order before a line is picked) and the Product Item's (`product_query(work_order, df)`: `[["Item", "name", "=", <the item the Work Order makes>]]`, once `work_order_details` has read it, else `[["Item", "item_group", "=", "Finished Goods"]]`); and what a change of line or Work Order does (`line_changed(record)`, `work_order_changed(record)`: a Work Order the line does not offer is taken off with an alert, after the settings and the Work Order are read and only if neither field changed meanwhile; another fills in the Product Item). The Quality Hub's dialogs use the same (`restrict_factory_line`, `restrict_work_order`). For each of those record types it adds form handlers: `setup` sets the Factory Line's, the Work Order's and (QCB–QCD) the Product Item's queries, `onload` fills in a new record's only line and reads its Work Order's item, and `factory_line` and `work_order` call `line_changed` and `work_order_changed` on the document open (`form_record(frm)`).
+`app_include_js` loads `/assets/isnack/js/quality_hub_lines.js?v=<the start of its md5>` on every desk page (the version makes browsers fetch the file again when it changes, as assets are cached for a year; `test_quality_hub_settings` fails until it is bumped with the file): `isnack.quality_hub_lines`, the lines of each restricted record type (`load()`, from `get_factory_lines`) and the query offering them (`query(doctypes, df)`, the line when there is just one: `only_line(doctypes)`); the Work Order's query (`work_order_query(line, df)`: `[["Work Order", "custom_factory_line", "=", line], ["Work Order", "docstatus", "<", 2]]`, "Work Orders on <line>" under them, or every Work Order before a line is picked) and the Product Item's (`product_query(work_order, df)`: `[["Item", "name", "=", <the item the Work Order makes>]]`, once `work_order_details` has read it, else `[["Item", "item_group", "=", "Finished Goods"]]`); and what a change of line or Work Order does (`line_changed(record)`, `work_order_changed(record)`: a Work Order on another line is taken off with an alert, once the Work Order is read and only if neither field changed meanwhile; another fills in the Product Item). The Quality Hub's dialogs use the same (`restrict_factory_line`, `restrict_work_order`). For each of those record types it adds form handlers: `setup` sets the Factory Line's, the Work Order's and (QCB–QCD) the Product Item's queries, `onload` fills in a new record's only line and reads its Work Order's item, and `factory_line` and `work_order` call `line_changed` and `work_order_changed` on the document open (`form_record(frm)`).
 
 ---
 
 ## 10. API Endpoints
 
-All endpoints are defined in `isnack/isnack/page/quality_hub/quality_hub.py` and decorated with `@frappe.whitelist()`.
+All endpoints are decorated with `@frappe.whitelist()`, and defined in `isnack/isnack/page/quality_hub/quality_hub.py` but for `get_factory_lines` and `get_work_order_details`, in the settings' controller (`quality_hub_settings.py`).
 
 ---
 
@@ -1068,16 +1050,6 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 
 **Returns:** `{doctype: [line, ...]}` for each restricted record type; an empty list where the tab is given none (any line).
 
----
-
-### `get_packing_lines()`
-
-**Method:** `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_packing_lines`  
-**Arguments:** none
-
-**Purpose:** The production lines each packing line packs for (since 2026-11): a record on a packing line offers their Work Orders as well as its own, on the hub's dialogs and the records' forms (`quality_hub_lines.js`). Read whoever the user, as the lines are.
-
-**Returns:** `{packing line: [production line, ...]}`; `{}` when the settings name none.
 
 ---
 
@@ -1086,7 +1058,7 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 **Method:** `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_work_order_details`  
 **Arguments:** `work_order`
 
-**Purpose:** The line a Work Order is planned on and the item it makes (since 2026-11), for the pickers: a Work Order the record's line does not offer is taken off, and its item fills in a Process record's Product Item.
+**Purpose:** The line a Work Order is planned on and the item it makes (since 2026-11), for the pickers: a Work Order on another line than the record's is taken off, and its item fills in a Process record's Product Item.
 
 **Returns:** `{factory_line, production_item}`; `{}` for a Work Order there is not, or one the user may neither select nor read.
 
@@ -1130,7 +1102,7 @@ Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#qual
 
 ### Work Orders by Line
 
-Each New dialog with a Work Order, the Packaging and Weight form included, sets it up with `restrict_work_order(dialog)` (since 2026-11), right after `restrict_factory_line` and before the metal detector's own wrapping of the line's `onchange`. The Work Order's `get_query` is `isnack.quality_hub_lines.work_order_query(<the line picked>, df)`: the Work Orders of the line, and on a packing line of the lines it packs for, none cancelled; every Work Order before a line is picked. On the Process dialogs, the Product Item's is `product_query(<the Work Order picked>, df)` (their fields no longer carry `link_filters`, which Frappe would put in its place). The line's and the Work Order's `df.onchange` are wrapped, the line's own still running first: a Work Order the new line does not offer is taken off with an alert, and a Work Order picked fills in the Product Item with the item it makes (`line_changed`, `work_order_changed`, given the dialog's fields). A desk whose `quality_hub_lines.js` predates the rule (no `work_order_query`) leaves the Work Order as it was.
+Each New dialog with a Work Order, the Packaging and Weight form included, sets it up with `restrict_work_order(dialog)` (since 2026-11), right after `restrict_factory_line` and before the metal detector's own wrapping of the line's `onchange`. The Work Order's `get_query` is `isnack.quality_hub_lines.work_order_query(<the line picked>, df)`: the Work Orders on the line, none cancelled; every Work Order before a line is picked. On the Process dialogs, the Product Item's is `product_query(<the Work Order picked>, df)` (their fields no longer carry `link_filters`, which Frappe would put in its place). The line's and the Work Order's `df.onchange` are wrapped, the line's own still running first: a Work Order on another line than the new one is taken off with an alert, and a Work Order picked fills in the Product Item with the item it makes (`line_changed`, `work_order_changed`, given the dialog's fields). They read each field's value as last set (the control's `value`), not the box's text, so a line half typed in is not taken for a line. A dialog's Link runs its `onchange` again for the value it holds when its box is left (it has no document to compare with): that is not taken for a change (`value === last_value`), so a Product Item just emptied stays empty. A dialog saved and closed is left as it was (`dialog.display`), with no alert. A desk whose `quality_hub_lines.js` predates the rule (no `work_order_query`) leaves the Work Order as it was.
 
 ### Per-Tab Components
 
@@ -1395,20 +1367,15 @@ isnack/
         │   ├── metal_detector_factory_line.py
         │   └── __init__.py
         │
-        ├── quality_hub_settings/             ── single: each tab's factory lines, and each packing line's production lines
+        ├── quality_hub_settings/             ── single: each tab's factory lines
         │   ├── quality_hub_settings.json
-        │   ├── quality_hub_settings.py       ── TAB_FIELDS, factory_lines, get_factory_lines, check_factory_line, packing_lines, get_packing_lines, get_work_order_details
-        │   ├── test_quality_hub_settings.py  ── the lines, the check, the packing lines, the doctypes, the hooks, the script, the Work Orders
+        │   ├── quality_hub_settings.py       ── TAB_FIELDS, factory_lines, get_factory_lines, check_factory_line, get_work_order_details
+        │   ├── test_quality_hub_settings.py  ── the lines, the check, the Work Order details, the doctypes, the hooks, the script, the Work Orders
         │   └── __init__.py
         │
         ├── quality_hub_factory_line/         ── child (Quality Hub Settings' lines)
         │   ├── quality_hub_factory_line.json
         │   ├── quality_hub_factory_line.py
-        │   └── __init__.py
-        │
-        ├── quality_hub_packing_line/         ── child (Quality Hub Settings' Packing Lines)
-        │   ├── quality_hub_packing_line.json
-        │   ├── quality_hub_packing_line.py
         │   └── __init__.py
         │
         ├── qc_weight_check/                  ── QCI
@@ -1508,8 +1475,7 @@ docs/
 | QCH | Factory Line | `factory_line` | Line whose metal detector is being verified (CCP); its Metal Detector ID offers the detectors used on it |
 | Metal Detector | Factory Line | `factory_lines` (Metal Detector Factory Line) | The lines a detector is used on |
 | Quality Hub Settings | Factory Line | `*_lines` (Quality Hub Factory Line) | The lines each Quality Hub tab records on |
-| Quality Hub Settings | Factory Line | `packing_lines` (Quality Hub Packing Line) | The production lines each packing line packs for: their Work Orders are offered on it |
-| QCB–QCI | Work Order | `work_order` | Offers the Work Orders of the record's line (`custom_factory_line`), and on a packing line of the lines it packs for |
+| QCB–QCD, QCF–QCI | Work Order | `work_order` | Offers the Work Orders on the record's line (`custom_factory_line`); not on the retired QCE |
 | QCI | Work Order | `work_order` | The production run checked; it names the product |
 | QCI | Item | `item_code` | Finished product being weight-checked (checks made before 2026-11) |
 | QCI | Batch | `batch_no` | The finished goods batch (checks made before 2026-11) |
@@ -1548,7 +1514,7 @@ These fixtures are exported/imported with `bench export-fixtures` / `bench impor
 
 ### Factory Line Setup
 
-Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link key across all QC record DocTypes. Each **Metal Detector** names the lines it is used on: a metal detector log offers it on those only. **Quality Hub Settings** gives each Quality Hub tab the lines it records on; a tab given none offers every line. Its **Packing Lines** name the production lines each packing line packs for: a record on a packing line offers their Work Orders, and none until they are named, as Work Orders are planned on production lines only.
+Before creating QC records, create at least one **Factory Line** document via **Isnack → Factory Line**. The name (set by user, e.g. `"Line 1"`) is used as the primary link key across all QC record DocTypes. Each **Metal Detector** names the lines it is used on: a metal detector log offers it on those only. **Quality Hub Settings** gives each Quality Hub tab the lines it records on; a tab given none offers every line. A record's Work Order offers the Work Orders on its line, and a line no Work Order is planned on offers none: Work Orders take their BOM's default line, a production line, so the tabs whose checks need a Work Order (Packaging and Weight, CCP & Metal) are given the production lines their checks are recorded on, and each Metal Detector lists those lines.
 
 ### Deployment Steps
 

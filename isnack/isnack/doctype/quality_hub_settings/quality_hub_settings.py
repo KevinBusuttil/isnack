@@ -22,12 +22,6 @@ TAB_FIELDS = {
 # Every record type a tab's lines apply to, each once.
 RESTRICTED_DOCTYPES = tuple(doctype for doctypes in TAB_FIELDS.values() for doctype in doctypes)
 
-# The production lines each packing line packs for (2026-11): a Work Order is
-# planned on the line that makes its product (its BOM's default line), never on
-# a packing line, so a check on a packing line offers the Work Orders of the
-# lines it packs for as well as its own.
-PACKING_FIELD = "packing_lines"
-
 
 class QualityHubSettings(Document):
     def validate(self):
@@ -43,19 +37,6 @@ class QualityHubSettings(Document):
             for idx, row in enumerate(rows, 1):
                 row.idx = idx
             self.set(fieldname, rows)
-        # each packing line and a line it packs for once; a packing line packs
-        # for itself already (a row missing either is left to the mandatory check)
-        seen = set()
-        rows = []
-        for row in self.get(PACKING_FIELD) or []:
-            key = (_key(row.packing_line), _key(row.production_line))
-            if all(key) and (key[0] == key[1] or key in seen):
-                continue
-            seen.add(key)
-            rows.append(row)
-        for idx, row in enumerate(rows, 1):
-            row.idx = idx
-        self.set(PACKING_FIELD, rows)
 
 
 def tab_field(doctype):
@@ -94,39 +75,14 @@ def get_factory_lines() -> dict[str, list[str]]:
     return {doctype: factory_lines(doctype) for doctype in RESTRICTED_DOCTYPES}
 
 
-def packing_lines() -> dict[str, list[str]]:
-    """The production lines each packing line packs for, by packing line, each
-    once (Quality Hub Settings' Packing Lines). Empty before the migrate that
-    makes the settings, or the table."""
-    if not frappe.db.exists("DocType", "Quality Hub Settings", cache=True):
-        return {}
-    packs_for, names, seen = {}, {}, set()
-    # rows Rename's "Merge with existing" rewrote without validate: read once
-    for row in frappe.get_cached_doc("Quality Hub Settings").get(PACKING_FIELD) or []:
-        key = (_key(row.packing_line), _key(row.production_line))
-        if not all(key) or key[0] == key[1] or key in seen:
-            continue
-        seen.add(key)
-        packing_line = names.setdefault(key[0], cstr(row.packing_line).strip())
-        packs_for.setdefault(packing_line, []).append(cstr(row.production_line).strip())
-    return packs_for
-
-
-@frappe.whitelist()
-def get_packing_lines() -> dict[str, list[str]]:
-    """The production lines each packing line packs for: a record on a packing
-    line offers their Work Orders as well as its own, on the Quality Hub's
-    dialogs and on the records' forms."""
-    return packing_lines()
-
-
 @frappe.whitelist()
 def get_work_order_details(work_order: str) -> dict:
     """The line a Work Order is planned on and the item it makes, for the Quality
-    Hub's dialogs and the records' forms: a Work Order the record's line does
-    not offer is taken off, and its item fills in a Process record's Product
-    Item. Whoever may pick the Work Order may know both: its search lists its
-    item. Nothing for a Work Order there is not, or that the user may not pick."""
+    Hub's dialogs and the records' forms: a record's Work Order is one of its
+    Factory Line's, so one on another line is taken off, and its item fills in
+    a Process record's Product Item. Whoever may pick the Work Order may know
+    both: its search lists its item. Nothing for a Work Order there is not, or
+    that the user may not pick."""
     if not work_order or not frappe.db.exists("Work Order", work_order):
         return {}
     doc = frappe.get_doc("Work Order", work_order)
@@ -161,10 +117,4 @@ def check_factory_line(doc, method=None):
 def _same(one, other) -> bool:
     """The same factory line, case and surrounding spaces aside (as the database
     matches a link)."""
-    return _key(one) == _key(other)
-
-
-def _key(line) -> str:
-    """A factory line as the database matches a link: case and surrounding
-    spaces aside."""
-    return cstr(line).strip().casefold()
+    return cstr(one).strip().casefold() == cstr(other).strip().casefold()

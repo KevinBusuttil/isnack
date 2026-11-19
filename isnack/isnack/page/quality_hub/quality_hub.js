@@ -721,40 +721,50 @@ isnack.quality_hub.QualityHub = class {
         });
     }
 
-    /** The Work Order offers the Work Orders of the Factory Line picked, and on
-     *  a packing line those of the lines it packs for (every Work Order before
-     *  a line is picked), as the records' forms do; one the line does not
-     *  offer is taken off. The Product Item, on a Process record, offers the
-     *  item the Work Order makes, which picking the Work Order fills in
-     *  (Finished Goods items without a Work Order). */
+    /** The Work Order offers the Work Orders on the Factory Line picked (every
+     *  Work Order before a line is picked), as the records' forms do; one on
+     *  another line is taken off. The Product Item, on a Process record,
+     *  offers the item the Work Order makes, which picking the Work Order fills
+     *  in (Finished Goods items without a Work Order). */
     restrict_work_order(dialog) {
         const lines = isnack.quality_hub_lines;
         const work_order_field = dialog.get_field("work_order");
         const line_field = dialog.get_field("factory_line");
         // (a desk loaded before the Work Order rule came has none to apply)
         if (!work_order_field || !line_field || !lines || !lines.work_order_query) return;
+        // a field's value as last set: get_value reads the box as typed, so a
+        // line half typed in would read as a line
+        const value = (fieldname) => {
+            const field = dialog.get_field(fieldname);
+            return field ? field.value || "" : undefined;
+        };
         const record = {
-            get: (fieldname) => dialog.get_value(fieldname),
-            set: (fieldname, value) => dialog.set_value(fieldname, value),
+            get: value,
+            set: (fieldname, val) => dialog.set_value(fieldname, val),
             has: (fieldname) => !!dialog.get_field(fieldname),
-            alive: () => true,
+            // a dialog saved and closed is left as it was
+            alive: () => !!dialog.display,
         };
         // a Dialog has no set_query: the Link reads get_query from its control
-        work_order_field.get_query = () => lines.work_order_query(dialog.get_value("factory_line"), work_order_field.df);
+        work_order_field.get_query = () => lines.work_order_query(value("factory_line"), work_order_field.df);
         const product_field = dialog.get_field("product_item");
         if (product_field) {
-            product_field.get_query = () => lines.product_query(dialog.get_value("work_order"), product_field.df);
+            product_field.get_query = () => lines.product_query(value("work_order"), product_field.df);
         }
+        // a dialog's Link runs onchange again for the value it holds when the
+        // box is left (it has no document to compare with): not a change, and
+        // it would fill in again a Product Item just emptied
+        const changed = (field) => field.value !== field.last_value;
         const on_line = line_field.df.onchange;
         line_field.df.onchange = (...args) => {
             const result = on_line ? on_line.apply(line_field, args) : undefined;
-            lines.line_changed(record);
+            if (changed(line_field)) lines.line_changed(record);
             return result;
         };
         const on_work_order = work_order_field.df.onchange;
         work_order_field.df.onchange = (...args) => {
             const result = on_work_order ? on_work_order.apply(work_order_field, args) : undefined;
-            lines.work_order_changed(record);
+            if (changed(work_order_field)) lines.work_order_changed(record);
             return result;
         };
     }

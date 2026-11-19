@@ -2,9 +2,10 @@
 # For license information, please see license.txt
 
 """Quality Hub Settings: the factory lines each Quality Hub tab records on
-(2026-11), and the QC records held to them; the production lines each packing
-line packs for, whose Work Orders its records offer (no database)."""
+(2026-11), and the QC records held to them; the Work Orders a record's line
+offers, and the item its Work Order makes (no database)."""
 
+import hashlib
 import json
 import os
 import re
@@ -18,17 +19,15 @@ from unittest.mock import patch
 import frappe
 from isnack.isnack.doctype.quality_hub_settings import quality_hub_settings as settings_module
 from isnack.isnack.doctype.quality_hub_settings.quality_hub_settings import (
-    PACKING_FIELD,
     RESTRICTED_DOCTYPES,
     TAB_FIELDS,
     QualityHubSettings,
     check_factory_line,
     factory_lines,
     get_factory_lines,
-    get_packing_lines,
     get_work_order_details,
-    packing_lines,
 )
+from isnack.patches.v1_0 import remove_quality_hub_packing_line
 
 DOCTYPE_DIR = os.path.join(os.path.dirname(__file__), "..")
 APP_DIR = os.path.join(DOCTYPE_DIR, "..", "..")
@@ -44,24 +43,19 @@ LABELS = {f["fieldname"]: f.get("label") for f in _doctype("Quality Hub Settings
 
 
 class _Settings(frappe._dict):
-    """Quality Hub Settings as the database holds them: ``lines`` by field, and
-    the Packing Lines rows as (packing line, production line) pairs."""
+    """Quality Hub Settings as the database holds them: ``lines`` by field."""
 
     def get(self, fieldname, default=None):
-        if fieldname == PACKING_FIELD:
-            return [frappe._dict(packing_line=packing, production_line=production) for packing, production in self.packing]
         return [frappe._dict(factory_line=line) for line in self.lines.get(fieldname, [])]
 
 
 @contextmanager
-def _given(packing=(), **lines):
-    """Quality Hub Settings giving ``lines`` and the ``packing`` rows, on a
-    site that has them. The settings are read only once their DocType exists
-    (frappe.db.exists), which Frappe looks up with frappe.db.get_value: patched
-    here, so a test that patches get_value for the record an amendment amends
-    sees only that call."""
-    settings = _Settings(lines=lines, packing=list(packing))
-    with patch("frappe.db.exists", return_value=True), patch("frappe.get_cached_doc", return_value=settings):
+def _given(**lines):
+    """Quality Hub Settings giving ``lines``, on a site that has them. The
+    settings are read only once their DocType exists (frappe.db.exists), which
+    Frappe looks up with frappe.db.get_value: patched here, so a test that
+    patches get_value for the record an amendment amends sees only that call."""
+    with patch("frappe.db.exists", return_value=True), patch("frappe.get_cached_doc", return_value=_Settings(lines=lines)):
         yield
 
 
@@ -116,39 +110,6 @@ class TestTheLines(unittest.TestCase):
         self.assertEqual({doctype: given for doctype, given in lines.items() if given}, {"QC Metal Detector Log": ["CORN EXTRUSION", "FRYING"]})
 
 
-class TestThePackingLines(unittest.TestCase):
-    """A record on a packing line offers the Work Orders of the production lines
-    it packs for: Work Orders are planned on the line that makes the product."""
-
-    def test_what_each_packing_line_packs_for(self):
-        rows = [("PACKING LINE 1", "CORN EXTRUSION"), ("PACKING LINE 2", "FRYING"), ("PACKING LINE 1", "FRYING")]
-        with _given(packing=rows):
-            self.assertEqual(packing_lines(), {"PACKING LINE 1": ["CORN EXTRUSION", "FRYING"], "PACKING LINE 2": ["FRYING"]})
-            # the forms and the Quality Hub read the same
-            self.assertEqual(get_packing_lines(), packing_lines())
-
-    def test_a_row_read_once(self):
-        # rows Rename's "Merge with existing" rewrote without the settings' validate
-        rows = [
-            ("PACKING LINE 1", "CORN EXTRUSION"),
-            (" packing line 1", "Corn Extrusion "),
-            ("PACKING LINE 1", "packing line 1"),
-            ("PACKING LINE 2", ""),
-            (None, "FRYING"),
-        ]
-        with _given(packing=rows):
-            self.assertEqual(packing_lines(), {"PACKING LINE 1": ["CORN EXTRUSION"]})
-
-    def test_none_given(self):
-        with _given():
-            self.assertEqual(packing_lines(), {})
-
-    def test_before_the_migrate_makes_the_settings(self):
-        with patch("frappe.db.exists", return_value=None), patch("frappe.get_cached_doc") as get_cached_doc:
-            self.assertEqual(get_packing_lines(), {})
-        get_cached_doc.assert_not_called()
-
-
 class TestTheWorkOrderDetails(unittest.TestCase):
     """The line a Work Order is planned on and the item it makes, for the
     pickers: whoever may pick the Work Order may know them."""
@@ -171,7 +132,11 @@ class TestTheWorkOrderDetails(unittest.TestCase):
         self.assertIs(has_permission.call_args_list[0].kwargs["doc"], get_doc.return_value)
 
     def test_read_permission_is_enough(self):
-        self.assertEqual(self._ask("MFG-WO-2026-00096", permitted=("read",))[0]["production_item"], "FG10020")
+        details, _exists, get_doc, has_permission = self._ask("MFG-WO-2026-00096", permitted=("read",))
+        self.assertEqual(details["production_item"], "FG10020")
+        # the document's own read permission, User Permissions included
+        self.assertEqual(has_permission.call_args_list[1].args, ("Work Order", "read"))
+        self.assertIs(has_permission.call_args_list[1].kwargs["doc"], get_doc.return_value)
 
     def test_nothing_for_a_user_who_may_not_pick_it(self):
         self.assertEqual(self._ask("MFG-WO-2026-00096", permitted=())[0], {})
@@ -246,22 +211,6 @@ class TestTheSettings(unittest.TestCase):
         # a tab given none stays so
         self.assertEqual(doc.tasting_lines, [])
 
-    def test_each_production_line_once_for_a_packing_line(self):
-        rows = [
-            ("PACKING LINE 1", "CORN EXTRUSION"),
-            ("packing line 1 ", "corn extrusion"),  # the same row again
-            ("PACKING LINE 1", "PACKING LINE 1"),  # a packing line packs for itself already
-            ("PACKING LINE 1", "FRYING"),
-            ("PACKING LINE 2", "FRYING"),
-            ("PACKING LINE 2", None),  # half a row: the mandatory check asks for the rest
-        ]
-        doc = frappe._dict(packing_lines=[frappe._dict(packing_line=a, production_line=b, idx=i) for i, (a, b) in enumerate(rows, 1)])
-        doc.set = doc.__setitem__
-        QualityHubSettings.validate(doc)
-        self.assertEqual(
-            [(row.packing_line, row.production_line, row.idx) for row in doc.packing_lines],
-            [("PACKING LINE 1", "CORN EXTRUSION", 1), ("PACKING LINE 1", "FRYING", 2), ("PACKING LINE 2", "FRYING", 3), ("PACKING LINE 2", None, 4)],
-        )
 
 
 class TestTheDoctypes(unittest.TestCase):
@@ -285,17 +234,18 @@ class TestTheDoctypes(unittest.TestCase):
         self.assertEqual((perms["Quality Controller"].get("read"), perms["Quality Controller"].get("write")), (1, None))
         self.assertEqual(doc.get("track_changes"), 1)
 
-    def test_the_packing_lines(self):
-        fields = {f["fieldname"]: f for f in _doctype("Quality Hub Settings")["fields"]}
-        table = fields[PACKING_FIELD]
-        self.assertEqual((table["fieldtype"], table["options"], table["label"]), ("Table", "Quality Hub Packing Line", "Packing Lines"))
-        self.assertEqual(fields["packing_lines_section"]["label"], "Work Orders on Packing Lines")
-        doc = _doctype("Quality Hub Packing Line")
-        self.assertEqual((doc.get("istable"), doc.get("editable_grid")), (1, 1))
-        self.assertEqual(
-            [(f["fieldname"], f["fieldtype"], f.get("options"), f.get("reqd"), f.get("in_list_view")) for f in doc["fields"]],
-            [("packing_line", "Link", "Factory Line", 1, 1), ("production_line", "Link", "Factory Line", 1, 1)],
-        )
+    def test_no_packing_lines(self):
+        # a record's Work Order is one of its own line's, whatever the tab: the
+        # Packing Lines table main had for a few hours came off (2026-11)
+        fields = [f["fieldname"] for f in _doctype("Quality Hub Settings")["fields"]]
+        self.assertFalse([f for f in fields if "packing" in f and f != "packaging_and_weight_lines"], fields)
+        self.assertFalse(os.path.exists(os.path.join(DOCTYPE_DIR, "quality_hub_packing_line")))
+        with patch("frappe.delete_doc") as delete_doc:
+            remove_quality_hub_packing_line.execute()
+        # a site migrated in between loses the doctype; one that never had it, nothing
+        delete_doc.assert_called_once_with("DocType", "Quality Hub Packing Line", ignore_missing=True)
+        with open(os.path.join(APP_DIR, "patches.txt")) as fh:
+            self.assertIn("isnack.patches.v1_0.remove_quality_hub_packing_line", fh.read().split("[post_model_sync]")[1])
 
     def test_a_tabs_factory_line(self):
         doc = _doctype("Quality Hub Factory Line")
@@ -310,6 +260,9 @@ class TestTheDoctypes(unittest.TestCase):
         for doctype in RESTRICTED_DOCTYPES:
             fields = {f["fieldname"]: f for f in _doctype(doctype)["fields"]}
             self.assertEqual((fields["factory_line"]["fieldtype"], fields["factory_line"]["options"]), ("Link", "Factory Line"), doctype)
+            # Frappe puts a field's link_filters in place of the query quality_hub_lines.js sets
+            for fieldname in ("factory_line", "work_order", "product_item"):
+                self.assertNotIn("link_filters", fields.get(fieldname, {}), f"{doctype}.{fieldname}")
 
 
 class TestTheHooks(unittest.TestCase):
@@ -328,13 +281,19 @@ class TestTheHooks(unittest.TestCase):
         self.assertEqual(sorted(checked), sorted(RESTRICTED_DOCTYPES))
 
     def test_the_forms_and_the_hub_restrict_the_same_records(self):
-        self.assertIn("/assets/isnack/js/quality_hub_lines.js", self.hooks["app_include_js"])
+        # the script's address changes with it, so a browser cannot keep the
+        # one before (assets are cached for a year): bump it with the script
+        with open(os.path.join(APP_DIR, "public", "js", "quality_hub_lines.js"), "rb") as fh:
+            version = hashlib.md5(fh.read()).hexdigest()[:8]
+        self.assertIn(f"/assets/isnack/js/quality_hub_lines.js?v={version}", self.hooks["app_include_js"])
+        # the methods it calls answer the desk
+        for method in (get_factory_lines, get_work_order_details):
+            self.assertIn(method, frappe.whitelisted, method.__name__)
         listed = re.search(r"DOCTYPES: \[(.*?)\]", self.script, re.S).group(1)
         self.assertEqual(re.findall(r'"([^"]+)"', listed), list(RESTRICTED_DOCTYPES))
         self.assertIn("isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines", self.script)
-        # and their Work Orders and products
-        for method in (get_packing_lines, get_work_order_details):
-            self.assertIn(f"{settings_module.__name__}.{method.__name__}", self.script)
+        # and their Work Orders' lines and products
+        self.assertIn(f"{settings_module.__name__}.{get_work_order_details.__name__}", self.script)
 
 
 @unittest.skipUnless(shutil.which("node"), "needs node to run the script")
@@ -353,7 +312,7 @@ class TestTheScript(unittest.TestCase):
             "const calls = [];\n"
             "const frappe = {\n"
             "  provide: (path) => { let o = globalThis; path.split('.').forEach((p) => { o[p] = o[p] || {}; o = o[p]; }); },\n"
-            "  xcall: (method) => { calls.push(method); return Promise.resolve(method.endsWith('.get_packing_lines') ? {} : given); },\n"
+            "  xcall: (method) => { calls.push(method); return Promise.resolve(given); },\n"
             "  ui: {form: {on: (doctype, h) => { handlers[doctype] = h; }}},\n"
             "};\n"
             "globalThis.isnack = isnack;\n"
@@ -399,13 +358,7 @@ class TestTheScript(unittest.TestCase):
         # each restricted record's form
         self.assertEqual(out["registered"], list(RESTRICTED_DOCTYPES))
         self.assertEqual(out["before"], {})
-        self.assertEqual(
-            out["calls"],
-            [
-                "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines",
-                "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_packing_lines",
-            ],
-        )
+        self.assertEqual(out["calls"], ["isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines"])
         # a tab's lines; none given: every line (null); records made together: the lines they share
         self.assertEqual(out["lines_for"], [["CORN EXTRUSION"], None, ["PACKING LINE 2"], ["PACKING LINE 1", "PACKING LINE 2"], None])
         self.assertEqual(out["query"], {"filters": [["Factory Line", "name", "in", ["CORN EXTRUSION"]]]})
@@ -423,10 +376,10 @@ class TestTheScript(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "needs node to run the script")
 class TestTheWorkOrders(unittest.TestCase):
-    """quality_hub_lines.js, run on a fake desk: the Work Orders a record's line
-    offers, one it does not offer taken off, and the Product Item the Work
-    Order fills in, on the records' forms (the Quality Hub's dialogs use the
-    same, through restrict_work_order)."""
+    """quality_hub_lines.js, run on a fake desk: a record's Work Order is one on
+    its Factory Line, whatever the tab; one on another line is taken off; the
+    Product Item takes the item the Work Order makes. On the records' forms
+    (the Quality Hub's dialogs use the same, through restrict_work_order)."""
 
     def _run(self, body):
         with open(os.path.join(APP_DIR, "public", "js", "quality_hub_lines.js")) as fh:
@@ -448,7 +401,6 @@ class TestTheWorkOrders(unittest.TestCase):
             "  xcall: (method, args) => {\n"
             "    const name = method.split('.').pop(); calls.push(args ? [name, args.work_order] : [name]);\n"
             "    if (name === 'get_factory_lines') return Promise.resolve({'QC Packaging Check': ['PACKING LINE 1', 'PACKING LINE 2']});\n"
-            "    if (name === 'get_packing_lines') return Promise.resolve({'PACKING LINE 1': ['CORN EXTRUSION', 'FRYING']});\n"
             "    if (failing.includes(args.work_order)) return Promise.reject(new Error('no'));\n"
             "    return Promise.resolve(details[args.work_order] || {});\n"
             "  },\n"
@@ -474,29 +426,23 @@ class TestTheWorkOrders(unittest.TestCase):
 
     def test_the_work_orders_a_line_offers(self):
         out = self._run(
-            "  out.before = lines.work_order_lines('PACKING LINE 1');\n"
-            "  await lines.load();\n"
-            "  out.lines = ['PACKING LINE 1', ' packing line 1', 'FRYING', '', null].map((l) => lines.work_order_lines(l));\n"
             "  const df = {};\n"
             "  out.none = lines.work_order_query('', df); out.none_note = df.filter_description;\n"
-            "  out.packing = lines.work_order_query('PACKING LINE 1', df); out.packing_note = df.filter_description;\n"
-            "  out.frying = lines.work_order_query('FRYING');\n"
+            "  out.frying = lines.work_order_query('FRYING', df); out.frying_note = df.filter_description;\n"
+            "  // a packing line: its own Work Orders, as any line\n"
+            "  out.packing = lines.work_order_query('PACKING LINE 1');\n"
+            "  out.calls = calls.slice();\n"
         )
-        # a line's own Work Orders until the settings are read
-        self.assertEqual(out["before"], ["PACKING LINE 1"])
-        # a packing line: its own and those of the lines it packs for (as the
-        # database matches a line); a production line: its own; no line: every Work Order
-        self.assertEqual(
-            out["lines"],
-            [["PACKING LINE 1", "CORN EXTRUSION", "FRYING"], [" packing line 1", "CORN EXTRUSION", "FRYING"], ["FRYING"], None, None],
-        )
+        # every Work Order before a line is picked, and no note under them
         self.assertEqual((out["none"], out["none_note"]), ({}, None))
         self.assertEqual(
-            out["packing"],
-            {"filters": [["Work Order", "custom_factory_line", "in", ["PACKING LINE 1", "CORN EXTRUSION", "FRYING"]], ["Work Order", "docstatus", "<", 2]]},
+            out["frying"],
+            {"filters": [["Work Order", "custom_factory_line", "=", "FRYING"], ["Work Order", "docstatus", "<", 2]]},
         )
-        self.assertEqual(out["packing_note"], "Work Orders for PACKING LINE 1")
-        self.assertEqual(out["frying"]["filters"][0], ["Work Order", "custom_factory_line", "in", ["FRYING"]])
+        self.assertEqual(out["frying_note"], "Work Orders on FRYING")
+        self.assertEqual(out["packing"]["filters"][0], ["Work Order", "custom_factory_line", "=", "PACKING LINE 1"])
+        # nothing to read for it
+        self.assertEqual(out["calls"], [])
 
     def test_the_product_a_work_order_makes(self):
         out = self._run(
@@ -520,49 +466,52 @@ class TestTheWorkOrders(unittest.TestCase):
 
     def test_a_line_changed(self):
         out = self._run(
-            "  // a production line's Work Order, on the packing line that packs for it: kept\n"
-            "  const kept = record({factory_line: 'PACKING LINE 1', work_order: 'WO-EXT'});\n"
+            "  // a Work Order on the line picked, spelled otherwise: kept\n"
+            "  const kept = record({factory_line: ' frying', work_order: 'WO-FRY'});\n"
             "  await lines.line_changed(kept);\n"
-            "  // on a packing line that does not: taken off, and the user told\n"
-            "  const off = record({factory_line: 'PACKING LINE 2', work_order: 'WO-EXT'});\n"
+            "  // on another line, a packing line included: taken off, and the user told\n"
+            "  const off = record({factory_line: 'PACKING LINE 1', work_order: 'WO-EXT'});\n"
             "  await lines.line_changed(off);\n"
-            "  // a Work Order planned on no line is offered on none\n"
+            "  // a Work Order planned on no line is on none\n"
             "  const lineless = record({factory_line: 'FRYING', work_order: 'WO-NONE'});\n"
             "  await lines.line_changed(lineless);\n"
             "  // the line changed again before the answer came: left to that change\n"
             "  const again = record({factory_line: 'CORN MIX', work_order: 'WO-FRY'});\n"
             "  const pending = lines.line_changed(again); again.values.factory_line = 'FRYING'; await pending;\n"
+            "  // another Work Order picked before the answer came: left to that pick\n"
+            "  const repicked = record({factory_line: 'CORN MIX', work_order: 'WO-FRY'});\n"
+            "  const repicking = lines.line_changed(repicked); repicked.values.work_order = 'WO-MIX'; await repicking;\n"
             "  // a Work Order that cannot be read, no Work Order, no line: left as they are\n"
             "  failing = ['WO-SECRET'];\n"
             "  const secret = record({factory_line: 'FRYING', work_order: 'WO-SECRET'});\n"
             "  await lines.line_changed(secret);\n"
             "  const empty = record({factory_line: 'FRYING', work_order: ''}); await lines.line_changed(empty);\n"
             "  const unlined = record({factory_line: '', work_order: 'WO-FRY'}); await lines.line_changed(unlined);\n"
-            "  out.set = [kept, off, lineless, again, secret, empty, unlined].map((r) => r.log);\n"
+            "  out.set = [kept, off, lineless, again, repicked, secret, empty, unlined].map((r) => r.log);\n"
             "  out.alerts = alerts;\n"
         )
-        self.assertEqual(out["set"], [[], [["work_order", ""]], [["work_order", ""]], [], [], [], []])
+        self.assertEqual(out["set"], [[], [["work_order", ""]], [["work_order", ""]], [], [], [], [], []])
         self.assertEqual(
             out["alerts"],
             [
-                ["WO-EXT is not a Work Order for PACKING LINE 2: pick one from the list.", "orange"],
-                ["WO-NONE is not a Work Order for FRYING: pick one from the list.", "orange"],
+                ["WO-EXT is not on PACKING LINE 1: pick a Work Order on that line.", "orange"],
+                ["WO-NONE is not on FRYING: pick a Work Order on that line.", "orange"],
             ],
         )
 
     def test_a_work_order_picked(self):
         out = self._run(
             "  const fields = ['factory_line', 'work_order', 'product_item'];\n"
-            "  // offered: the Product Item takes the item it makes\n"
-            "  const picked = record({factory_line: 'PACKING LINE 1', work_order: 'WO-FRY', product_item: 'FG10020'}, fields);\n"
+            "  // on the line: the Product Item takes the item it makes\n"
+            "  const picked = record({factory_line: 'FRYING', work_order: 'WO-FRY', product_item: 'FG10020'}, fields);\n"
             "  await lines.work_order_changed(picked);\n"
             "  // no line yet: any Work Order, its item filled in\n"
             "  const first = record({factory_line: '', work_order: 'WO-MIX'}, fields);\n"
             "  await lines.work_order_changed(first);\n"
             "  // a record with no Product Item\n"
-            "  const packing = record({factory_line: 'PACKING LINE 1', work_order: 'WO-EXT'});\n"
+            "  const packing = record({factory_line: 'CORN EXTRUSION', work_order: 'WO-EXT'});\n"
             "  await lines.work_order_changed(packing);\n"
-            "  // typed in full, not offered: taken off, its item not filled in\n"
+            "  // typed in full, on another line: taken off, its item not filled in\n"
             "  const typed = record({factory_line: 'FRYING', work_order: 'WO-EXT', product_item: ''}, fields);\n"
             "  await lines.work_order_changed(typed);\n"
             "  // picked again before the answer came: left to that pick\n"
@@ -595,7 +544,7 @@ class TestTheWorkOrders(unittest.TestCase):
                 [],
             ],
         )
-        self.assertEqual(out["alerts"], [["WO-EXT is not a Work Order for FRYING: pick one from the list.", "orange"]])
+        self.assertEqual(out["alerts"], [["WO-EXT is not on FRYING: pick a Work Order on that line.", "orange"]])
         # each Work Order read once; one that could not be, asked again next time
         self.assertEqual(out["details"], ["WO-FRY", "WO-MIX", "WO-EXT", "WO-SECRET", "WO-SECRET"])
 
@@ -604,12 +553,12 @@ class TestTheWorkOrders(unittest.TestCase):
             "  const form = (doctype, doc, fields) => {\n"
             "    const fields_dict = {}; fields.forEach((f) => { fields_dict[f] = {df: {}}; });\n"
             "    const frm = {doctype, doc, queries: {}, set: [], fields_dict, is_new: () => false,\n"
-            "      set_query: (f, q) => { frm.queries[f] = q; }, set_value: (f, v) => { frm.set.push([f, v]); frm.doc[f] = v; }};\n"
+            "      set_query: (f, q) => { frm.queries[f] = q; },\n"
+            "      set_value: (f, v) => { if (!fields_dict[f]) throw new Error(`Field ${f} not found.`); frm.set.push([f, v]); frm.doc[f] = v; }};\n"
             "    handlers[doctype].setup(frm);\n"
             "    return frm;\n"
             "  };\n"
-            "  await lines.load();\n"
-            "  const puffs = form('QC Puffs Extruder Record', {factory_line: 'PACKING LINE 1', work_order: 'WO-FRY'},\n"
+            "  const puffs = form('QC Puffs Extruder Record', {factory_line: 'FRYING', work_order: 'WO-FRY'},\n"
             "    ['factory_line', 'work_order', 'product_item']);\n"
             "  out.queried = Object.keys(puffs.queries);\n"
             "  out.work_order = puffs.queries.work_order(); out.work_order_note = puffs.fields_dict.work_order.df.filter_description;\n"
@@ -617,23 +566,42 @@ class TestTheWorkOrders(unittest.TestCase):
             "  out.product = puffs.queries.product_item(); out.product_note = puffs.fields_dict.product_item.df.filter_description;\n"
             "  // the Work Order picked fills in the Product Item\n"
             "  handlers['QC Puffs Extruder Record'].work_order(puffs); await flush();\n"
-            "  // the line changed: the Work Order it does not offer taken off\n"
-            "  puffs.doc.factory_line = 'PACKING LINE 2';\n"
+            "  // the line changed: the Work Order on the line before taken off\n"
+            "  puffs.doc.factory_line = 'CORN EXTRUSION';\n"
             "  handlers['QC Puffs Extruder Record'].factory_line(puffs); await flush();\n"
             "  out.puffs = puffs.set;\n"
-            "  // another document opened before the answer came: left as it is\n"
+            "  // the same form, another document (Frappe sets a form up once): its own line and Work Order\n"
+            "  puffs.doc = {factory_line: 'CORN EXTRUSION', work_order: 'WO-EXT'};\n"
+            "  out.next_work_order = puffs.queries.work_order().filters[0]; await lines.work_order_details('WO-EXT');\n"
+            "  out.next_product = puffs.queries.product_item();\n"
+            "  // a Work Order picked, then another document on the same Work Order opened before the answer came\n"
+            "  const reused = form('QC Rice Extruder Record', {factory_line: 'FRYING', work_order: 'WO-FRY', product_item: 'FG99999'},\n"
+            "    ['factory_line', 'work_order', 'product_item']);\n"
+            "  lines.work_orders = {}; lines._details = {};\n"
+            "  handlers['QC Rice Extruder Record'].work_order(reused);\n"
+            "  reused.doc = {factory_line: 'FRYING', work_order: 'WO-FRY', product_item: 'FG99999'}; await flush();\n"
+            "  out.reused = [reused.set, reused.doc.product_item];\n"
+            "  // another document opened before the line's answer came: left as it is\n"
             "  const check = form('QC Packaging Check', {factory_line: 'PACKING LINE 2', work_order: 'WO-EXT'}, ['factory_line', 'work_order']);\n"
             "  out.check_queried = Object.keys(check.queries);\n"
             "  handlers['QC Packaging Check'].factory_line(check); check.doc = {factory_line: 'PACKING LINE 2', work_order: 'WO-EXT'}; await flush();\n"
+            "  // a Work Order on its line, on a form with no Product Item: nothing set (Frappe throws for a field it has not)\n"
+            "  check.doc = {factory_line: 'CORN EXTRUSION', work_order: 'WO-EXT'};\n"
+            "  handlers['QC Packaging Check'].work_order(check); await flush();\n"
             "  out.check = check.set;\n"
         )
         self.assertEqual(out["queried"], ["factory_line", "work_order", "product_item"])
-        self.assertEqual(out["work_order"]["filters"][0], ["Work Order", "custom_factory_line", "in", ["PACKING LINE 1", "CORN EXTRUSION", "FRYING"]])
-        self.assertEqual(out["work_order_note"], "Work Orders for PACKING LINE 1")
+        self.assertEqual(out["work_order"]["filters"][0], ["Work Order", "custom_factory_line", "=", "FRYING"])
+        self.assertEqual(out["work_order_note"], "Work Orders on FRYING")
         # the Work Order's item, read as the form loaded
         self.assertEqual(out["product"], {"filters": [["Item", "name", "=", "FG10001"]]})
         self.assertEqual(out["product_note"], "The item Work Order WO-FRY makes")
         self.assertEqual(out["puffs"], [["product_item", "FG10001"], ["work_order", ""]])
-        # a record with no Product Item has no query for one
+        # the form reused for another document reads that document
+        self.assertEqual(out["next_work_order"], ["Work Order", "custom_factory_line", "=", "CORN EXTRUSION"])
+        self.assertEqual(out["next_product"], {"filters": [["Item", "name", "=", "FG10020"]]})
+        # a late answer is not set on another document
+        self.assertEqual(out["reused"], [[], "FG99999"])
+        # a record with no Product Item has no query for one, and none is set on it
         self.assertEqual(out["check_queried"], ["factory_line", "work_order"])
         self.assertEqual(out["check"], [])

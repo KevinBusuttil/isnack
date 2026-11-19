@@ -4,12 +4,11 @@
 // lines offers every line. The records refuse another line
 // (quality_hub_settings.check_factory_line): a Link takes any line typed in full.
 //
-// A record's Work Order is one of its Factory Line's (2026-11): a Work Order is
-// planned on the line that makes its product, so a record on a packing line
-// offers the Work Orders of the production lines it packs for (the settings'
-// Packing Lines) as well as its own. A Process record's Product Item is the
-// item its Work Order makes, filled in when the Work Order is picked; without a
-// Work Order it offers Finished Goods items.
+// A record's Work Order is one of its Factory Line's, whatever the tab
+// (2026-11): the Work Order's own line (its Factory Section) is the record's. A
+// Process record's Product Item is the item its Work Order makes, filled in
+// when the Work Order is picked; without a Work Order it offers Finished Goods
+// items.
 frappe.provide("isnack.quality_hub_lines");
 
 Object.assign(isnack.quality_hub_lines, {
@@ -27,9 +26,6 @@ Object.assign(isnack.quality_hub_lines, {
 	// each record type's lines, by doctype, as last loaded ({} before)
 	lines: {},
 
-	// the production lines each packing line packs for, as last loaded ({} before)
-	packs_for: {},
-
 	// each Work Order's line and item, by name, once read
 	work_orders: {},
 
@@ -38,20 +34,12 @@ Object.assign(isnack.quality_hub_lines, {
 
 	/** Load the lines as the settings give them now. */
 	load() {
-		this._loading = Promise.all([
-			frappe.xcall("isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines"),
-			frappe.xcall("isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_packing_lines"),
-		]).then(([lines, packs_for]) => {
-			this.lines = lines || {};
-			this.packs_for = packs_for || {};
-			return this.lines;
-		});
-		return this._loading;
-	},
-
-	/** The settings as last loaded, once they are (loading them if no one has). */
-	ready() {
-		return this._loading || this.load();
+		return frappe
+			.xcall("isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.get_factory_lines")
+			.then((lines) => {
+				this.lines = lines || {};
+				return this.lines;
+			});
 	},
 
 	/** The lines records of ``doctypes`` (recorded together) may all be on:
@@ -82,32 +70,15 @@ Object.assign(isnack.quality_hub_lines, {
 		return String(one || "").trim().toLowerCase() === String(other || "").trim().toLowerCase();
 	},
 
-	/** The lines whose Work Orders a record on ``line`` offers: its own and,
-	 *  on a packing line, those of the production lines it packs for. null
-	 *  before a line is picked: every Work Order. */
-	work_order_lines(line) {
-		if (!line) return null;
-		const lines = [line];
-		Object.keys(this.packs_for)
-			.filter((packing_line) => this.same_line(packing_line, line))
-			.forEach((packing_line) => {
-				(this.packs_for[packing_line] || []).forEach((production_line) => {
-					if (!lines.some((other) => this.same_line(other, production_line))) lines.push(production_line);
-				});
-			});
-		return lines;
-	},
-
-	/** The Work Order query of a record on ``line``: the Work Orders of its
-	 *  lines, none cancelled, or every Work Order before a line is picked.
+	/** The Work Order query of a record on ``line``: the Work Orders on that
+	 *  line, none cancelled, or every Work Order before a line is picked.
 	 *  ``df``, the field's, says so under them. */
 	work_order_query(line, df) {
-		const lines = this.work_order_lines(line);
-		if (df) df.filter_description = lines ? __("Work Orders for {0}", [line]) : null;
-		if (!lines) return {};
+		if (df) df.filter_description = line ? __("Work Orders on {0}", [line]) : null;
+		if (!line) return {};
 		return {
 			filters: [
-				["Work Order", "custom_factory_line", "in", lines],
+				["Work Order", "custom_factory_line", "=", line],
 				["Work Order", "docstatus", "<", 2],
 			],
 		};
@@ -144,17 +115,17 @@ Object.assign(isnack.quality_hub_lines, {
 		return this._details[work_order];
 	},
 
-	/** Whether a record on ``line`` does not offer ``work_order``: false when
-	 *  either is missing or the Work Order cannot be read. */
+	/** Whether ``work_order`` is not on ``line``: false when either is missing
+	 *  or the Work Order cannot be read. */
 	off_line(work_order, line) {
 		if (!work_order || !line) return Promise.resolve(false);
-		return Promise.all([this.ready(), this.work_order_details(work_order)]).then(([, details]) => {
+		return this.work_order_details(work_order).then((details) => {
 			if (!details || !("factory_line" in details)) return false;
-			return !this.work_order_lines(line).some((other) => this.same_line(other, details.factory_line));
+			return !this.same_line(details.factory_line, line);
 		});
 	},
 
-	/** The record's line changed: a Work Order it does not offer is taken off.
+	/** The record's line changed: a Work Order on another line is taken off.
 	 *  ``record`` reads and sets the fields of a form or a dialog. */
 	line_changed(record) {
 		const work_order = record.get("work_order");
@@ -167,9 +138,9 @@ Object.assign(isnack.quality_hub_lines, {
 		});
 	},
 
-	/** The record's Work Order changed: one its line does not offer (typed in
-	 *  full) is taken off; another fills in the Product Item, where the record
-	 *  has one, with the item it makes. */
+	/** The record's Work Order changed: one on another line (typed in full) is
+	 *  taken off; another fills in the Product Item, where the record has one,
+	 *  with the item it makes. */
 	work_order_changed(record) {
 		const work_order = record.get("work_order");
 		const line = record.get("factory_line");
@@ -190,7 +161,7 @@ Object.assign(isnack.quality_hub_lines, {
 	take_off(record, work_order, line) {
 		record.set("work_order", "");
 		frappe.show_alert({
-			message: __("{0} is not a Work Order for {1}: pick one from the list.", [work_order, line]),
+			message: __("{0} is not on {1}: pick a Work Order on that line.", [work_order, line]),
 			indicator: "orange",
 		});
 	},
