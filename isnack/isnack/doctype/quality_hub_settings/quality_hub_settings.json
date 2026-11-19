@@ -1,7 +1,7 @@
 {
  "actions": [],
  "creation": "2026-11-17 09:00:00.000000",
- "description": "The Quality Hub's settings: the factory lines each of its tabs records on.",
+ "description": "The Quality Hub's settings: the factory lines each of its tabs records on, and the production lines each packing line packs for.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -12,7 +12,9 @@
   "factory_lines_column",
   "tasting_lines",
   "packaging_and_weight_lines",
-  "metal_detector_lines"
+  "metal_detector_lines",
+  "packing_lines_section",
+  "packing_lines"
  ],
  "fields": [
   {
@@ -60,13 +62,25 @@
    "fieldtype": "Table MultiSelect",
    "label": "CCP & Metal (QCH)",
    "options": "Quality Hub Factory Line"
+  },
+  {
+   "description": "Work Orders are planned on the lines that make the product, never on a packing line. A record's Work Order offers the Work Orders of its Factory Line and, on a packing line, of the production lines named for it here, one row for each.",
+   "fieldname": "packing_lines_section",
+   "fieldtype": "Section Break",
+   "label": "Work Orders on Packing Lines"
+  },
+  {
+   "fieldname": "packing_lines",
+   "fieldtype": "Table",
+   "label": "Packing Lines",
+   "options": "Quality Hub Packing Line"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-17 09:00:00.000000",
+ "modified": "2026-11-19 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "Quality Hub Settings",
