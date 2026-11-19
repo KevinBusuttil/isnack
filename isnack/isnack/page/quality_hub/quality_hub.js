@@ -90,7 +90,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
-            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item", link_filters: '[["Item","item_group","=","Finished Goods"]]' },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
             { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
@@ -138,7 +138,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
-            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item", link_filters: '[["Item","item_group","=","Finished Goods"]]' },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
             { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
@@ -169,7 +169,7 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
-            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item", link_filters: '[["Item","item_group","=","Finished Goods"]]' },
+            { fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },
             { fieldname: "cb_product", fieldtype: "Column Break" },
             { fieldname: "overall_status", fieldtype: "Select", label: __("Overall Status"), options: "\nPass\nFail" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
@@ -699,6 +699,7 @@ isnack.quality_hub.QualityHub = class {
         dialog.$wrapper.addClass("isn-dialog-theme qh-record-dialog");
         this.empty_cleared_links(dialog);
         this.restrict_factory_line(dialog, [doctype]);
+        this.restrict_work_order(dialog);
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
         tables.forEach((table) => this.render_child_editor(dialog, table));
@@ -718,6 +719,44 @@ isnack.quality_hub.QualityHub = class {
             const line = lines.only_line(doctypes);
             if (line && !dialog.get_value("factory_line")) dialog.set_value("factory_line", line);
         });
+    }
+
+    /** The Work Order offers the Work Orders of the Factory Line picked, and on
+     *  a packing line those of the lines it packs for (every Work Order before
+     *  a line is picked), as the records' forms do; one the line does not
+     *  offer is taken off. The Product Item, on a Process record, offers the
+     *  item the Work Order makes, which picking the Work Order fills in
+     *  (Finished Goods items without a Work Order). */
+    restrict_work_order(dialog) {
+        const lines = isnack.quality_hub_lines;
+        const work_order_field = dialog.get_field("work_order");
+        const line_field = dialog.get_field("factory_line");
+        // (a desk loaded before the Work Order rule came has none to apply)
+        if (!work_order_field || !line_field || !lines || !lines.work_order_query) return;
+        const record = {
+            get: (fieldname) => dialog.get_value(fieldname),
+            set: (fieldname, value) => dialog.set_value(fieldname, value),
+            has: (fieldname) => !!dialog.get_field(fieldname),
+            alive: () => true,
+        };
+        // a Dialog has no set_query: the Link reads get_query from its control
+        work_order_field.get_query = () => lines.work_order_query(dialog.get_value("factory_line"), work_order_field.df);
+        const product_field = dialog.get_field("product_item");
+        if (product_field) {
+            product_field.get_query = () => lines.product_query(dialog.get_value("work_order"), product_field.df);
+        }
+        const on_line = line_field.df.onchange;
+        line_field.df.onchange = (...args) => {
+            const result = on_line ? on_line.apply(line_field, args) : undefined;
+            lines.line_changed(record);
+            return result;
+        };
+        const on_work_order = work_order_field.df.onchange;
+        work_order_field.df.onchange = (...args) => {
+            const result = on_work_order ? on_work_order.apply(work_order_field, args) : undefined;
+            lines.work_order_changed(record);
+            return result;
+        };
     }
 
     /** A Link the dialog fills fields from (``fetch_from``: the Metal Detector,
@@ -829,6 +868,7 @@ isnack.quality_hub.QualityHub = class {
         });
         // the Record Details are both checks': a line both may be on
         this.restrict_factory_line(dialog, records.map((record) => record.doctype));
+        this.restrict_work_order(dialog);
     }
 
     /** A dialog config's Record Details (its first section) and the rest. */

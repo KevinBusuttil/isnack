@@ -345,13 +345,24 @@ class TestLineAndWorkOrderMandatory(unittest.TestCase):
 				self.assertEqual(fields[fieldname].get("reqd"), 1, f"{doctype}.{fieldname}")
 
 
-class TestFinishedGoodsProducts(unittest.TestCase):
-	def test_product_item_lists_finished_goods_only(self):
+class TestTheProductItem(unittest.TestCase):
+	"""A Process record's Product Item offers the item its Work Order makes,
+	which picking the Work Order fills in, and Finished Goods items without a
+	Work Order (2026-11): a query quality_hub_lines.js sets on the forms and the
+	Quality Hub's dialogs (the settings' TestTheWorkOrders runs it)."""
+
+	def test_no_fixed_filter_on_it(self):
+		# Frappe puts a field's link_filters in place of any query set on it
 		for doctype in ("QC Puffs Extruder Record", "QC Rice Extruder Record", "QC Frying Line Record"):
 			field = _fields(_doctype(doctype))["product_item"]
-			self.assertEqual(
-				json.loads(field["link_filters"]), [["Item", "item_group", "=", "Finished Goods"]], doctype
-			)
+			self.assertEqual((field["fieldtype"], field["options"]), ("Link", "Item"), doctype)
+			self.assertNotIn("link_filters", field, doctype)
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			script = fh.read()
+		self.assertEqual(
+			script.count('{ fieldname: "product_item", fieldtype: "Link", label: __("Product Item"), options: "Item" },'), 3
+		)
+		self.assertNotIn("link_filters", script)
 
 
 class TestTastingRecordSchema(unittest.TestCase):
@@ -975,6 +986,98 @@ class TestFactoryLinesByTab(unittest.TestCase):
         self.assertEqual(out["asked"], [[["QC Puffs Extruder Record"], True]])
         self.assertEqual(out["one"], [["factory_line", "CORN EXTRUSION"]])
         self.assertEqual(out["left"], [[], [], []])
+
+
+class TestWorkOrderByLine(unittest.TestCase):
+    """Since 2026-11 each dialog's Work Order offers the Work Orders of the
+    Factory Line picked, and on a packing line those of the lines it packs for;
+    one the line does not offer is taken off. A Process dialog's Product Item
+    offers the item the Work Order makes, which picking it fills in. The same
+    logic as the records' forms (quality_hub_lines.js, run by the settings'
+    TestTheWorkOrders)."""
+
+    def setUp(self):
+        with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+            self.script = fh.read()
+
+    def _method(self, signature):
+        start = self.script.index(f"    {signature} {{")
+        return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+    def test_each_dialog_restricts_its_work_order(self):
+        body = self._method("open_new_record(doctype)")
+        # once its line is restricted; before the metal detector's, which wraps the line's onchange too
+        self.assertLess(body.index("this.restrict_factory_line(dialog, [doctype]);"), body.index("this.restrict_work_order(dialog);"))
+        self.assertLess(body.index("this.restrict_work_order(dialog);"), body.index("this.setup_dialog_specific_behaviour(dialog, doctype);"))
+        # the Packaging and Weight form: the Work Order both checks share
+        self.assertIn("this.restrict_work_order(dialog);", self._method("open_packaging_and_weight()"))
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+    def test_the_dialog_uses_the_lines(self):
+        method = self._method("restrict_work_order(dialog)")
+        script = (
+            f"class Hub {{\n{method}\n}}\n"
+            "const isnack = {};\n"
+            "const asked = [];\n"
+            "const make_lines = () => ({\n"
+            "  work_order_query(line, df) { asked.push(['work_order_query', line, !!df]); return {filters: ['wo', line]}; },\n"
+            "  product_query(work_order, df) { asked.push(['product_query', work_order, !!df]); return {filters: ['item', work_order]}; },\n"
+            "  line_changed(record) { asked.push(['line_changed', record.get('factory_line'), record.get('work_order'), record.has('product_item'), record.alive()]); record.set('work_order', ''); },\n"
+            "  work_order_changed(record) { asked.push(['work_order_changed', record.get('work_order')]); record.set('product_item', 'FG10001'); },\n"
+            "});\n"
+            "const make_dialog = (values, fields) => {\n"
+            "  const dict = {}; fields.forEach((f) => { dict[f] = {df: {}}; });\n"
+            "  if (dict.factory_line) dict.factory_line.df.onchange = () => { values.line_onchange = (values.line_onchange || 0) + 1; };\n"
+            "  return {values, set: [], get_field: (f) => dict[f], get_value: (f) => values[f],\n"
+            "    set_value(f, v) { this.set.push([f, v]); values[f] = v; }, dict};\n"
+            "};\n"
+            "const out = {};\n"
+            "const hub = new Hub();\n"
+            "// a desk loaded before the Work Order rule came: nothing to do\n"
+            "isnack.quality_hub_lines = {query() {}};\n"
+            "const early = make_dialog({}, ['factory_line', 'work_order']);\n"
+            "const early_onchange = early.dict.factory_line.df.onchange;\n"
+            "hub.restrict_work_order(early);\n"
+            "out.early = [early.dict.work_order.get_query === undefined, early.dict.factory_line.df.onchange === early_onchange,\n"
+            "  early.dict.work_order.df.onchange === undefined];\n"
+            "isnack.quality_hub_lines = make_lines();\n"
+            "// a Process dialog\n"
+            "const values = {factory_line: 'FRYING', work_order: 'WO-1', product_item: ''};\n"
+            "const puffs = make_dialog(values, ['factory_line', 'work_order', 'product_item']);\n"
+            "hub.restrict_work_order(puffs);\n"
+            "out.queries = [puffs.dict.work_order.get_query(), puffs.dict.product_item.get_query()];\n"
+            "puffs.dict.work_order.df.onchange();\n"
+            "puffs.dict.factory_line.df.onchange();\n"
+            "out.puffs = puffs.set; out.line_onchange = values.line_onchange;\n"
+            "// a dialog with no Product Item, and one with no Work Order (receiving)\n"
+            "const check = make_dialog({factory_line: 'PACKING LINE 1'}, ['factory_line', 'work_order']);\n"
+            "hub.restrict_work_order(check);\n"
+            "out.check = [check.dict.work_order.get_query !== undefined, !!check.dict.work_order.df.onchange];\n"
+            "const receiving = make_dialog({}, ['supplier']);\n"
+            "hub.restrict_work_order(receiving);\n"
+            "out.asked = asked;\n"
+            "console.log(JSON.stringify(out));\n"
+        )
+        run = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr[-2000:])
+        out = json.loads(run.stdout)
+        self.assertEqual(out["early"], [True, True, True])
+        # the queries read the dialog's line and Work Order when the user searches
+        self.assertEqual(out["queries"], [{"filters": ["wo", "FRYING"]}, {"filters": ["item", "WO-1"]}])
+        # the dialog's fields, read and set through the record the lines are given
+        self.assertEqual(out["puffs"], [["product_item", "FG10001"], ["work_order", ""]])
+        # the line's own onchange still runs
+        self.assertEqual(out["line_onchange"], 1)
+        self.assertEqual(out["check"], [True, True])
+        self.assertEqual(
+            out["asked"],
+            [
+                ["work_order_query", "FRYING", True],
+                ["product_query", "WO-1", True],
+                ["work_order_changed", "WO-1"],
+                ["line_changed", "FRYING", "WO-1", True, True],
+            ],
+        )
 
 
 class TestOperatorAndInspectorMandatory(unittest.TestCase):

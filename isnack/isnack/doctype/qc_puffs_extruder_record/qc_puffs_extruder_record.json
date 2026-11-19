@@ -101,7 +101,6 @@
    "fieldname": "product_item",
    "fieldtype": "Link",
    "label": "Product Item",
-   "link_filters": "[[\"Item\",\"item_group\",\"=\",\"Finished Goods\"]]",
    "options": "Item"
   },
   {
@@ -229,7 +228,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-18 20:00:00.000000",
+ "modified": "2026-11-19 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Puffs Extruder Record",

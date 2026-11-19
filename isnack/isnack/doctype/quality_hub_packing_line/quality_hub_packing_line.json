@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-11-19 09:00:00.000000",
+ "description": "A production line a packing line packs for (Quality Hub Settings): a check on the packing line offers its Work Orders.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "packing_line",
+  "production_line"
+ ],
+ "fields": [
+  {
+   "fieldname": "packing_line",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Packing Line",
+   "options": "Factory Line",
+   "reqd": 1
+  },
+  {
+   "description": "A line whose Work Orders the packing line packs.",
+   "fieldname": "production_line",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Production Line",
+   "options": "Factory Line",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-19 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isnack",
+ "name": "Quality Hub Packing Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
