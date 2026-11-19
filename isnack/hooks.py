@@ -16,9 +16,12 @@ app_include_js = [
     "/assets/isnack/js/trial_balance.js",
     "/assets/isnack/js/manual_line_pricing.js",
     "/assets/isnack/js/sales_item_group_filter.js",
-    # the factory lines Quality Hub Settings gives each Quality Hub tab, on the
-    # hub's dialogs and its records' forms
-    "/assets/isnack/js/quality_hub_lines.js",
+    # the factory lines Quality Hub Settings gives each Quality Hub tab, and each
+    # line's Work Orders, on the hub's dialogs and its records' forms. ?v= is the
+    # start of the file's md5, so that browsers fetch it again when it changes
+    # (assets are cached for a year): bump it with the file
+    # (test_quality_hub_settings checks it)
+    "/assets/isnack/js/quality_hub_lines.js?v=c3136973",
 ]
 
 # include js, css files in header of web template

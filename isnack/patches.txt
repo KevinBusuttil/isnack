@@ -26,3 +26,4 @@ isnack.patches.v1_0.qc_metal_detector_log_earlier_layout
 isnack.patches.v1_0.metal_detector_lines_from_qc_logs
 isnack.patches.v1_0.qc_metal_detector_log_corrective_action
 isnack.patches.v1_0.recompute_qc_frying_averages
+isnack.patches.v1_0.remove_quality_hub_packing_line
