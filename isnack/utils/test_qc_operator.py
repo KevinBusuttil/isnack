@@ -4,6 +4,7 @@
 """The Operator of a QC record (qc_operator.py, quality_hub_operator.js): an
 Employee, looked up without Employee permission (no database)."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -144,6 +145,76 @@ class TestCheckOperator(unittest.TestCase):
             self._check(_Doc(new=True, operator="HR-EMP-09999"))
         # Frappe's link check, which runs first, was told not to check
         self._check(_Doc(new=True, operator="HR-EMP-09999", flags={"ignore_links": 1}))
+
+
+class TestAnImport(unittest.TestCase):
+    """check_operator in a Data Import, which names the operator by name."""
+
+    @contextlib.contextmanager
+    def _importing(self, found=()):
+        """In a Data Import, the Active Employees of the name sought being ``found``."""
+        with patch.dict(frappe.flags, {"in_import": True}), patch("frappe.get_all", return_value=list(found)) as get_all:
+            yield get_all
+
+    def _check(self, doc, saved=None):
+        with patch("frappe.db.get_value", side_effect=_db(saved)):
+            check_operator(doc)
+        return doc
+
+    def test_the_operator_is_the_active_employee_of_the_name(self):
+        # a register on paper names its operator, not the Employee's ID
+        with self._importing(["HR-EMP-00001"]) as get_all:
+            doc = self._check(_Doc(new=True, operator_name="  joan   BORG "))
+        self.assertEqual((doc.operator, doc.operator_name), ("HR-EMP-00001", "Joan Borg"))
+        get_all.assert_called_once_with(
+            "Employee",
+            filters={"status": "Active", "employee_name": "joan BORG"},
+            pluck="name",
+            order_by="name asc",
+            limit=2,
+        )
+
+    def test_a_name_no_one_or_several_have_is_refused(self):
+        with self._importing([]), self.assertRaisesRegex(frappe.ValidationError, "No active Employee is named"):
+            self._check(_Doc(new=True, operator_name="Orazio Vassallo"))
+        with self._importing(["HR-EMP-00001", "HR-EMP-00003"]), self.assertRaisesRegex(
+            frappe.ValidationError, "Several active Employees are named"
+        ):
+            self._check(_Doc(new=True, operator_name="Joan Borg"))
+        # with no name either, the Operator is missing, as ever
+        with self._importing() as get_all, self.assertRaises(frappe.MandatoryError):
+            self._check(_Doc(new=True, operator_name=" "))
+        get_all.assert_not_called()
+
+    def test_an_operator_given_is_taken(self):
+        with self._importing() as get_all:
+            doc = self._check(_Doc(new=True, operator="HR-EMP-00001", operator_name="Someone else"))
+        self.assertEqual((doc.operator, doc.operator_name), ("HR-EMP-00001", "Joan Borg"))
+        get_all.assert_not_called()
+
+    def test_only_a_new_record_is_looked_up(self):
+        # a record saved (an import updating it) or amended keeps what it had
+        saved = {"QCI-2026-00001": {"operator": None, "operator_name": "J. Borg"}}
+        with self._importing(["HR-EMP-00001"]) as get_all:
+            doc = self._check(_Doc(operator_name="J. Borg"), saved=saved)
+            self.assertEqual((doc.get("operator"), doc.operator_name), (None, "J. Borg"))
+            doc = self._check(_Doc(new=True, amended_from="QCI-2026-00001", operator_name="J. Borg"), saved=saved)
+            self.assertEqual((doc.get("operator"), doc.operator_name), (None, "J. Borg"))
+        get_all.assert_not_called()
+
+    def test_outside_an_import_a_name_is_no_operator(self):
+        with patch.dict(frappe.flags, {"in_import": False}), patch("frappe.get_all") as get_all:
+            with self.assertRaises(frappe.MandatoryError):
+                self._check(_Doc(new=True, operator_name="Joan Borg"))
+        get_all.assert_not_called()
+
+    def test_as_frappe_does_when_told_not_to_check(self):
+        # nothing refused, as for the Operator itself: the name stays as sent
+        for flags in ({"ignore_validate": 1}, {"ignore_mandatory": 1}):
+            for found in ([], ["HR-EMP-00001", "HR-EMP-00003"]):
+                with self._importing(found):
+                    doc = self._check(_Doc(new=True, operator_name="Orazio Vassallo", flags=flags))
+                self.assertEqual((doc.get("operator"), doc.operator_name), (None, "Orazio Vassallo"), (flags, found))
 
 
 class TestTheLookup(unittest.TestCase):

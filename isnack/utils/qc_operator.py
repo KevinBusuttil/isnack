@@ -19,6 +19,12 @@ Quality users hold no permission on Employee, whose records carry personal data
 ``search_operators`` and read an Employee's name through ``get_operator``, which
 give no more than an Employee's ID, name and status, and only to a user who may
 create or change QC records.
+
+Records kept on paper are entered in bulk with Data Import (2026-11), which
+names the operator as the paper does: by name, in Operator Name, the Employee's
+ID being unknown to it. A record so imported is the Active Employee's of that
+name (``_operator_named``); a name no Active Employee has, or several have, is
+refused, so the Employee is added first.
 """
 
 import frappe
@@ -98,10 +104,19 @@ def check_operator(doc, method=None):
     A deleted record comes back (Deleted Document, Restore) as a new one under
     a new name, which Frappe does not mark: restored, a record made before is
     refused for want of an Operator, as the other fields made mandatory refuse
-    it, and one whose Employee has left since is refused that Employee."""
+    it, and one whose Employee has left since is refused that Employee.
+
+    A new record imported (Data Import) with an Operator Name but no Operator
+    is the Active Employee's of that name. Only a new one: a record saved, or
+    amended, keeps what it had, as above."""
     checking = not doc.flags.ignore_validate
     operator = doc.get("operator")
     before = _before(doc)
+    new = doc.flags.in_insert or doc.is_new()
+    if not operator and frappe.flags.in_import and new and not doc.get("amended_from"):
+        operator = doc.operator = _operator_named(
+            doc.get("operator_name"), refuse=checking and not doc.flags.ignore_mandatory
+        )
     if operator:
         row = frappe.db.get_value("Employee", operator, ["employee_name", "status"], as_dict=True)
         if not row:
@@ -130,6 +145,36 @@ def check_operator(doc, method=None):
             frappe.MandatoryError,
             title=_("Missing Value"),
         )
+
+
+def _operator_named(name, refuse=True):
+    """The Active Employee named ``name`` (as Frappe compares text: whatever
+    the case), for a record imported with its operator's name. None for no
+    name, which is then refused as no Operator is; refused, unless told not to
+    (then None), when no Active Employee has the name, or several have it."""
+    name = " ".join((name or "").split())
+    if not name:
+        return None
+    found = frappe.get_all(
+        "Employee", filters={"status": "Active", "employee_name": name}, pluck="name", order_by="name asc", limit=2
+    )
+    if len(found) == 1:
+        return found[0]
+    if refuse:
+        if found:
+            frappe.throw(
+                _("Several active Employees are named {0}: give the Operator by Employee ID instead.").format(
+                    frappe.bold(name)
+                ),
+                title=_("Operator"),
+            )
+        frappe.throw(
+            _("No active Employee is named {0}: add {0} as an Employee first, or give the Operator by Employee ID.").format(
+                frappe.bold(name)
+            ),
+            title=_("Operator"),
+        )
+    return None
 
 
 def _before(doc):

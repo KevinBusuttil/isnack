@@ -334,6 +334,18 @@ class TestShiftStartsBlank(unittest.TestCase):
 		self.assertEqual(set(shifts), {"\\nMorning\\nAfternoon\\nNight"})
 
 
+class TestDataImport(unittest.TestCase):
+	def test_every_record_type_may_be_imported(self):
+		# records kept on paper are entered in bulk, with Data Import: a System
+		# Manager's tool (no other role may open it). The retired Oven record too,
+		# for its records from before; the readings come in with their record.
+		for code, doctype in QC_DOCTYPES.items():
+			doc = _doctype(doctype)
+			self.assertEqual(doc.get("allow_import"), 1, doctype)
+			importers = [perm["role"] for perm in doc["permissions"] if perm.get("import")]
+			self.assertEqual(importers, ["System Manager"], doctype)
+
+
 class TestLineAndWorkOrderMandatory(unittest.TestCase):
 	def test_every_record_type_but_receiving(self):
 		for code, doctype in QC_DOCTYPES.items():
