@@ -12,5 +12,6 @@ class QCMetalDetectorTest(Document):
 		# page loaded before 2026-11, or through the API) is refused rather than
 		# given them (QCMetalDetectorLog.require_detector_and_tests), and the tests
 		# of a log made before keep a missing time as it was when it is amended or
-		# restored. A Data Import still gives a blank Test Time the time of import.
+		# restored. A Data Import gives a blank Test Time the time of import as it
+		# makes the row, which isnack.utils.qc_import refuses.
 		self.dont_update_if_missing = ["test_time", "test_piece_type"]
