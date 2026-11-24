@@ -88,6 +88,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Work Orders by line, and the item they make (2026-11).** A record's **Work Order** offers the Work Orders on its Factory Line, whatever the tab: those whose own line (`custom_factory_line`, the Work Order's **Factory Section**, filled from its BOM's default line) is the record's, none cancelled, on the Quality Hub's dialogs and on the records' desk forms; before a line is picked, every Work Order. A Work Order on another line is taken off, with an alert ("MFG-WO-2026-00096 is not on FRYING: pick a Work Order on that line."), when the line changes or when it is typed in full. A line no Work Order is planned on offers none, so the Packaging and Weight and CCP & Metal checks are recorded on the production line the product comes from (Quality Hub Settings gives those tabs production lines, and each Metal Detector lists them). On a Process record (QCB–QCD) the **Product Item** offers the item the Work Order makes, which picking the Work Order fills in (it can still be emptied); without a Work Order it offers Finished Goods items, as before. The doctypes' fixed Finished Goods filter (`link_filters`) came off: Frappe puts a field's `link_filters` in place of any query set on it. The pickers apply the rule; a save does not check it (`isnack/public/js/quality_hub_lines.js`). For a few hours main also had a Packing Lines table in Quality Hub Settings mapping packing lines to production lines; it came off, and the patch `isnack.patches.v1_0.remove_quality_hub_packing_line` deletes its doctype on a site migrated in between.
 
+**The Operator is an Employee (2026-11).** Each record type but the retired QCE names its operator in **Operator** (`operator`, a Link to Employee), picked as the Operator Hub's Set Operator picks one: by ID or name, among the Active Employees. Unlike the Operator Hub, it is not locked to the logged-in user's Employee: the QC inspector names the operator whose work was checked. **Operator Name** (`operator_name`) is now read-only, the Employee's name, which the server sets on every save (`check_operator`), so the record lists, the Quality Explorer and the print show it as before. The Operator is required on the records made since: a record made before keeps the name typed on it, and needs no Operator when saved again or amended. An Operator newly picked is an Active Employee; one the record (or the record amended) already had stays. Quality users hold no permission on Employee, whose records carry personal data: the Operator's search (`search_operators`) and its name (`get_operator`) come from `isnack/utils/qc_operator.py`, which gives only an Employee's ID, name and status, and only to a user who may create or change QC records; the Link skips Frappe's client-side check (`ignore_link_validation`), which needs that permission, and the server checks it on save. The same lookup serves the desk lists' and Report View's filters on Operator, and the Link's open arrow is hidden from a user who may not read Employee. `ignore_user_permissions` on the field lets a user linked to an Employee (ERPNext gives them a User Permission to it) save and list the records that name other operators, and keeps Frappe from filling a new record's Operator with that user's own Employee. A deleted record comes back as a new one under a new name, which Frappe does not mark, so a restored record made before is refused for want of an Operator, and one whose Employee has left since is refused that Employee.
+
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
 The Quality Hub and Quality Explorer pages set no roles of their own (`"roles": []` in their page JSON), so any desk user can open them; what a user sees and may do there follows the QC record types' permissions. The **Quality Controller**, **Quality Manager**, and **System Manager** roles record and review QC records, and **Production Manager** has read-only visibility into all of them (see [Section 7](#7-rbac--permissions)).
@@ -164,7 +166,7 @@ All parent DocTypes have `"is_submittable": 1` and `"track_changes": 1`. All chi
 
 ## 4. Common Field Schema
 
-The following 9 fields are present on every parent DocType (QCA–QCI) with identical definitions, with two exceptions for FSSC 22000 (see the notes):
+The following 10 fields are present on every parent DocType (QCA–QCI) with identical definitions, with exceptions (see the notes):
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
@@ -172,7 +174,8 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 | `shift` | Select | Shift | `reqd: 1`, options: (blank) / Morning / Afternoon / Night: a new record starts blank (2026-11; at Morning until then), as in the Quality Hub's dialogs |
 | `factory_line` | Link → Factory Line | Factory Line | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE |
 | `work_order` | Link → Work Order | Work Order | `reqd: 1` (2026-11) · **not on QCA** · optional on the retired QCE · offers the Work Orders on the record's Factory Line (2026-11; not on QCE, which no tab records) |
-| `operator_name` | Data | Operator Name | `reqd: 1` |
+| `operator` | Link → Employee | Operator | Required on the records made since by `check_operator` (2026-11), not in the doctype: a record made before needs none · `ignore_user_permissions: 1`, `print_hide: 1` · offers Active Employees by ID or name (`search_operators`) · **not on the retired QCE** |
+| `operator_name` | Data | Operator Name | `read_only: 1`, `no_copy: 1` (2026-11): the Operator's name, set by the server on save; typed (`reqd: 1`) until 2026-11, and still on the retired QCE |
 | `qc_inspector` | Link → User | QC Inspector | `reqd: 1`, `default: "__user"` (auto-fills current user) |
 | `status` | Select | Status | options: Draft / Submitted / Rejected / Closed |
 | `remarks` | Small Text | Remarks | — |
@@ -182,7 +185,7 @@ The following 9 fields are present on every parent DocType (QCA–QCI) with iden
 
 ## 5. Per-DocType Field Schemas
 
-Each section below lists only the **DocType-specific** fields (beyond the 9 common fields above).
+Each section below lists only the **DocType-specific** fields (beyond the 10 common fields above).
 
 ---
 
@@ -680,6 +683,7 @@ The permission model is identical across all 9 parent DocTypes (read from the `"
 - Production Managers have **read-only** access — they can view QC records from their Operator Hub context but cannot create or modify them.
 - Child table permissions are inherited from the parent DocType.
 - [Quality Hub Settings](#quality-hub-settings) (since 2026-11): Quality Manager and System Manager set it; Quality Controller reads it.
+- Employee (since 2026-11, for the **Operator**): the quality roles need **no** permission on Employee. `isnack.utils.qc_operator` searches the Active Employees and reads an Employee's name for any user who may create or change a record type that names an Operator, and gives only the ID, name and status. Read or even Select on Employee is not granted: Employee records carry personal data (date of birth, bank and health details), which Select still lets the search API return.
 
 ---
 
@@ -932,15 +936,17 @@ The checks made before 2026-11 that keep the earlier layout (`belongs_to_earlier
 
 ## 9. Hooks & Doc Events
 
-The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. Since 2026-11 it holds one entry per record type a Quality Hub tab restricts the line of (QC Puffs Extruder Record, QC Rice Extruder Record, QC Frying Line Record, QC Tasting Record, QC Packaging Check, QC Weight Check, QC Metal Detector Log): `validate` → `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line` ([Quality Hub Settings](#quality-hub-settings)). Frappe runs it after the record's own `validate`.
+The `doc_events` section in `isnack/hooks.py` previously wired all 9 QC DocTypes to an `on_qc_record_submit` function that updated Lab Checkpoint timestamps. This hook has been removed along with the Lab Checkpoint workflow. Since 2026-11 it holds one entry per record type a Quality Hub tab restricts the line of (QC Puffs Extruder Record, QC Rice Extruder Record, QC Frying Line Record, QC Tasting Record, QC Packaging Check, QC Weight Check, QC Metal Detector Log): `validate` → `isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line` ([Quality Hub Settings](#quality-hub-settings)). Frappe runs it after the record's own `validate`. The eight record types that name an Operator (the same, and QC Receiving Record) also have `before_validate` → `isnack.utils.qc_operator.check_operator` (2026-11): it requires the Operator on a record made since, refuses an Employee newly picked who is not Active, and sets Operator Name to the Employee's name (or, with no Operator on a record made before, back to the name typed on it). Frappe runs `before_validate` even when a save skips validation (`flags.ignore_validate`); then, as with `flags.ignore_mandatory` for the Operator, it refuses nothing.
 
 `app_include_js` loads `/assets/isnack/js/quality_hub_lines.js?v=<the start of its md5>` on every desk page (the version makes browsers fetch the file again when it changes, as assets are cached for a year; `test_quality_hub_settings` fails until it is bumped with the file): `isnack.quality_hub_lines`, the lines of each restricted record type (`load()`, from `get_factory_lines`) and the query offering them (`query(doctypes, df)`, the line when there is just one: `only_line(doctypes)`); the Work Order's query (`work_order_query(line, df)`: `[["Work Order", "custom_factory_line", "=", line], ["Work Order", "docstatus", "<", 2]]`, "Work Orders on <line>" under them, or every Work Order before a line is picked) and the Product Item's (`product_query(work_order, df)`: `[["Item", "name", "=", <the item the Work Order makes>]]`, once `work_order_details` has read it, else `[["Item", "item_group", "=", "Finished Goods"]]`); and what a change of line or Work Order does (`line_changed(record)`, `work_order_changed(record)`: a Work Order on another line is taken off with an alert, once the Work Order is read and only if neither field changed meanwhile; another fills in the Product Item). The Quality Hub's dialogs use the same (`restrict_factory_line`, `restrict_work_order`). For each of those record types it adds form handlers: `setup` sets the Factory Line's, the Work Order's and (QCB–QCD) the Product Item's queries, `onload` fills in a new record's only line and reads its Work Order's item, and `factory_line` and `work_order` call `line_changed` and `work_order_changed` on the document open (`form_record(frm)`).
+
+`app_include_js` also loads `/assets/isnack/js/quality_hub_operator.js?v=<the start of its md5>` (2026-11; `test_qc_operator` checks the version): `isnack.quality_hub_operator`, the Operator's query (`query()`: `{query: "isnack.utils.qc_operator.search_operators"}`), each Employee's name and status read once (`details(employee)`, from `get_operator`), whether a record was made before the Operator (`made_before(doc)`: no Operator, a typed name, and saved or an amendment), and what a change of Operator does (`operator_changed(record)`: Operator Name shows the Employee's name; an Employee who is not Active, typed in full, is taken off with an alert; emptied, the name typed on a record made before comes back). For each of the eight record types it adds form handlers: `setup` sets the query and, through `prepare(doctype)`, puts the lookup (`get_query`, `ignore_link_validation`, `only_select`) on the doctype's own field, from which Frappe copies each document's (Frappe checks a link a new record comes with, from a list's filter or the address, before the form's `refresh`); `refresh` sets the same on the document's field, hides the open arrow from a user who may not read Employee, makes the Operator required unless the record was made before (`typed_name(frm)`, decided on the document as loaded or saved, not as edited since), and looks up the name of a new record that comes with an Operator (a duplicate); `operator` calls `operator_changed`. Its `frappe.listview_settings[doctype].onload` calls `prepare` too, so the list's and Report View's filters on Operator use the same lookup. An Employee who cannot be looked up now (the request failed, or the desk is offline) is left as picked for the server to check on save; only Active answers are remembered, and the value shown in an alert is escaped. The Quality Hub's dialogs use the same (`restrict_operator`).
 
 ---
 
 ## 10. API Endpoints
 
-All endpoints are decorated with `@frappe.whitelist()`, and defined in `isnack/isnack/page/quality_hub/quality_hub.py` but for `get_factory_lines` and `get_work_order_details`, in the settings' controller (`quality_hub_settings.py`).
+All endpoints are decorated with `@frappe.whitelist()`, and defined in `isnack/isnack/page/quality_hub/quality_hub.py` but for `get_factory_lines` and `get_work_order_details`, in the settings' controller (`quality_hub_settings.py`), and `search_operators` and `get_operator`, in `isnack/utils/qc_operator.py`.
 
 ---
 
@@ -1064,6 +1070,24 @@ Counts come from one `frappe.get_list` per DocType, so User Permissions apply. `
 
 ---
 
+### `search_operators(doctype, txt, searchfield, start, page_len, filters)`
+
+**Method:** `isnack.utils.qc_operator.search_operators` (a Link query)  
+**Purpose:** The Operator's search (since 2026-11): the Active Employees whose ID or name holds `txt`, by name, for users who hold no permission on Employee.
+
+**Returns:** `[[name, employee_name], ...]` (dicts with `as_dict`); `[]` for a user who may neither create nor change any record type that names an Operator.
+
+---
+
+### `get_operator(employee)`
+
+**Method:** `isnack.utils.qc_operator.get_operator`  
+**Purpose:** An Employee's name and status (since 2026-11), for the Operator Name shown as the Operator is picked; an Employee who is not Active is taken off.
+
+**Returns:** `{employee, employee_name, status}`; `{}` for an Employee there is not, or a user who may not record checks.
+
+---
+
 ## 11. Quality Hub UI Architecture
 
 **Page registration:** `isnack/isnack/page/quality-hub/`  
@@ -1103,6 +1127,10 @@ Each New dialog's **Factory Line** offers the lines [Quality Hub Settings](#qual
 ### Work Orders by Line
 
 Each New dialog with a Work Order, the Packaging and Weight form included, sets it up with `restrict_work_order(dialog)` (since 2026-11), right after `restrict_factory_line` and before the metal detector's own wrapping of the line's `onchange`. The Work Order's `get_query` is `isnack.quality_hub_lines.work_order_query(<the line picked>, df)`: the Work Orders on the line, none cancelled; every Work Order before a line is picked. On the Process dialogs, the Product Item's is `product_query(<the Work Order picked>, df)` (their fields no longer carry `link_filters`, which Frappe would put in its place). The line's and the Work Order's `df.onchange` are wrapped, the line's own still running first: a Work Order on another line than the new one is taken off with an alert, and a Work Order picked fills in the Product Item with the item it makes (`line_changed`, `work_order_changed`, given the dialog's fields). They read each field's value as last set (the control's `value`), not the box's text, so a line half typed in is not taken for a line. A dialog's Link runs its `onchange` again for the value it holds when its box is left (it has no document to compare with): that is not taken for a change (`value === last_value`), so a Product Item just emptied stays empty. A dialog saved and closed is left as it was (`dialog.display`), with no alert. A desk whose `quality_hub_lines.js` predates the rule (no `work_order_query`) leaves the Work Order as it was.
+
+### The Operator
+
+Each New dialog, the Packaging and Weight form included, sets up its **Operator** with `restrict_operator(dialog)` (since 2026-11), right after `restrict_work_order`. The dialogs' Operator is a Link to Employee with `ignore_link_validation` (Frappe's check needs Employee permission; the server checks the link on save), `only_select` and `ignore_user_permissions`, followed by a read-only Operator Name. Its `get_query` is `isnack.quality_hub_operator.query()`; its `onchange` is wrapped, the dialog's own kept, to call `operator_changed` on a real change only (a dialog's Link runs `onchange` again for the value it holds when its box is left), with nothing done once the dialog is closed. It compares the Operator with the one it last looked up, not with the Link's `last_value`: with no link check, a dialog's Link may already hold a value typed in when `onchange` runs. A box emptied by hand after a pick is set empty, which a dialog's Link does not see by itself, and the Link's open arrow is hidden from a user who may not read Employee (`hide_open_link`). `_new_qc_record` refuses an Operator Name sent with no Operator, from a page loaded before: "This page is out of date. Reload it and enter the record again."
 
 ### Per-Tab Components
 
@@ -1174,7 +1202,7 @@ All record lists (`render_record_list`) render the same columns, except that the
 | Shift | `shift` | Plain text |
 | Line | `factory_line` | Plain text (not on Receiving) |
 | Supplier · Item · Batch | `supplier` · `item_code` · `batch_no` | Plain text (Receiving only) |
-| Operator | `operator_name` | Plain text |
+| Operator | `operator_name` | Plain text: the Employee's name (since 2026-11), or the name typed on a record made before |
 | Result | `overall_status` | Badge: green (Pass/Accepted), red (Fail/Rejected), amber (other) |
 | Status | `docstatus` | Badge: amber (Draft), green (Submitted), red (Cancelled) |
 
@@ -1281,14 +1309,17 @@ Paper Sheet                   Digital Entry
 
 ```
 isnack/
-├── hooks.py                                  ← doc_events: each restricted QC record's Factory Line (check_factory_line); app_include_js
+├── hooks.py                                  ← doc_events: each restricted QC record's Factory Line (check_factory_line), each QC record's Operator (check_operator); app_include_js
 │
 ├── public/js/
-│   └── quality_hub_lines.js                  ← each tab's factory lines, and each line's Work Orders and their items, on the hub's dialogs and the records' forms
+│   ├── quality_hub_lines.js                  ← each tab's factory lines, and each line's Work Orders and their items, on the hub's dialogs and the records' forms
+│   └── quality_hub_operator.js               ← the Operator (an Employee) and its name, on the hub's dialogs and the records' forms
 │
 ├── utils/
 │   ├── earlier_layout.py                     ← QCG/QCH/QCI earlier layout: the mark, kept; the patches' marking; grid columns forgotten
 │   ├── earlier_readings.py                   ← QCB/QCC earlier tables: no new rows, print, averages
+│   ├── qc_operator.py                        ← the Operator: search and name without Employee permission; check_operator
+│   ├── test_qc_operator.py
 │   └── test_earlier_readings.py
 │
 └── isnack/
@@ -1476,6 +1507,7 @@ docs/
 | Metal Detector | Factory Line | `factory_lines` (Metal Detector Factory Line) | The lines a detector is used on |
 | Quality Hub Settings | Factory Line | `*_lines` (Quality Hub Factory Line) | The lines each Quality Hub tab records on |
 | QCB–QCD, QCF–QCI | Work Order | `work_order` | Offers the Work Orders on the record's line (`custom_factory_line`); not on the retired QCE |
+| QCA–QCD, QCF–QCI | Employee | `operator` | The operator whose work was checked (since 2026-11): an Active Employee, looked up without Employee permission; its name in `operator_name` |
 | QCI | Work Order | `work_order` | The production run checked; it names the product |
 | QCI | Item | `item_code` | Finished product being weight-checked (checks made before 2026-11) |
 | QCI | Batch | `batch_no` | The finished goods batch (checks made before 2026-11) |
@@ -1497,6 +1529,8 @@ The following roles must exist before QC personnel can use the module:
 | Production Manager | Read-only visibility for production planning purposes |
 
 Create these roles in **ERPNext → Setup → Role**.
+
+Since 2026-11 every operator a QC record names must be an **Employee** (Active), as on the Operator Hub: line operators, packers, goods-in staff and agency workers. The quality roles need no permission on Employee (§7).
 
 ### Fixtures
 

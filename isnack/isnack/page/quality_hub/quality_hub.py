@@ -405,6 +405,10 @@ def _new_qc_record(doctype, payload, submit):
     # page loaded before it changed. Say so, rather than drop them and ask for rows
     if any(df.fieldtype == "Table" and df.fieldname not in child_rows and data.get(df.fieldname) for df in meta.fields):
         frappe.throw("This page is out of date. Reload it and enter the record again.")
+    # an Operator Name typed, with no Operator: a page loaded before the Operator
+    # became an Employee (2026-11, isnack/utils/qc_operator.py)
+    if meta.has_field("operator") and data.get("operator_name") and not data.get("operator"):
+        frappe.throw("This page is out of date. Reload it and enter the record again.")
 
     allowed_parent_fields = {
         df.fieldname: df.fieldtype for df in meta.fields if df.fieldtype != "Table" and df.fieldname
