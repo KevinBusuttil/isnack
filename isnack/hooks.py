@@ -22,6 +22,9 @@ app_include_js = [
     # (assets are cached for a year): bump it with the file
     # (test_quality_hub_settings checks it)
     "/assets/isnack/js/quality_hub_lines.js?v=c3136973",
+    # a QC record's Operator: an Employee, looked up without Employee permission
+    # (isnack/utils/qc_operator.py); ?v= as above (test_qc_operator checks it)
+    "/assets/isnack/js/quality_hub_operator.js?v=fb1c24a7",
 ]
 
 # include js, css files in header of web template
@@ -193,10 +196,20 @@ doc_events = {
     "Asset Maintenance Log": {
         "validate": "isnack.overrides.asset_maintenance_log.set_operational_defaults",
     },
-    # a QC record's Factory Line is one Quality Hub Settings gives its tab
     **{
-        doctype: {"validate": "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line"}
+        doctype: {
+            # a QC record's Operator is an Employee, and its Operator Name that
+            # Employee's name (isnack/utils/qc_operator.py)
+            "before_validate": "isnack.utils.qc_operator.check_operator",
+            # its Factory Line is one Quality Hub Settings gives its tab
+            **(
+                {"validate": "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line"}
+                if doctype != "QC Receiving Record"
+                else {}
+            ),
+        }
         for doctype in (
+            "QC Receiving Record",
             "QC Puffs Extruder Record",
             "QC Rice Extruder Record",
             "QC Frying Line Record",

@@ -24,7 +24,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "record_date", fieldtype: "Date", label: __("Record Date"), reqd: 1, default: frappe.datetime.get_today() },
             { fieldname: "shift", fieldtype: "Select", label: __("Shift"), reqd: 1, options: "\nMorning\nAfternoon\nNight" },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Supplier & Item ─────────────────────────────────────
             { fieldname: "sb_supply", fieldtype: "Section Break", label: __("Supplier & Item") },
@@ -86,7 +87,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
@@ -134,7 +136,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
@@ -165,7 +168,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product & Outcome ───────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product & Outcome") },
@@ -206,7 +210,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product ─────────────────────────────────────────────
             { fieldname: "sb_product", fieldtype: "Section Break", label: __("Product") },
@@ -237,7 +242,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Packaging Material & Checks ─────────────────────────
             // (Film Type, Film Batch and the material reconciliation, Qty
@@ -268,7 +274,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Equipment ───────────────────────────────────────────
             { fieldname: "sb_equipment", fieldtype: "Section Break", label: __("Equipment") },
@@ -305,7 +312,8 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             { fieldname: "factory_line", fieldtype: "Link", label: __("Factory Line"), options: "Factory Line", reqd: 1 },
             { fieldname: "work_order", fieldtype: "Link", label: __("Work Order"), options: "Work Order", reqd: 1 },
             { fieldname: "cb_record", fieldtype: "Column Break" },
-            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), reqd: 1 },
+            { fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },
+            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },
             { fieldname: "qc_inspector", fieldtype: "Link", label: __("QC Inspector"), options: "User", reqd: 1, default: frappe.session.user },
             // ── Section: Product ─────────────────────────────────────────────
             // (Product & Limits until the TU1 and TU2 limits came off the
@@ -700,6 +708,7 @@ isnack.quality_hub.QualityHub = class {
         this.empty_cleared_links(dialog);
         this.restrict_factory_line(dialog, [doctype]);
         this.restrict_work_order(dialog);
+        this.restrict_operator(dialog);
         this.setup_dialog_specific_behaviour(dialog, doctype);
         this.setup_dialog_secondary_action(dialog, doctype);
         tables.forEach((table) => this.render_child_editor(dialog, table));
@@ -767,6 +776,52 @@ isnack.quality_hub.QualityHub = class {
             if (changed(work_order_field)) lines.work_order_changed(record);
             return result;
         };
+    }
+
+    /** The Operator: an Employee, picked by ID or name among those Active, as
+     *  on the records' forms (isnack.quality_hub_operator); Operator Name shows
+     *  the Employee's name. Not the user signed in: the QC inspector names the
+     *  operator whose work was checked. */
+    restrict_operator(dialog) {
+        const operators = isnack.quality_hub_operator;
+        const field = dialog.get_field("operator");
+        // (a desk loaded before the Operator came has none to look up)
+        if (!field || !operators || !operators.operator_changed) return;
+        const record = {
+            // the value as last set, not the box as typed
+            get: (fieldname) => {
+                const other = dialog.get_field(fieldname);
+                return other ? other.value || "" : undefined;
+            },
+            set: (fieldname, value) => dialog.set_value(fieldname, value),
+            // a dialog saved and closed is left as it was
+            alive: () => !!dialog.display,
+            typed: "",
+        };
+        // a Dialog has no set_query: the Link reads get_query from its control
+        field.get_query = () => operators.query();
+        // the Operator last looked up. A dialog's Link runs onchange again for
+        // the value it holds when the box is left: not a change. And with no
+        // link check it may hold what was typed already when onchange runs, so
+        // last_value cannot tell a change from the same value
+        let looked_up = field.value || "";
+        const on_operator = field.df.onchange;
+        field.df.onchange = (...args) => {
+            const result = on_operator ? on_operator.apply(field, args) : undefined;
+            const value = field.value || "";
+            if (value !== looked_up) {
+                looked_up = value;
+                operators.operator_changed(record);
+            }
+            return result;
+        };
+        // emptied by hand after a first pick: the dialog's Link does not see it
+        // (see empty_cleared_links), and Operator Name would keep the name
+        if (field.$input) {
+            field.$input.on("blur", () => {
+                if (!field.$input.val() && field.value) field.set_value("");
+            });
+        }
     }
 
     /** A Link the dialog fills fields from (``fetch_from``: the Metal Detector,
@@ -879,6 +934,7 @@ isnack.quality_hub.QualityHub = class {
         // the Record Details are both checks': a line both may be on
         this.restrict_factory_line(dialog, records.map((record) => record.doctype));
         this.restrict_work_order(dialog);
+        this.restrict_operator(dialog);
     }
 
     /** A dialog config's Record Details (its first section) and the rest. */

@@ -10,6 +10,7 @@
   "shift",
   "factory_line",
   "work_order",
+  "operator",
   "operator_name",
   "qc_inspector",
   "status",
@@ -61,10 +62,19 @@
    "reqd": 1
   },
   {
+   "fieldname": "operator",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "label": "Operator",
+   "options": "Employee",
+   "print_hide": 1
+  },
+  {
    "fieldname": "operator_name",
    "fieldtype": "Data",
    "label": "Operator Name",
-   "reqd": 1
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "fieldname": "qc_inspector",
@@ -190,7 +200,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-18 20:00:00.000000",
+ "modified": "2026-11-24 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Packaging Check",

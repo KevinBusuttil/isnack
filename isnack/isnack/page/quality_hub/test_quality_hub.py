@@ -1095,8 +1095,131 @@ class TestOperatorAndInspectorMandatory(unittest.TestCase):
 	def test_every_record_type(self):
 		for doctype in QC_DOCTYPES.values():
 			fields = _fields(_doctype(doctype))
-			for fieldname in ("operator_name", "qc_inspector"):
-				self.assertEqual(fields[fieldname].get("reqd"), 1, f"{doctype}.{fieldname}")
+			self.assertEqual(fields["qc_inspector"].get("reqd"), 1, doctype)
+			if "operator" in fields:
+				# an Employee since 2026-11, required on the records made since
+				# (check_operator: isnack/utils/test_qc_operator.py); its name read-only
+				self.assertEqual(fields["operator_name"].get("read_only"), 1, doctype)
+				self.assertFalse(fields["operator_name"].get("reqd"), doctype)
+			else:
+				# the retired Oven record keeps its typed Operator Name
+				self.assertEqual(fields["operator_name"].get("reqd"), 1, doctype)
+
+
+class TestTheOperatorInTheDialogs(unittest.TestCase):
+    """Since 2026-11 each dialog's Operator is an Employee, picked by ID or name
+    among the Active ones, as on the records' forms (quality_hub_operator.js,
+    run by isnack/utils/test_qc_operator.py); Operator Name shows its name."""
+
+    OPERATOR = (
+        '{ fieldname: "operator", fieldtype: "Link", label: __("Operator"), options: "Employee", reqd: 1, '
+        "ignore_user_permissions: 1, ignore_link_validation: 1, only_select: 1 },\n"
+        '            { fieldname: "operator_name", fieldtype: "Data", label: __("Operator Name"), read_only: 1 },'
+    )
+
+    def setUp(self):
+        with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+            self.script = fh.read()
+
+    def _method(self, signature):
+        start = self.script.index(f"    {signature} {{")
+        return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+    def test_each_dialog_asks_for_an_employee(self):
+        # in the Record Details of each of the eight dialogs, the Operator, then its name
+        config = self.script[self.script.index("DIALOG_RECORD_CONFIG = {") : self.script.index("isnack.quality_hub.PACKAGING_AND_WEIGHT")]
+        self.assertEqual(config.count(self.OPERATOR), 8)
+        self.assertEqual(config.count('fieldname: "operator_name"'), 8)
+        # a typed Operator Name no more
+        self.assertNotIn('label: __("Operator Name"), reqd: 1', config)
+
+    def test_each_dialog_looks_up_its_operator(self):
+        call = re.compile(r"^ {8}this\.restrict_operator\(dialog\);$", re.M)
+        body = self._method("open_new_record(doctype)")
+        self.assertLess(body.index("this.restrict_work_order(dialog);"), call.search(body).start())
+        self.assertLess(call.search(body).start(), body.index("this.setup_dialog_specific_behaviour(dialog, doctype);"))
+        # the Packaging and Weight form: the Operator both checks share
+        self.assertTrue(call.search(self._method("open_packaging_and_weight()")))
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+    def test_the_dialog_uses_the_operator_script(self):
+        method = self._method("restrict_operator(dialog)")
+        script = (
+            f"class Hub {{\n{method}\n}}\n"
+            "const isnack = {};\n"
+            "const asked = [];\n"
+            "const operators = {\n"
+            "  query() { asked.push(['query']); return {query: 'search_operators'}; },\n"
+            "  operator_changed(record) { asked.push(['changed', record.get('operator'), record.typed, record.alive()]); record.set('operator_name', 'J. Borg'); },\n"
+            "};\n"
+            "// a Frappe dialog's Link: value as last set (set_input keeps the one before in last_value); the box's text apart\n"
+            "const make_dialog = () => {\n"
+            "  const blur = [];\n"
+            "  const box = {text: '', on(event, fn) { if (event === 'blur') blur.push(fn); }, val() { return this.text; }};\n"
+            "  const operator = {df: {onchange() { asked.push(['own onchange']); }}, value: '', last_value: undefined, $input: box,\n"
+            "    set_value(value) { asked.push(['set_value', value]); this.last_value = this.value; this.value = value; return this.df.onchange(); }};\n"
+            "  const name = {df: {}, value: ''};\n"
+            "  const dialog = {display: true, fields: {operator, operator_name: name}, blur,\n"
+            "    get_field(f) { return this.fields[f]; },\n"
+            "    set_value(f, v) { this.fields[f].value = v; }};\n"
+            "  return dialog;\n"
+            "};\n"
+            "const out = {};\n"
+            "// a desk loaded before the Operator came: nothing to look up\n"
+            "let dialog = make_dialog();\n"
+            "new Hub().restrict_operator(dialog);\n"
+            "out.before = dialog.fields.operator.get_query === undefined;\n"
+            "isnack.quality_hub_operator = operators;\n"
+            "dialog = make_dialog();\n"
+            "new Hub().restrict_operator(dialog);\n"
+            "const field = dialog.fields.operator;\n"
+            "out.query = field.get_query();\n"
+            "// picked: the Employee picked, its name shown\n"
+            "field.last_value = ''; field.value = 'HR-EMP-00001'; field.$input.text = 'HR-EMP-00001';\n"
+            "field.df.onchange();\n"
+            "out.name = dialog.fields.operator_name.value;\n"
+            "// the box left, the value unchanged: no change\n"
+            "field.last_value = 'HR-EMP-00001';\n"
+            "field.df.onchange();\n"
+            "// emptied by hand after the pick: set empty, a change\n"
+            "field.$input.text = '';\n"
+            "dialog.blur.forEach((fn) => fn());\n"
+            "// left empty again: nothing more\n"
+            "dialog.blur.forEach((fn) => fn());\n"
+            "// typed and left: with no link check the Link holds it already when onchange runs\n"
+            "field.last_value = 'Jim'; field.value = 'Jim';\n"
+            "field.df.onchange();\n"
+            "// a dialog saved and closed\n"
+            "dialog.display = false;\n"
+            "field.last_value = ''; field.value = 'HR-EMP-00002';\n"
+            "field.df.onchange();\n"
+            "out.asked = asked;\n"
+            "console.log(JSON.stringify(out));\n"
+        )
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertTrue(out["before"])
+        self.assertEqual(out["query"], {"query": "search_operators"})
+        self.assertEqual(out["name"], "J. Borg")
+        self.assertEqual(
+            out["asked"],
+            [
+                ["query"],
+                # the dialog's own onchange first, kept; the committed value, no typed name
+                ["own onchange"],
+                ["changed", "HR-EMP-00001", "", True],
+                ["own onchange"],
+                ["set_value", ""],
+                ["own onchange"],
+                ["changed", "", "", True],
+                # a value typed: looked up (and taken off if no Active Employee), though last_value holds it too
+                ["own onchange"],
+                ["changed", "Jim", "", True],
+                ["own onchange"],
+                ["changed", "HR-EMP-00002", "", False],
+            ],
+        )
 
 
 class TestReceivingChecksPatch(unittest.TestCase):
@@ -1312,6 +1435,31 @@ class TestCreateRecordFromDialog(unittest.TestCase):
 
 	@patch("frappe.get_doc")
 	@patch("frappe.get_meta")
+	def test_a_page_from_before_the_operator_is_told_to_reload(self, get_meta, get_doc):
+		# its Operator Name typed, with no Operator (an Employee since 2026-11)
+		get_meta.side_effect = lambda doctype: self._meta(["record_date", "operator", "operator_name", "time_slot"])
+		doc = get_doc.return_value = MagicMock(docstatus=0)
+		with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
+			qh.create_qc_record(
+				"QC Puffs Extruder Record",
+				payload={"record_date": "2026-11-24", "operator_name": "J. Borg", "puffs_readings": [{"time_slot": "08:00"}]},
+			)
+		doc.insert.assert_not_called()
+
+		# with its Operator, the name shown with it goes along (the server sets it again)
+		qh.create_qc_record(
+			"QC Puffs Extruder Record",
+			payload={
+				"record_date": "2026-11-24",
+				"operator": "HR-EMP-00001",
+				"operator_name": "J. Borg",
+				"puffs_readings": [{"time_slot": "08:00"}],
+			},
+		)
+		doc.insert.assert_called_once()
+
+	@patch("frappe.get_doc")
+	@patch("frappe.get_meta")
 	def test_oven_readings_are_optional_but_readings_are_not(self, get_meta, get_doc):
 		get_meta.side_effect = lambda doctype: self._meta(["record_date", "time_slot", "oven_temp", "tank_temp"])
 		doc = get_doc.return_value = MagicMock(docstatus=0)
@@ -1367,6 +1515,7 @@ class TestPackagingAndWeightForm(unittest.TestCase):
 		"shift": "Morning",
 		"factory_line": "PACKING LINE 2",
 		"work_order": "MFG-WO-2026-00412",
+		"operator": "HR-EMP-00001",
 		"operator_name": "J. Borg",
 		"qc_inspector": "qc@example.com",
 	}
