@@ -24,7 +24,7 @@ app_include_js = [
     "/assets/isnack/js/quality_hub_lines.js?v=c3136973",
     # a QC record's Operator: an Employee, looked up without Employee permission
     # (isnack/utils/qc_operator.py); ?v= as above (test_qc_operator checks it)
-    "/assets/isnack/js/quality_hub_operator.js?v=fb1c24a7",
+    "/assets/isnack/js/quality_hub_operator.js?v=1823b33b",
 ]
 
 # include js, css files in header of web template

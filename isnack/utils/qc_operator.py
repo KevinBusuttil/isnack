@@ -10,10 +10,9 @@ user's Employee: the QC inspector who records a check names the operator whose
 work was checked.
 
 ``operator_name`` holds that Employee's name, set on every save
-(``check_operator``), so the record lists, the Live Monitor, the Quality
-Explorer and the print show it as before. A record made before the Operator
-came keeps the name typed on it, and needs no Operator when saved again or
-amended.
+(``check_operator``), so the record lists, the Quality Explorer and the print
+show it as before. A record made before the Operator came keeps the name typed
+on it, and needs no Operator when saved again or amended.
 
 Quality users hold no permission on Employee, whose records carry personal data
 (date of birth, bank and health details). They search Employees through
@@ -94,7 +93,12 @@ def check_operator(doc, method=None):
 
     Frappe runs before_validate even when a save skips validation
     (``ignore_validate``): then, as with ``ignore_mandatory`` for the Operator
-    itself, nothing is refused, and only Operator Name is kept in step."""
+    itself, nothing is refused, and only Operator Name is kept in step.
+
+    A deleted record comes back (Deleted Document, Restore) as a new one under
+    a new name, which Frappe does not mark: restored, a record made before is
+    refused for want of an Operator, as the other fields made mandatory refuse
+    it, and one whose Employee has left since is refused that Employee."""
     checking = not doc.flags.ignore_validate
     operator = doc.get("operator")
     before = _before(doc)

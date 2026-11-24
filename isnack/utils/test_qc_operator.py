@@ -263,8 +263,8 @@ class TestTheHooks(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "needs node to run the script")
 class TestTheScript(unittest.TestCase):
-    """quality_hub_operator.js, run on a fake desk: the records' forms (the
-    Quality Hub's dialogs use the same, through restrict_operator)."""
+    """quality_hub_operator.js, run on a fake desk: the records' forms and
+    lists (the Quality Hub's dialogs use the same, through restrict_operator)."""
 
     def _run(self, body):
         with open(SCRIPT) as fh:
@@ -276,8 +276,10 @@ class TestTheScript(unittest.TestCase):
             "const employees = {\n"
             "  'HR-EMP-00001': {employee: 'HR-EMP-00001', employee_name: 'Joan Borg', status: 'Active'},\n"
             "  'HR-EMP-00002': {employee: 'HR-EMP-00002', employee_name: 'Mark Vella', status: 'Left'},\n"
+            "  'HR-EMP-00005': {employee: 'HR-EMP-00005', employee_name: 'Ann Zammit', status: 'Active'},\n"
             "};\n"
-            "let failing = [];\n"
+            "let failing = [], can_read = false;\n"
+            "const docfields = {};\n"
             "const frappe = {\n"
             "  provide: (path) => { let o = globalThis; path.split('.').forEach((p) => { o[p] = o[p] || {}; o = o[p]; }); },\n"
             "  xcall: (method, args) => {\n"
@@ -286,23 +288,34 @@ class TestTheScript(unittest.TestCase):
             "    return Promise.resolve(employees[args.employee] || {});\n"
             "  },\n"
             "  show_alert: (a) => alerts.push([a.message, a.indicator]),\n"
+            "  meta: {get_docfield: (dt, f) => ((docfields[dt] = docfields[dt] || {operator: {}})[f])},\n"
+            "  model: {can_read: () => can_read},\n"
+            "  utils: {escape_html: (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')},\n"
             "  ui: {form: {on: (doctype, h) => { handlers[doctype] = h; }}},\n"
             "};\n"
+            "globalThis.frappe = frappe;\n"
             "const isnack = {};\n"
             "globalThis.isnack = isnack;\n"
             f"{script}\n"
             "const operators = isnack.quality_hub_operator;\n"
             "const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };\n"
+            "// a desk form: a value set marks the document unsaved, as Frappe does\n"
             "const form = (doctype, doc) => {\n"
-            "  const frm = {doctype, doc, queries: {}, set: [], props: [], reqd: {}, fields_dict: {operator: {df: {}}, operator_name: {df: {}}},\n"
+            "  const arrow = {classes: [], addClass(c) { this.classes.push(c); }};\n"
+            "  const frm = {doctype, doc, queries: {}, set: [], props: [], seen: [], reqd: {},\n"
+            "    fields_dict: {operator: {df: {}, $link_open: arrow}, operator_name: {df: {}}},\n"
+            "    is_dirty: () => !!frm.doc.__unsaved, is_new: () => !!frm.doc.__islocal,\n"
             "    set_query: (f, q) => { frm.queries[f] = q; },\n"
-            "    set_df_property: (f, p, v) => { frm.props.push([f, p, v]); },\n"
+            "    set_df_property: (f, p, v) => { frm.props.push([f, p, v]); frm.seen.push(frm.doc.operator || ''); },\n"
             "    toggle_reqd: (f, r) => { frm.reqd[f] = r; },\n"
-            "    set_value: (f, v) => { frm.set.push([f, v]); frm.doc[f] = v; }};\n"
+            "    set_value: (f, v) => { frm.set.push([f, v]); frm.doc[f] = v; frm.doc.__unsaved = 1; }};\n"
             "  handlers[doctype].setup(frm);\n"
+            "  handlers[doctype].before_load(frm);\n"
             "  handlers[doctype].refresh(frm);\n"
             "  return frm;\n"
             "};\n"
+            "// the user picks an Operator in the form\n"
+            "const pick = (frm, value) => { frm.doc.operator = value; frm.doc.__unsaved = 1; handlers[frm.doctype].operator(frm); };\n"
             "(async () => {\n"
             "  const out = {};\n"
             f"{body}\n"
@@ -313,52 +326,88 @@ class TestTheScript(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr[-2000:])
         return json.loads(run.stdout)
 
-    def test_every_form_looks_up_its_operator(self):
+    def test_every_form_and_list_looks_up_its_operator(self):
         out = self._run(
             "  out.registered = Object.keys(handlers);\n"
+            "  // a list opened first: its filters use the same lookup (an onload of its own kept)\n"
+            "  let own = 0; frappe.listview_settings['QC Tasting Record'].onload = ((first) => function () { own++; return first.apply(this, arguments); })(frappe.listview_settings['QC Tasting Record'].onload);\n"
+            "  frappe.listview_settings['QC Tasting Record'].onload({});\n"
+            "  const listed = frappe.meta.get_docfield('QC Tasting Record', 'operator');\n"
+            "  out.listed = [listed.ignore_link_validation, listed.only_select, listed.get_query(), own];\n"
             "  const frm = form('QC Weight Check', {__islocal: 1});\n"
+            "  // on the doctype's field, from which Frappe copies each document's\n"
+            "  const df = frappe.meta.get_docfield('QC Weight Check', 'operator');\n"
+            "  out.field = [df.ignore_link_validation, df.only_select, df.get_query()];\n"
             "  out.query = frm.queries.operator();\n"
             "  out.props = frm.props;\n"
+            "  out.hidden = frm.fields_dict.operator.$link_open.classes;\n"
+            "  can_read = true;\n"
+            "  out.shown = form('QC Weight Check', {__islocal: 1}).fields_dict.operator.$link_open.classes;\n"
         )
         self.assertEqual(sorted(out["registered"]), sorted(OPERATOR_DOCTYPES))
-        self.assertEqual(out["query"], {"query": "isnack.utils.qc_operator.search_operators"})
+        query = {"query": "isnack.utils.qc_operator.search_operators"}
+        self.assertEqual(out["listed"], [1, 1, query, 1])
         # checked on the server: Frappe's check needs Employee permission; and no "Create a new"
-        self.assertEqual(out["props"], [["operator", "ignore_link_validation", 1], ["operator", "only_select", 1]])
+        self.assertEqual(out["field"], [1, 1, query])
+        self.assertEqual(out["query"], query)
+        # on the document's own field too: before its load (Frappe may copy it before setup, and checks a
+        # link a new record comes with before refresh), and again as it shows
+        self.assertEqual(out["props"], [["operator", "ignore_link_validation", 1], ["operator", "only_select", 1]] * 2)
+        # the open arrow leads to an Employee page: hidden from who may not read Employee
+        self.assertEqual(out["hidden"], ["hide"])
+        self.assertEqual(out["shown"], [])
 
     def test_the_operator_is_required_on_records_made_since(self):
         out = self._run(
             "  out.new = form('QC Weight Check', {__islocal: 1}).reqd.operator;\n"
-            "  out.since = form('QC Weight Check', {operator: 'HR-EMP-00001', operator_name: 'Joan Borg'}).reqd.operator;\n"
-            "  const before = form('QC Weight Check', {operator_name: 'J. Borg'});\n"
-            "  out.before = [before.reqd.operator, before.__typed_operator_name];\n"
-            "  out.amended = form('QC Weight Check', {__islocal: 1, amended_from: 'QCI-2026-00001', operator_name: 'J. Borg'}).reqd.operator;\n"
+            "  out.since = form('QC Weight Check', {name: 'QCI-1', operator: 'HR-EMP-00001', operator_name: 'Joan Borg'}).reqd.operator;\n"
+            "  const before = form('QC Weight Check', {name: 'QCI-2', operator_name: 'J. Borg'});\n"
+            "  out.before = before.reqd.operator;\n"
+            "  // an Employee picked, not saved, the form shown again: still a record made before\n"
+            "  pick(before, 'HR-EMP-00001'); await flush();\n"
+            "  handlers['QC Weight Check'].refresh(before);\n"
+            "  out.picked = before.reqd.operator;\n"
+            "  // emptied again: its typed name back\n"
+            "  before.set.splice(0); pick(before, ''); await flush();\n"
+            "  out.emptied = before.set;\n"
+            "  // saved with the Employee: a record made since\n"
+            "  before.doc.operator = 'HR-EMP-00001'; before.doc.operator_name = 'Joan Borg'; delete before.doc.__unsaved;\n"
+            "  handlers['QC Weight Check'].refresh(before);\n"
+            "  out.saved = before.reqd.operator;\n"
+            "  out.amended = form('QC Weight Check', {name: 'new-1', __islocal: 1, __unsaved: 1, amended_from: 'QCI-2026-00001', operator_name: 'J. Borg'}).reqd.operator;\n"
             "  // a new record with a typed name and no amendment: no record made before\n"
-            "  out.typed_new = form('QC Weight Check', {__islocal: 1, operator_name: 'J. Borg'}).reqd.operator;\n"
+            "  out.typed_new = form('QC Weight Check', {name: 'new-2', __islocal: 1, __unsaved: 1, operator_name: 'J. Borg'}).reqd.operator;\n"
         )
         self.assertEqual(out["new"], True)
         self.assertEqual(out["since"], True)
-        self.assertEqual(out["before"], [False, "J. Borg"])
+        self.assertEqual(out["before"], False)
+        self.assertEqual(out["picked"], False)
+        self.assertEqual(out["emptied"], [["operator_name", "J. Borg"]])
+        self.assertEqual(out["saved"], True)
         self.assertEqual(out["amended"], False)
         self.assertEqual(out["typed_new"], True)
 
     def test_the_operator_picked_names_it(self):
         out = self._run(
-            "  const h = handlers['QC Packaging Check'];\n"
             "  const frm = form('QC Packaging Check', {__islocal: 1});\n"
-            "  frm.doc.operator = 'HR-EMP-00001'; h.operator(frm); await flush();\n"
+            "  pick(frm, 'HR-EMP-00001'); await flush();\n"
             "  out.picked = frm.set.splice(0);\n"
+            "  // another picked: the name before goes at once\n"
+            "  pick(frm, 'HR-EMP-00005'); await flush();\n"
+            "  out.other = frm.set.splice(0);\n"
             "  // emptied\n"
-            "  frm.doc.operator = ''; h.operator(frm); await flush();\n"
+            "  pick(frm, ''); await flush();\n"
             "  out.emptied = frm.set.splice(0);\n"
             "  // someone who has left, typed in full: taken off\n"
-            "  frm.doc.operator = 'HR-EMP-00002'; h.operator(frm); await flush();\n"
+            "  pick(frm, 'HR-EMP-00002'); await flush();\n"
             "  out.left = frm.set.splice(0);\n"
-            "  // no such Employee\n"
-            "  frm.doc.operator = 'HR-EMP-09999'; h.operator(frm); await flush();\n"
+            "  // no such Employee, with markup in it (from the address): shown as text\n"
+            "  pick(frm, '<img src=x onerror=alert(1)>'); await flush();\n"
             "  out.none = frm.set.splice(0);\n"
             "  out.alerts = alerts;\n"
         )
         self.assertEqual(out["picked"], [["operator_name", "Joan Borg"]])
+        self.assertEqual(out["other"], [["operator_name", ""], ["operator_name", "Ann Zammit"]])
         self.assertEqual(out["emptied"], [["operator_name", ""]])
         self.assertEqual(out["left"], [["operator", ""], ["operator_name", ""]])
         self.assertEqual(out["none"], [["operator", ""], ["operator_name", ""]])
@@ -366,55 +415,88 @@ class TestTheScript(unittest.TestCase):
             out["alerts"],
             [
                 ["HR-EMP-00002 is not an active Employee: pick the Operator from the list.", "orange"],
-                ["HR-EMP-09999 is not an active Employee: pick the Operator from the list.", "orange"],
+                ["&lt;img src=x onerror=alert(1)&gt; is not an active Employee: pick the Operator from the list.", "orange"],
             ],
         )
 
-    def test_a_record_made_before_keeps_its_typed_name(self):
+    def test_an_employee_not_known_now_is_left_as_picked(self):
         out = self._run(
-            "  const h = handlers['QC Metal Detector Log'];\n"
-            "  const frm = form('QC Metal Detector Log', {operator_name: 'J. Borg'});\n"
-            "  frm.doc.operator = 'HR-EMP-00001'; h.operator(frm); await flush();\n"
-            "  // emptied again: the typed name back\n"
-            "  frm.doc.operator = ''; h.operator(frm); await flush();\n"
-            "  out.set = frm.set;\n"
+            "  const frm = form('QC Packaging Check', {__islocal: 1});\n"
+            "  pick(frm, 'HR-EMP-00001'); await flush();\n"
+            "  // the request fails: left as picked, its name not the one before; the server checks it on save\n"
+            "  failing = ['HR-EMP-00005'];\n"
+            "  frm.set.splice(0); pick(frm, 'HR-EMP-00005'); await flush();\n"
+            "  out.failed = [frm.set.splice(0), frm.doc.operator, alerts.length];\n"
+            "  // offline: not asked at all\n"
+            "  failing = [];\n"
+            "  Object.defineProperty(globalThis, 'navigator', {value: {onLine: false}, configurable: true});\n"
+            "  const asked = calls.length;\n"
+            "  out.offline = [await operators.details('HR-EMP-00005'), calls.length - asked];\n"
         )
-        self.assertEqual(out["set"], [["operator_name", "Joan Borg"], ["operator_name", "J. Borg"]])
+        self.assertEqual(out["failed"], [[["operator_name", ""]], "HR-EMP-00005", 0])
+        self.assertEqual(out["offline"], [None, 0])
+
+    def test_a_new_record_with_an_operator_shows_its_name(self):
+        out = self._run(
+            "  // a duplicate: the Operator copied, not its name\n"
+            "  const copy = form('QC Weight Check', {__islocal: 1, operator: 'HR-EMP-00001'}); await flush();\n"
+            "  out.copy = copy.set;\n"
+            "  // one opened from a list's filter on someone who has left: taken off\n"
+            "  const left = form('QC Weight Check', {__islocal: 1, operator: 'HR-EMP-00002'}); await flush();\n"
+            "  out.left = [left.set, alerts.length];\n"
+            "  // a saved record is not looked up as it loads\n"
+            "  const saved = form('QC Weight Check', {name: 'QCI-1', operator: 'HR-EMP-00001'}); await flush();\n"
+            "  out.saved = saved.set;\n"
+        )
+        self.assertEqual(out["copy"], [["operator_name", "Joan Borg"]])
+        self.assertEqual(out["left"], [[["operator", ""], ["operator_name", ""]], 1])
+        self.assertEqual(out["saved"], [])
+
+    def test_markup_in_the_address_is_never_shown(self):
+        # Frappe shows a Link to a doctype the user may not read as it stands, and refreshes
+        # the field when a property is set: the value goes before anything shows it
+        out = self._run(
+            "  const frm = form('QC Weight Check', {__islocal: 1, operator: '<img src=x onerror=alert(1)>'});\n"
+            "  out.doc = frm.doc.operator; out.seen = frm.seen; out.alerts = alerts;\n"
+            "  // a saved record is left as it is (its Operator is an Employee the server checked)\n"
+            "  out.saved = form('QC Weight Check', {name: 'QCI-1', operator: 'HR-EMP-00001'}).doc.operator;\n"
+        )
+        self.assertEqual(out["doc"], "")
+        self.assertEqual(set(out["seen"]), {""})
+        self.assertEqual(
+            out["alerts"],
+            [["&lt;img src=x onerror=alert(1)&gt; is not an active Employee: pick the Operator from the list.", "orange"]],
+        )
+        self.assertEqual(out["saved"], "HR-EMP-00001")
 
     def test_a_late_answer_changes_nothing(self):
         out = self._run(
-            "  const h = handlers['QC Tasting Record'];\n"
             "  const frm = form('QC Tasting Record', {__islocal: 1});\n"
             "  // picked, then another picked before the answer came\n"
-            "  frm.doc.operator = 'HR-EMP-00001'; h.operator(frm); frm.doc.operator = 'HR-EMP-00003'; await flush();\n"
+            "  pick(frm, 'HR-EMP-00001'); frm.doc.operator = 'HR-EMP-00003'; await flush();\n"
             "  out.changed = frm.set.splice(0);\n"
             "  // picked, then another document opened in the form\n"
             "  operators._operators = {};\n"
-            "  frm.doc.operator = 'HR-EMP-00001'; h.operator(frm); frm.doc = {operator: 'HR-EMP-00001'}; await flush();\n"
+            "  pick(frm, 'HR-EMP-00005'); frm.doc = {operator: 'HR-EMP-00005'}; await flush();\n"
             "  out.other = frm.set.splice(0);\n"
         )
         self.assertEqual(out["changed"], [])
         self.assertEqual(out["other"], [])
 
-    def test_each_employee_is_read_once(self):
+    def test_only_an_active_employee_is_remembered(self):
         out = self._run(
             "  await operators.details('HR-EMP-00001'); await operators.details('HR-EMP-00001');\n"
+            "  // one who has left is asked again: HR may set them back to Active\n"
+            "  await operators.details('HR-EMP-00002'); await operators.details('HR-EMP-00002');\n"
             "  // a failed read is tried again next time\n"
-            "  failing = ['HR-EMP-00002'];\n"
-            "  out.failed = await operators.details('HR-EMP-00002');\n"
+            "  failing = ['HR-EMP-00005'];\n"
+            "  out.failed = await operators.details('HR-EMP-00005');\n"
             "  failing = [];\n"
-            "  out.again = await operators.details('HR-EMP-00002');\n"
+            "  out.again = await operators.details('HR-EMP-00005');\n"
             "  out.empty = await operators.details('');\n"
-            "  out.calls = calls;\n"
+            "  out.calls = calls.map((c) => c[1]);\n"
         )
-        self.assertEqual(out["failed"], {})
-        self.assertEqual(out["again"]["status"], "Left")
+        self.assertIsNone(out["failed"])
+        self.assertEqual(out["again"]["employee_name"], "Ann Zammit")
         self.assertEqual(out["empty"], {})
-        self.assertEqual(
-            out["calls"],
-            [
-                ["isnack.utils.qc_operator.get_operator", "HR-EMP-00001"],
-                ["isnack.utils.qc_operator.get_operator", "HR-EMP-00002"],
-                ["isnack.utils.qc_operator.get_operator", "HR-EMP-00002"],
-            ],
-        )
+        self.assertEqual(out["calls"], ["HR-EMP-00001", "HR-EMP-00002", "HR-EMP-00002", "HR-EMP-00005", "HR-EMP-00005"])

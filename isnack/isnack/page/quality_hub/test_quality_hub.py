@@ -1150,6 +1150,7 @@ class TestTheOperatorInTheDialogs(unittest.TestCase):
             "const asked = [];\n"
             "const operators = {\n"
             "  query() { asked.push(['query']); return {query: 'search_operators'}; },\n"
+            "  hide_open_link(field) { asked.push(['hide_open_link', field === dialog.fields.operator]); },\n"
             "  operator_changed(record) { asked.push(['changed', record.get('operator'), record.typed, record.alive()]); record.set('operator_name', 'J. Borg'); },\n"
             "};\n"
             "// a Frappe dialog's Link: value as last set (set_input keeps the one before in last_value); the box's text apart\n"
@@ -1205,6 +1206,7 @@ class TestTheOperatorInTheDialogs(unittest.TestCase):
         self.assertEqual(
             out["asked"],
             [
+                ["hide_open_link", True],
                 ["query"],
                 # the dialog's own onchange first, kept; the committed value, no typed name
                 ["own onchange"],

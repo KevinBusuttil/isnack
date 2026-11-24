@@ -800,6 +800,8 @@ isnack.quality_hub.QualityHub = class {
         };
         // a Dialog has no set_query: the Link reads get_query from its control
         field.get_query = () => operators.query();
+        // (its arrow opens an Employee the user may not read)
+        operators.hide_open_link(field);
         // the Operator last looked up. A dialog's Link runs onchange again for
         // the value it holds when the box is left: not a change. And with no
         // link check it may hold what was typed already when onchange runs, so
