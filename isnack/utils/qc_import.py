@@ -19,15 +19,20 @@ wrong without a word:
 - a field taken off the record type in 2026-11, given to a record not marked
   Earlier Layout: the record type refuses it however it is saved, saying "This
   page is out of date", which an import has no page for: here it is named;
+- a tasting row's Overall (stars, before 2026-11), on a record made since: the
+  result comes from the five scores, so a sheet giving only the overall would
+  read as a Fail;
 - a QC Receiving Record of a delivery (Purchase Receipt, Item Code, Batch No)
   that has one already: an import run again, or after deliveries were
-  recorded by hand, would record it twice.
+  recorded by hand, would record it twice; and one whose Supplier, Item Code
+  or Batch No is not the Purchase Receipt's, as the Quality Hub's pickers
+  would not offer them.
 
-Only in an import (``frappe.flags.in_import``): the times on the rows it makes
-(a new record's, or the new rows of a record it updates), the rest on the
-record as the import leaves it. A row is named by its place in the record's
-table ("this record's row 2"), not by the file's line, which the Import Log
-gives.
+Only in an import (``frappe.flags.in_import``): whether a time was left blank,
+on the rows it makes (a new record's, or the new rows of a record it updates);
+the rest on the record as the import leaves it. A row is named by its place in
+the record's table ("this record's row 2"), not by the file's line, which the
+Import Log gives.
 """
 
 import datetime
@@ -58,33 +63,40 @@ def check_import(doc, method=None):
     if not frappe.flags.in_import or doc.flags.ignore_validate:
         return
     new = bool(doc.flags.in_insert or doc.is_new())
-    # (a row a record keeps may hold the time it was saved at: only new rows)
-    check_times(doc, [row for row in doc.get_all_children() if new or row.get("__islocal")])
-    # (an import updating a record gives it the rows of its file)
+    # (an import updating a record gives it the rows of its file; a row it
+    # keeps may hold the time it was saved at, so only a new row's is the import's)
+    check_times(doc, doc.get_all_children(), new=new)
     check_ratings(doc, [doc, *doc.get_all_children()])
     if doc.get("amended_from"):
         # an amendment keeps the layout of the record it amends (earlier_layout)
         return
     refuse_retired_values(doc)
+    if new and doc.doctype == "QC Tasting Record":
+        refuse_the_overall_stars(doc)
     if new and doc.doctype == "QC Receiving Record":
+        refuse_a_delivery_not_on_its_receipt(doc)
         refuse_a_second_record(doc)
 
 
-def check_times(doc, rows):
-    """The Times on the rows an import made. Left blank, a Time holds the time
+def check_times(doc, rows, new=True):
+    """The Times an import gives a record's rows. Left blank on a row the import
+    made (a new record's, or a new row of one it updates), a Time holds the time
     of import, which Frappe gave it: refused as missing, as the paper gives each
-    reading its time. Given in another form than hh:mm (8.30, 0830, 8:30 PM),
-    the database would read it as seconds, or refuse it in its own words:
-    refused, naming the value."""
+    reading its time; so is one holding only a space (an XLSX cell). Given in
+    another form than hh:mm (8.30, 0830, 8:30 PM), the database would read it
+    as seconds, or refuse it in its own words: refused, naming the value, on
+    every row (a row an import keeps holds a time from the database, not text,
+    unless the file gives it one)."""
     now = now_datetime()
     missing = {}
     for row in rows:
+        made = new or bool(row.get("__islocal"))
         for df in row.meta.get("fields", {"fieldtype": "Time"}):
             value = row.get(df.fieldname)
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str):
                 continue
             text = value.strip()
-            if _TIME_OF_IMPORT.fullmatch(text) and _of_this_import(text, now):
+            if not text or (made and _TIME_OF_IMPORT.fullmatch(text) and _of_this_import(text, now)):
                 missing.setdefault(df.label, {}).setdefault(row.parentfield, []).append(str(row.idx))
             elif not _is_a_time(text):
                 frappe.throw(
@@ -195,6 +207,69 @@ def refuse_retired_values(doc):
             ),
             title=_("Not Recorded Since 2026-11"),
         )
+
+
+def refuse_the_overall_stars(doc):
+    """A tasting row's Overall (stars, before 2026-11) on a record made since:
+    taken off in 2026-11, when the result came to be worked out from the five
+    scores, and kept out of sight; a sheet giving only the overall would read as
+    a Fail. A 0 is none (Frappe saves a blank Rating as 0)."""
+    rows = [row for row in doc.get("scores") or [] if (_number(row.get("overall_score")) or 0) > 0]
+    if rows:
+        frappe.throw(
+            _("{0} in {1}: not recorded since 2026-11, when the result came to be worked out from the five scores. Leave it blank and give each score instead.").format(
+                _(rows[0].meta.get_label("overall_score")), _where(doc, "scores", [row.idx for row in rows])
+            ),
+            title=_("Not Recorded Since 2026-11"),
+        )
+
+
+def refuse_a_delivery_not_on_its_receipt(doc):
+    """A QC Receiving Record checks a delivery of its Purchase Receipt: the
+    receipt submitted and of its Supplier, the Item Code on it, and the Batch
+    No that item's on it (on its row, or in its row's bundle or rejected
+    bundle), as the Quality Hub's pickers offer them (the receipt by supplier,
+    the item by receipt, the batch by receipt and item:
+    quality_hub.get_batches_for_receiving). A save does not check them."""
+    receipt = doc.get("purchase_receipt")
+    if not receipt:
+        return
+    held = frappe.db.get_value("Purchase Receipt", receipt, ["supplier", "docstatus"], as_dict=True)
+    if not held:
+        return  # (Frappe's link check refuses it)
+    item, batch = doc.get("item_code"), cstr(doc.get("batch_no")).strip()
+    if held.docstatus != 1:
+        wrong = _("{0} is not submitted").format(frappe.bold(receipt))
+    elif doc.get("supplier") and doc.supplier != held.supplier:
+        wrong = _("{0} is {1}'s, not {2}'s").format(
+            frappe.bold(receipt), escape_html(held.supplier), escape_html(doc.supplier)
+        )
+    elif item and not frappe.db.exists("Purchase Receipt Item", {"parent": receipt, "item_code": item}):
+        wrong = _("{0} is not on {1}").format(escape_html(item), frappe.bold(receipt))
+    elif item and batch and not _batch_received(receipt, item, batch):
+        wrong = _("batch {0} is not {1}'s on {2}").format(escape_html(batch), escape_html(item), frappe.bold(receipt))
+    else:
+        return
+    frappe.throw(
+        _("This delivery is not on its Purchase Receipt: {0}. Give the receipt's own supplier, item and batch, as the Quality Hub offers them.").format(wrong),
+        title=_("Not on the Purchase Receipt"),
+    )
+
+
+def _batch_received(receipt, item, batch) -> bool:
+    """Whether ``batch`` is ``item``'s on ``receipt``: on the receipt's row, or
+    in the row's Serial and Batch Bundle, or its rejected bundle."""
+    return bool(
+        frappe.db.sql(
+            """select 1 from `tabPurchase Receipt Item` pri
+            left join `tabSerial and Batch Entry` sbe
+                on sbe.parent in (pri.serial_and_batch_bundle, pri.rejected_serial_and_batch_bundle)
+            where pri.parent = %(receipt)s and pri.item_code = %(item)s
+                and (pri.batch_no = %(batch)s or sbe.batch_no = %(batch)s)
+            limit 1""",
+            {"receipt": receipt, "item": item, "batch": batch},
+        )
+    )
 
 
 def refuse_a_second_record(doc):

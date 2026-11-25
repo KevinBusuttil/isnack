@@ -28,8 +28,8 @@ apostrophes, full stops and dashes, and stray or doubled spaces; a name no
 Employee has, or several have, is refused, so the Employee is added first (or,
 for a name close to an Employee's, given by ID). The paper records work done
 before: the Operator of a record imported may be an Employee who has left since,
-though not one who had left by the record's date. An import updating a record
-does not change its Operator Name.
+though not one who had left by the record's date, or joined after it. An import
+updating a record does not change its Operator Name.
 """
 
 import unicodedata
@@ -117,7 +117,8 @@ def check_operator(doc, method=None):
     A new record imported (Data Import) with an Operator Name but no Operator
     is the Employee's of that name. A record imported is of work done before:
     its Operator, named or given by ID, may be an Employee who has left since,
-    but not one who had left by the record's date (whatever their status now).
+    but not one who had left by the record's date, or joined after it (whatever
+    their status now).
     Only a new one: a record saved, or amended, keeps what it had, as above; an
     import updating a record that sends another Operator Name, with the same
     Operator, is refused, as the name would be put back without a word."""
@@ -134,7 +135,7 @@ def check_operator(doc, method=None):
         )
     if operator:
         row = frappe.db.get_value(
-            "Employee", operator, ["employee_name", "status", "relieving_date"], as_dict=True
+            "Employee", operator, ["employee_name", "status", "date_of_joining", "relieving_date"], as_dict=True
         )
         if not row:
             # (Frappe's link check, which runs first, refuses it unless told not to)
@@ -144,7 +145,7 @@ def check_operator(doc, method=None):
         if checking and operator != (before or {}).get("operator"):
             if imported:
                 # work done before: by an Employee who may have left since
-                _refuse_if_left_before(doc, row, operator)
+                _refuse_if_not_employed_then(doc, row, operator)
             elif row.status != "Active":
                 frappe.throw(
                     _("{0} is not an active Employee ({1}): pick the Operator from the Employees who work here now.").format(
@@ -253,15 +254,24 @@ def _name_key(name) -> str:
     return " ".join(text.split())
 
 
-def _refuse_if_left_before(doc, row, operator):
+def _refuse_if_not_employed_then(doc, row, operator):
     """A record imported names an Employee: refused if they had left by the
-    record's date (their Relieving Date is before it), whatever their status. A
-    record with no date yet is dated today, as Frappe dates it."""
+    record's date (their Relieving Date is before it) or joined after it (their
+    Date of Joining is after it), whatever their status. A record with no date
+    yet is dated today, as Frappe dates it."""
     record_date = getdate(doc.get("record_date"))
+    who = _bold(row.employee_name or operator)
     if row.relieving_date and record_date > getdate(row.relieving_date):
         frappe.throw(
             _("{0} had left by this record's date ({1}; their Relieving Date is {2}): give the Operator who did the work, or check the Record Date.").format(
-                _bold(row.employee_name or operator), formatdate(record_date), formatdate(row.relieving_date)
+                who, formatdate(record_date), formatdate(row.relieving_date)
+            ),
+            title=_("Operator"),
+        )
+    if row.date_of_joining and record_date < getdate(row.date_of_joining):
+        frappe.throw(
+            _("{0} joined after this record's date ({1}; their Date of Joining is {2}): give the Operator who did the work, or check the Record Date and their Date of Joining.").format(
+                who, formatdate(record_date), formatdate(row.date_of_joining)
             ),
             title=_("Operator"),
         )

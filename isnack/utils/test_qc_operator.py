@@ -274,6 +274,19 @@ class TestAnImport(unittest.TestCase):
         with self._importing(employees), self.assertRaisesRegex(frappe.ValidationError, "had left by this record's date"):
             self._check(_Doc(new=True, record_date="2026-06-01", operator_name="Lina Spiteri"))
 
+    def test_an_employee_who_joined_after_the_records_date_is_refused(self):
+        employees = {"HR-EMP-00032": frappe._dict(employee_name="Lina Spiteri", status="Active", date_of_joining="2026-02-01")}
+        with self._importing(employees):
+            doc = self._check(_Doc(new=True, record_date="2026-02-01", operator_name="Lina Spiteri"))
+        self.assertEqual(doc.operator, "HR-EMP-00032")
+        with self._importing(employees), self.assertRaisesRegex(
+            frappe.ValidationError, "Lina Spiteri.* joined after this record's date .*their Date of Joining is"
+        ):
+            self._check(_Doc(new=True, record_date="2026-01-16", operator="HR-EMP-00032"))
+        # outside an import, a record is of the day it is entered
+        with patch.dict(frappe.flags, {"in_import": False}), patch.dict(EMPLOYEES, employees):
+            self._check(_Doc(new=True, record_date="2026-01-16", operator="HR-EMP-00032"))
+
     def test_an_import_updating_a_record_does_not_change_its_operator_name(self):
         saved = {"QCI-2026-00001": {"operator": "HR-EMP-00001", "operator_name": "Joan Borg"}}
         with self._importing(), self.assertRaisesRegex(

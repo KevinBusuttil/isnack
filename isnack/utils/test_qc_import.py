@@ -142,6 +142,23 @@ class TestTimes(unittest.TestCase):
         with _importing(), self.assertRaisesRegex(frappe.ValidationError, r"in Readings \(this record's row 2\)"):
             check_import(doc)
 
+    def test_a_time_holding_only_a_space_is_left_blank(self):
+        # (an XLSX cell): the database would refuse it in its own words
+        doc = _Doc("QC Frying Line Record", readings=[{"time_slot": " "}])
+        with _importing(), self.assertRaisesRegex(frappe.ValidationError, r"Time Slot is required in Readings \(this record's row 1\)"):
+            check_import(doc)
+
+    def test_a_time_an_update_gives_a_row_it_keeps_is_checked_too(self):
+        # an export for Update Existing Records, with the rows' IDs: a time
+        # corrected to 8.30 would be kept as seconds
+        doc = _Doc("QC Frying Line Record", new=False, readings=[{"time_slot": "22:00:00"}, {"time_slot": "8.30"}])
+        with _importing(), self.assertRaisesRegex(frappe.ValidationError, r"Time Slot in Readings \(this record's row 2\) is 8.30"):
+            check_import(doc)
+        # as the export gives them (a saved time, to the second or less), and to the millionth: taken
+        doc = _Doc("QC Frying Line Record", new=False, readings=[{"time_slot": "8:30:00.500000"}, {"time_slot": LEFT_BLANK}])
+        with _importing():
+            check_import(doc)
+
     def test_only_in_an_import(self):
         doc = _Doc("QC Frying Line Record", readings=[{"time_slot": LEFT_BLANK}, {"time_slot": "8.30"}])
         with _importing(False):
@@ -191,6 +208,26 @@ class TestScores(unittest.TestCase):
             check_import(doc)
 
 
+class TestTheOverallStars(unittest.TestCase):
+    """A tasting row's Overall (stars, before 2026-11), on a record made since:
+    the result comes from the five scores."""
+
+    def test_it_is_refused_on_a_record_made_since(self):
+        doc = _Doc("QC Tasting Record", scores=[{"appearance_score": 0.8}, {"overall_score": 0.8}])
+        with _importing(), self.assertRaisesRegex(
+            frappe.ValidationError,
+            r"Overall \(stars, before 2026-11\) in Scores \(this record's row 2\): not recorded since 2026-11, when the result came to be worked out from the five scores",
+        ):
+            check_import(doc)
+
+    def test_none_given_or_a_record_kept(self):
+        with _importing():
+            check_import(_Doc("QC Tasting Record", scores=[{"appearance_score": 0.8, "overall_score": 0}]))
+            check_import(_Doc("QC Tasting Record", scores=[{"appearance_score": 0.8, "overall_score": ""}]))
+            # a record made before, updated: its rows keep their overall
+            check_import(_Doc("QC Tasting Record", new=False, scores=[{"overall_score": 0.6}]))
+
+
 class TestRetiredFields(unittest.TestCase):
     """A field taken off in 2026-11, given to a record made since: the record
     type says "This page is out of date"; an import names it."""
@@ -229,12 +266,57 @@ class TestRetiredFields(unittest.TestCase):
             check_import(doc)
 
 
+@contextlib.contextmanager
+def _receipt(supplier="Supplier A", docstatus=1, item=True, batch=True):
+    """The Purchase Receipt MAT-PRE-2026-00900: its supplier and state, whether
+    it holds the item, and the batch for it."""
+    with patch("frappe.db.get_value", return_value=frappe._dict(supplier=supplier, docstatus=docstatus)) as get_value, patch(
+        "frappe.db.exists", return_value=item
+    ), patch("frappe.db.sql", return_value=[(1,)] if batch else []):
+        yield get_value
+
+
+class TestADeliveryOfItsReceipt(unittest.TestCase):
+    """A QC Receiving Record imported checks a delivery of its Purchase
+    Receipt, as the Quality Hub's pickers offer them."""
+
+    def _doc(self, **values):
+        return _Doc("QC Receiving Record", supplier="Supplier A", purchase_receipt="MAT-PRE-2026-00900", item_code="RM90001", batch_no="LOT-0001", **values)
+
+    def test_the_receipts_own_are_taken(self):
+        with _importing(), _receipt(), patch("frappe.get_all", return_value=[]):
+            check_import(self._doc())
+
+    def test_another_supplier_item_or_batch_is_refused(self):
+        for receipt, wrong in (
+            ({"supplier": "Supplier B"}, r"MAT-PRE-2026-00900.* is Supplier B's, not Supplier A's"),
+            ({"docstatus": 0}, r"MAT-PRE-2026-00900.* is not submitted"),
+            ({"item": False}, r"RM90001 is not on .*MAT-PRE-2026-00900"),
+            ({"batch": False}, r"batch LOT-0001 is not RM90001's on .*MAT-PRE-2026-00900"),
+        ):
+            with _importing(), _receipt(**receipt), patch("frappe.get_all", return_value=[]), self.assertRaisesRegex(
+                frappe.ValidationError, rf"^This delivery is not on its Purchase Receipt: .*{wrong}.*\. Give the receipt's own supplier, item and batch"
+            ):
+                check_import(self._doc())
+
+    def test_only_a_new_record_in_an_import(self):
+        with _importing(), _receipt(supplier="Supplier B") as get_value:
+            check_import(self._doc(new=False))
+            check_import(self._doc(amended_from="QCA-2026-00900"))
+        get_value.assert_not_called()
+
+
 class TestASecondReceivingRecord(unittest.TestCase):
     """A delivery has one QC Receiving Record: an import run again, or after it
     was recorded by hand, does not record it twice."""
 
     def _doc(self, **values):
         return _Doc("QC Receiving Record", purchase_receipt="MAT-PRE-2026-00900", item_code="RM90001", **values)
+
+    def setUp(self):
+        receipt = _receipt(supplier=None)
+        receipt.__enter__()
+        self.addCleanup(receipt.__exit__, None, None, None)
 
     def test_a_delivery_recorded_is_refused(self):
         with _importing(), patch("frappe.get_all", return_value=["QCA-2026-00900"]) as get_all, self.assertRaisesRegex(
