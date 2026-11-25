@@ -1041,8 +1041,44 @@ isnack.quality_hub.QualityHub = class {
         });
     }
 
+    /** The Batch No of a tasting: a finished good's batch, of the one the Work
+     *  Order makes when it makes one, as on the record's form; a batch of
+     *  another product is taken off when the Work Order is picked
+     *  (isnack.quality_hub_lines). */
+    setup_tasting_batch(dialog) {
+        const lines = isnack.quality_hub_lines;
+        const batch_field = dialog.get_field("batch_no");
+        const work_order_field = dialog.get_field("work_order");
+        // (a desk loaded before the tasting's batch rule came has none to apply)
+        if (!batch_field || !work_order_field || !lines || !lines.tasting_batch_query) return;
+        // a field's value as last set, not the box as typed
+        const value = (fieldname) => {
+            const field = dialog.get_field(fieldname);
+            return field ? field.value || "" : undefined;
+        };
+        const record = {
+            get: value,
+            set: (fieldname, val) => dialog.set_value(fieldname, val),
+            has: (fieldname) => !!dialog.get_field(fieldname),
+            // a dialog saved and closed is left as it was
+            alive: () => !!dialog.display,
+        };
+        // a Dialog has no set_query: the Link reads get_query from its control
+        batch_field.get_query = () => lines.tasting_batch_query(value("work_order"), batch_field.df);
+        const on_work_order = work_order_field.df.onchange;
+        work_order_field.df.onchange = (...args) => {
+            const result = on_work_order ? on_work_order.apply(work_order_field, args) : undefined;
+            lines.tasting_work_order_changed(record);
+            return result;
+        };
+    }
+
     setup_dialog_specific_behaviour(dialog, doctype) {
         if (doctype === "QC Metal Detector Log") this.setup_metal_detector_dialog(dialog);
+        if (doctype === "QC Tasting Record") {
+            this.setup_tasting_batch(dialog);
+            return;
+        }
         if (doctype !== "QC Receiving Record") return;
 
         // A Dialog has no set_query (only a form does): a Link control reads
