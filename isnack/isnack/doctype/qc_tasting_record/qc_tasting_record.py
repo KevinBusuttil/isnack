@@ -13,8 +13,7 @@ CRITERIA = ("appearance_score", "colour_score", "aroma_score", "taste_score", "t
 PASS_THRESHOLD_PERCENT = 60.0
 
 # A tasting is of a finished good: its Batch No is a batch of an item of this
-# group, or of one under it (2026-11). The Quality Hub's Product Item picks the
-# same items (isnack/public/js/quality_hub_lines.js, product_query).
+# group, or of one under it (2026-11).
 FINISHED_GOODS = "Finished Goods"
 
 
@@ -34,26 +33,47 @@ class QCTastingRecord(Document):
 
 
 def require_finished_good_batch(doc):
-    """The Batch No is a finished good's batch (2026-11): the batch picker
-    offers only those, but a Link takes any batch typed in full, and an
-    import or the API any batch at all. A record keeps the batch it has,
-    or the record it amends had: one saved before may hold another."""
-    batch = cstr(getattr(doc, "batch_no", None)).strip()
-    if not batch:
+    """The Batch No is a finished good's batch, and of the item the Work Order
+    makes (2026-11): the batch picker offers only those, but a Link takes any
+    batch typed in full, and an import or the API any value at all (Frappe
+    does not check a Link that fields are fetched from: Item Code is). A
+    record keeps the batch it has, or the record it amends had, and, for the
+    Work Order's item, its Work Order too. A deleted record comes back as a
+    new one, which Frappe does not mark: restored, a record whose batch is not
+    (or is no longer) a finished good's is refused it."""
+    batch = getattr(doc, "batch_no", None)
+    if not cstr(batch).strip():
         return  # (mandatory: refused for it, later)
     if doc.is_new():
-        kept = doc.amended_from and frappe.db.get_value(doc.doctype, doc.amended_from, "batch_no")
+        before = doc.amended_from and frappe.db.get_value(
+            doc.doctype, doc.amended_from, ["batch_no", "work_order"], as_dict=True
+        )
     else:
-        kept = frappe.db.get_value(doc.doctype, doc.name, "batch_no")
-    if kept and cstr(kept).strip().casefold() == batch.casefold():
+        before = frappe.db.get_value(doc.doctype, doc.name, ["batch_no", "work_order"], as_dict=True)
+    kept = bool(before) and cstr(before.batch_no).strip().casefold() == cstr(batch).strip().casefold()
+    if kept and cstr(before.work_order) == cstr(doc.get("work_order")):
         return
+    # (the value as given: one with a stray space names no batch)
     item = frappe.db.get_value("Batch", batch, "item")
     if not item:
-        return  # (Frappe's link check refuses a batch there is not)
-    if item not in finished_goods():
+        frappe.throw(
+            _("Could not find Batch {0}: pick the batch of the product tasted.").format(frappe.bold(batch)),
+            frappe.LinkValidationError,
+            title=_("Batch No"),
+        )
+    goods = finished_goods()
+    if not kept and item not in goods:
         frappe.throw(
             _("Batch {0} is of {1} ({2}), not of a finished good: pick the batch of the product tasted.").format(
                 frappe.bold(batch), frappe.bold(item), frappe.db.get_value("Item", item, "item_group") or _("no item group")
+            ),
+            title=_("Batch No"),
+        )
+    made = doc.get("work_order") and frappe.db.get_value("Work Order", doc.work_order, "production_item")
+    if made and made in goods and item != made:
+        frappe.throw(
+            _("Batch {0} is of {1}, but Work Order {2} makes {3}: pick a batch of the product tasted.").format(
+                frappe.bold(batch), frappe.bold(item), frappe.bold(doc.work_order), frappe.bold(made)
             ),
             title=_("Batch No"),
         )
@@ -73,8 +93,9 @@ def finished_goods() -> list[str]:
 def finished_good_batches(doctype, txt, searchfield, start, page_len, filters, as_dict=False):
     """The Batch No's search on a QC Tasting Record (the form and the Quality
     Hub's dialog): the batches of finished goods, not disabled, newest first,
-    by batch or item; once a Work Order is picked, only those of the item it
-    makes. None for a user who may not record a tasting."""
+    by batch, item or product name; once a Work Order is picked, only those of
+    the item it makes. None for a user who may not record a tasting. (Picking
+    one still needs Batch read or select: Frappe checks the Link.)"""
     if not (frappe.has_permission("QC Tasting Record", "create") or frappe.has_permission("QC Tasting Record", "write")):
         return []
     filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
@@ -90,8 +111,8 @@ def finished_good_batches(doctype, txt, searchfield, start, page_len, filters, a
     return frappe.get_all(
         "Batch",
         filters={"item": ["in", items], "disabled": 0},
-        or_filters={"name": ["like", like], "item": ["like", like]},
-        fields=["name", "item", "manufacturing_date"],
+        or_filters={"name": ["like", like], "item": ["like", like], "item_name": ["like", like]},
+        fields=["name", "item", "item_name", "manufacturing_date"],
         order_by="manufacturing_date desc, creation desc",
         limit_start=start,
         limit_page_length=page_len,
