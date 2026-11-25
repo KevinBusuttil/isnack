@@ -23,11 +23,13 @@ create or change QC records.
 Records kept on paper are entered in bulk with Data Import (2026-11), which
 names the operator as the paper does: by name, in Operator Name, the Employee's
 ID being unknown to it. A record so imported is the Employee's of that name
-(``_operator_named``), the names compared whatever the case, the accents and the
-spacing; a name no Employee has, or several have, is refused, so the Employee is
-added first. The paper records work done before: the Operator of a record
-imported may be an Employee who has left since, though not one who had left by
-the record's date.
+(``_operator_named``), the names compared whatever the case, the accents, the
+apostrophes, full stops and dashes, and stray or doubled spaces; a name no
+Employee has, or several have, is refused, so the Employee is added first (or,
+for a name close to an Employee's, given by ID). The paper records work done
+before: the Operator of a record imported may be an Employee who has left since,
+though not one who had left by the record's date. An import updating a record
+does not change its Operator Name.
 """
 
 import unicodedata
@@ -115,13 +117,17 @@ def check_operator(doc, method=None):
     A new record imported (Data Import) with an Operator Name but no Operator
     is the Employee's of that name. A record imported is of work done before:
     its Operator, named or given by ID, may be an Employee who has left since,
-    but not one who had left by the record's date. Only a new one: a record
-    saved, or amended, keeps what it had, as above."""
+    but not one who had left by the record's date (whatever their status now).
+    Only a new one: a record saved, or amended, keeps what it had, as above; an
+    import updating a record that sends another Operator Name, with the same
+    Operator, is refused, as the name would be put back without a word."""
     checking = not doc.flags.ignore_validate
     operator = doc.get("operator")
     before = _before(doc)
     new = doc.flags.in_insert or doc.is_new()
     imported = bool(frappe.flags.in_import and new and not doc.get("amended_from"))
+    if checking and frappe.flags.in_import and not new:
+        _refuse_a_name_changed(doc, before)
     if not operator and imported:
         operator = doc.operator = _operator_named(
             doc.get("operator_name"), refuse=checking and not doc.flags.ignore_mandatory
@@ -135,15 +141,17 @@ def check_operator(doc, method=None):
             if checking and not doc.flags.ignore_links:
                 frappe.throw(_("Could not find Employee {0}.").format(_bold(operator)), title=_("Operator"))
             return
-        if checking and row.status != "Active" and operator != (before or {}).get("operator"):
-            if not imported:
+        if checking and operator != (before or {}).get("operator"):
+            if imported:
+                # work done before: by an Employee who may have left since
+                _refuse_if_left_before(doc, row, operator)
+            elif row.status != "Active":
                 frappe.throw(
                     _("{0} is not an active Employee ({1}): pick the Operator from the Employees who work here now.").format(
                         _bold(row.employee_name or operator), _(row.status)
                     ),
                     title=_("Operator"),
                 )
-            _refuse_if_left_before(doc, row, operator)
         doc.operator_name = row.employee_name or operator
         return
 
@@ -171,11 +179,8 @@ def _operator_named(name, refuse=True):
     if not key:
         return None
     # (every Employee, whatever the user may read: the name is all that is compared)
-    found = [
-        employee
-        for employee in frappe.get_all("Employee", fields=["name", "employee_name", "status"], order_by="name asc")
-        if _name_key(employee.employee_name) == key
-    ]
+    employees = frappe.get_all("Employee", fields=["name", "employee_name", "status"], order_by="name asc")
+    found = [employee for employee in employees if _name_key(employee.employee_name) == key]
     if len(found) == 1:
         return found[0].name
     if refuse:
@@ -193,6 +198,16 @@ def _operator_named(name, refuse=True):
                 ),
                 title=_("Operator"),
             )
+        near = [employee for employee in employees if _may_be(key, _name_key(employee.employee_name))]
+        if near:
+            # a middle name, an initial: not to be added again as a new Employee
+            frappe.throw(
+                _("No Employee is named {0}, but it may be {1}: give the Operator by Employee ID, or add {0} as an Employee if it is none of them.").format(
+                    shown,
+                    escape_html(", ".join(f"{employee.name} ({employee.employee_name})" for employee in near[:5])),
+                ),
+                title=_("Operator"),
+            )
         frappe.throw(
             _("No Employee is named {0}: add {0} as an Employee first, or give the Operator by Employee ID.").format(shown),
             title=_("Operator"),
@@ -200,24 +215,47 @@ def _operator_named(name, refuse=True):
     return None
 
 
-# Letters Unicode does not take apart into a letter and an accent: the Maltese
-# ħ, the other letters with a stroke, and the dotless i.
-_PLAIN_LETTERS = str.maketrans({"ħ": "h", "ł": "l", "ø": "o", "đ": "d", "ı": "i"})
+def _may_be(key, other) -> bool:
+    """Whether the names (as ``_name_key`` gives them) may be the same person's:
+    the same last name, and the same first name or its initial; or every word
+    of one in the other (a middle name left out)."""
+    words, others = key.split(), other.split()
+    if not words or not others:
+        return False
+    if words[-1] == others[-1] and _same_first(words[0], others[0]):
+        return True
+    return set(words) <= set(others) or set(others) <= set(words)
+
+
+def _same_first(one, other) -> bool:
+    return one == other or (len(one) == 1 and other.startswith(one)) or (len(other) == 1 and one.startswith(other))
+
+
+# Letters Unicode does not take apart into a letter and an accent (the Maltese
+# ħ, the other letters with a stroke, the dotless i); apostrophes and full stops
+# left out (O'Brien, OBrien; J. Borg, J Borg) and dashes read as spaces
+# (Mary-Anne, Mary Anne).
+_PLAIN_LETTERS = str.maketrans(
+    {"ħ": "h", "ł": "l", "ø": "o", "đ": "d", "ı": "i"}
+    | dict.fromkeys("'’‘ʼ`´.", None)
+    | dict.fromkeys("-‐‑‒–—―−", " ")
+)
 
 
 def _name_key(name) -> str:
     """A name as an import compares it: whatever the case, the accents (Ġ as G,
-    ħ as h) and the spacing (a stray, doubled or non-breaking space). ERPNext
-    joins an Employee's first, middle and last names as typed, so an Employee
-    may be named with a stray space as well as the file."""
+    ħ as h), the apostrophes, full stops and dashes, and stray, doubled or
+    non-breaking spaces. ERPNext joins an Employee's first, middle and last
+    names as typed, so an Employee may be named with a stray space as well as
+    the file."""
     text = unicodedata.normalize("NFKD", cstr(name).casefold())
     text = "".join(c for c in text if not unicodedata.combining(c)).translate(_PLAIN_LETTERS)
     return " ".join(text.split())
 
 
 def _refuse_if_left_before(doc, row, operator):
-    """A record imported names an Employee who has left since: refused if they
-    had left by the record's date (their Relieving Date is before it). A
+    """A record imported names an Employee: refused if they had left by the
+    record's date (their Relieving Date is before it), whatever their status. A
     record with no date yet is dated today, as Frappe dates it."""
     record_date = getdate(doc.get("record_date"))
     if row.relieving_date and record_date > getdate(row.relieving_date):
@@ -227,6 +265,28 @@ def _refuse_if_left_before(doc, row, operator):
             ),
             title=_("Operator"),
         )
+
+
+def _refuse_a_name_changed(doc, before):
+    """An import updating a saved record sends another Operator Name, the
+    Operator unchanged: the name is the Operator's (or, on a record made before
+    the Operator came, the one typed on it), and would be put back without a
+    word. Refused, so the Operator is changed by its Employee ID."""
+    if not before or (doc.get("operator") or None) != (before.get("operator") or None):
+        return
+    sent = doc.get("operator_name")
+    if _name_key(sent) == _name_key(before.get("operator_name")):
+        return
+    if before.get("operator") and _name_key(sent) == _name_key(
+        frappe.db.get_value("Employee", before.operator, "employee_name")
+    ):
+        return  # the Employee's name now (renamed since the record was saved)
+    frappe.throw(
+        _("An import does not change Operator Name ({0}, sent as {1}): give the Operator's Employee ID in Operator to change the Operator.").format(
+            _bold(before.get("operator_name")), _bold(sent)
+        ),
+        title=_("Operator"),
+    )
 
 
 def _bold(text) -> str:

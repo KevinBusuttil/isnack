@@ -83,6 +83,12 @@ class TestVariance(unittest.TestCase):
 			with self.assertRaisesRegex(frappe.ValidationError, "This page is out of date"):
 				_check(qty_wasted=3, **retired).validate()
 
+	def test_a_stray_space_is_nothing_said(self):
+		# (an XLSX cell, or a form, holding a space or a line break): none kept out of sight
+		doc = _check(qty_wasted=3, film_type=" ", film_batch="\n")
+		doc.validate()
+		self.assertEqual((doc.film_type, doc.film_batch, doc.variance), (None, None, 0))
+
 	def test_before_the_migrate_every_check_is_one_made_before(self):
 		doc = _check(_BeforeMigrate, film_type="PET", qty_issued=100, qty_used=90, qty_wasted=5, qty_returned=4)
 		del doc["earlier_layout"]
