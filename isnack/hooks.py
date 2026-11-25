@@ -21,7 +21,7 @@ app_include_js = [
     # start of the file's md5, so that browsers fetch it again when it changes
     # (assets are cached for a year): bump it with the file
     # (test_quality_hub_settings checks it)
-    "/assets/isnack/js/quality_hub_lines.js?v=c3136973",
+    "/assets/isnack/js/quality_hub_lines.js?v=7b225de1",
     # a QC record's Operator: an Employee, looked up without Employee permission
     # (isnack/utils/qc_operator.py); ?v= as above (test_qc_operator checks it)
     "/assets/isnack/js/quality_hub_operator.js?v=1823b33b",

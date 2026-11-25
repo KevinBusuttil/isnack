@@ -8,7 +8,9 @@
 // (2026-11): the Work Order's own line (its Factory Section) is the record's. A
 // Process record's Product Item is the item its Work Order makes, filled in
 // when the Work Order is picked; without a Work Order it offers Finished Goods
-// items.
+// items. A Tasting record's Batch No is a batch of the finished good its Work
+// Order makes, or of any finished good when it makes none: a batch of another
+// is taken off when the Work Order is picked.
 frappe.provide("isnack.quality_hub_lines");
 
 Object.assign(isnack.quality_hub_lines, {
@@ -31,6 +33,12 @@ Object.assign(isnack.quality_hub_lines, {
 
 	// each Work Order's reading, by name (a promise)
 	_details: {},
+
+	// the finished good each Work Order makes ("" for none), by name, once read
+	finished_goods_made: {},
+
+	// each Work Order's finished good reading, by name (a promise)
+	_made: {},
 
 	/** Load the lines as the settings give them now. */
 	load() {
@@ -113,6 +121,69 @@ Object.assign(isnack.quality_hub_lines, {
 				});
 		}
 		return this._details[work_order];
+	},
+
+	/** The finished good ``work_order`` makes, read once: its item, or "" when
+	 *  it makes another item or cannot be read (finished_good_made). */
+	finished_good_made(work_order) {
+		if (!work_order) return Promise.resolve("");
+		if (!this._made[work_order]) {
+			this._made[work_order] = frappe
+				.xcall("isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_made", { work_order })
+				.then((item) => {
+					this.finished_goods_made[work_order] = item || "";
+					return this.finished_goods_made[work_order];
+				})
+				.catch(() => {
+					// asked again next time
+					delete this._made[work_order];
+					return "";
+				});
+		}
+		return this._made[work_order];
+	},
+
+	/** A Tasting record's Batch No query on ``work_order``: the batches of
+	 *  finished goods, of the one it makes when it makes one (the query, on the
+	 *  server, narrows them). ``df``, the field's, says so under them once that
+	 *  is read (reading it now for the next search). */
+	tasting_batch_query(work_order, df) {
+		const made = work_order ? this.finished_goods_made[work_order] : "";
+		if (work_order && made === undefined) this.finished_good_made(work_order);
+		if (df) {
+			df.filter_description = made
+				? __("Batches of the item Work Order {0} makes", [work_order])
+				: __("Batches of finished goods");
+		}
+		return {
+			query: "isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_batches",
+			filters: work_order ? { work_order } : {},
+		};
+	},
+
+	/** A Tasting record's Work Order changed: a batch of another product than
+	 *  the finished good it makes (picked before the Work Order, or kept when it
+	 *  changed) is taken off. ``record`` as for work_order_changed. */
+	tasting_work_order_changed(record) {
+		const work_order = record.get("work_order");
+		const batch = record.get("batch_no");
+		// (read without a batch too: the Batch No's search names it)
+		if (!work_order) return Promise.resolve();
+		return this.finished_good_made(work_order).then((made) => {
+			// no batch, or the Work Order or the batch picked again meanwhile
+			if (!batch || !record.alive() || record.get("work_order") !== work_order || record.get("batch_no") !== batch) return;
+			const item = record.get("item_code");
+			// it makes none, or a batch of the one it makes
+			if (!made || !item || item === made) return;
+			record.set("batch_no", "");
+			if (record.has("item_code")) record.set("item_code", "");
+			frappe.show_alert({
+				message: __("Batch {0} is of {1}, not of {2}, which Work Order {3} makes: pick a batch of it.", [
+					batch, item, made, work_order,
+				]),
+				indicator: "orange",
+			});
+		});
 	},
 
 	/** Whether ``work_order`` is not on ``line``: false when either is missing

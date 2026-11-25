@@ -1041,50 +1041,34 @@ isnack.quality_hub.QualityHub = class {
         });
     }
 
-    /** The Tasting dialog's Batch No: a finished good's batch, as on the form,
-     *  of the item the Work Order makes once one is picked (a Dialog's Link
-     *  reads its query from get_query); a batch of another product is taken
-     *  off when the Work Order is picked or changed. */
+    /** The Batch No of a tasting: a finished good's batch, of the one the Work
+     *  Order makes when it makes one, as on the record's form; a batch of
+     *  another product is taken off when the Work Order is picked
+     *  (isnack.quality_hub_lines). */
     setup_tasting_batch(dialog) {
+        const lines = isnack.quality_hub_lines;
         const batch_field = dialog.get_field("batch_no");
         const work_order_field = dialog.get_field("work_order");
-        if (!batch_field || !work_order_field) return;
+        // (a desk loaded before the tasting's batch rule came has none to apply)
+        if (!batch_field || !work_order_field || !lines || !lines.tasting_batch_query) return;
         // a field's value as last set, not the box as typed
-        const value = (fieldname) => (dialog.get_field(fieldname) || {}).value || "";
-        batch_field.get_query = () => {
-            const work_order = value("work_order");
-            batch_field.df.filter_description = work_order
-                ? __("Batches of the item Work Order {0} makes", [work_order])
-                : __("Batches of finished goods");
-            return {
-                query: "isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_batches",
-                filters: work_order ? { work_order } : {},
-            };
+        const value = (fieldname) => {
+            const field = dialog.get_field(fieldname);
+            return field ? field.value || "" : undefined;
         };
-        const lines = isnack.quality_hub_lines;
-        if (!lines || !lines.work_order_details) return;
+        const record = {
+            get: value,
+            set: (fieldname, val) => dialog.set_value(fieldname, val),
+            has: (fieldname) => !!dialog.get_field(fieldname),
+            // a dialog saved and closed is left as it was
+            alive: () => !!dialog.display,
+        };
+        // a Dialog has no set_query: the Link reads get_query from its control
+        batch_field.get_query = () => lines.tasting_batch_query(value("work_order"), batch_field.df);
         const on_work_order = work_order_field.df.onchange;
         work_order_field.df.onchange = (...args) => {
             const result = on_work_order ? on_work_order.apply(work_order_field, args) : undefined;
-            const work_order = value("work_order");
-            const batch = value("batch_no");
-            const item = value("item_code");
-            if (work_order && batch && item) {
-                lines.work_order_details(work_order).then((details) => {
-                    const made = details && details.production_item;
-                    // picked again meanwhile, closed, or of the item it makes
-                    if (!made || !dialog.display || value("work_order") !== work_order || value("batch_no") !== batch) return;
-                    if (value("item_code") === made) return;
-                    dialog.set_value("batch_no", "");
-                    dialog.set_value("item_code", "");
-                    frappe.show_alert({
-                        message: __("Batch {0} is of {1}, not of {2}, which Work Order {3} makes: pick a batch of it.", [
-                            batch, item, made, work_order,
-                        ]),
-                        indicator: "orange",
-                    });
-                });
-            }
+            lines.tasting_work_order_changed(record);
             return result;
         };
     }

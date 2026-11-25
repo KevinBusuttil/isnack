@@ -12,43 +12,35 @@
 
 	frappe.ui.form.on("QC Tasting Score", Object.fromEntries(CRITERIA.map((fieldname) => [fieldname, set_overall_percent])));
 
+	// the Batch No's search and take-off, shared with the Quality Hub's dialog
+	const tasting_lines = () => {
+		const lines = globalThis.isnack && isnack.quality_hub_lines;
+		return lines && lines.tasting_batch_query ? lines : null;
+	};
+
 	// the five scores sit side by side in the grid, one unit each: smaller
 	// stars so all five show (isnack.css, .qc-tasting-scores)
 	frappe.ui.form.on("QC Tasting Record", {
 		setup(frm) {
-			// a finished good's batch: the item the Work Order makes, once picked
+			// a finished good's batch: of the one the Work Order makes, when it
+			// makes one (isnack.quality_hub_lines, as on the Quality Hub; a desk
+			// loaded before the rule came has none: the record still refuses)
 			frm.set_query("batch_no", () => {
-				const work_order = frm.doc.work_order;
-				frm.fields_dict.batch_no.df.filter_description = work_order
-					? __("Batches of the item Work Order {0} makes", [work_order])
-					: __("Batches of finished goods");
-				return {
-					query: "isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_batches",
-					filters: work_order ? { work_order } : {},
-				};
+				const lines = tasting_lines();
+				return lines ? lines.tasting_batch_query(frm.doc.work_order, frm.fields_dict.batch_no.df) : {};
 			});
 		},
 
+		onload(frm) {
+			// the finished good the Work Order makes, ready for the Batch No's search
+			const lines = tasting_lines();
+			if (lines && frm.doc.work_order) lines.finished_good_made(frm.doc.work_order);
+		},
+
 		work_order(frm) {
-			// a batch of another product than the Work Order makes is taken off
-			// (picked before the Work Order, or kept when it changed)
-			const work_order = frm.doc.work_order;
-			const batch = frm.doc.batch_no;
-			const lines = isnack.quality_hub_lines;
-			if (!work_order || !batch || !frm.doc.item_code || !lines || !lines.work_order_details) return;
-			lines.work_order_details(work_order).then((details) => {
-				const made = details && details.production_item;
-				// picked again meanwhile, or of the item it makes
-				if (!made || frm.doc.work_order !== work_order || frm.doc.batch_no !== batch) return;
-				if (!frm.doc.item_code || frm.doc.item_code === made) return;
-				frm.set_value("batch_no", "");
-				frappe.show_alert({
-					message: __("Batch {0} is of {1}, not of {2}, which Work Order {3} makes: pick a batch of it.", [
-						batch, frm.doc.item_code, made, work_order,
-					]),
-					indicator: "orange",
-				});
-			});
+			// a batch of another product than the finished good it makes is taken off
+			const lines = tasting_lines();
+			if (lines) lines.tasting_work_order_changed(lines.form_record(frm));
 		},
 
 		refresh(frm) {
