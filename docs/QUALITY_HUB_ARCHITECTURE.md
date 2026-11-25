@@ -104,6 +104,8 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 An import is held to the Quality Hub's other rules only as any save is: the pickers' Work Order on the record's line and Product Item the Work Order makes are not checked on save (above), and a reading is required only where a record type requires one to submit (a Metal Detector Log's test, a Weight Check's sample). An **Update Existing Records** import gives a record's tables the rows its file gives them, as Frappe does: a file listing only a new reading leaves the record with that reading alone, so export the record and keep its rows, or add the reading in the form.
 
+**Tasting: a finished good's batch (2026-11).** A QC Tasting Record's **Batch No** is a batch of the product tasted: a Finished Goods item's (the item group, or one under it, as the Process records' Product Item offers them). The form and the Quality Hub's Tasting dialog offer only those batches, not disabled, newest first, and once a Work Order is picked only those of the item it makes (`finished_good_batches` in `qc_tasting_record.py`, a Link query; none for a user who may not create or change a tasting). The record refuses another item's batch on save, however it is saved (the Quality Hub, the desk, an import, the API: `require_finished_good_batch`), naming its item and group; a record keeps the batch it already has, or the record it amends had. Production held no tasting records when this came in.
+
 **Packaging and weight checks entered together (2026-11).** The Quality Hub's **Packaging and Weight Checks** tab has one form for both checks: the Record Details they share are entered once, and one save creates the QC Packaging Check and the QC Weight Check together, or neither. Either can be unticked to record the other on its own. The tab lists them in one list too, with a **Check** column, where it had a pill for each. The two doctypes are unchanged, each still one paper sheet (QCG-007, QCI-009); see [Per-Tab Components](#per-tab-components).
 
 The Quality Hub and Quality Explorer pages set no roles of their own (`"roles": []` in their page JSON), so any desk user can open them; what a user sees and may do there follows the QC record types' permissions. The **Quality Controller**, **Quality Manager**, and **System Manager** roles record and review QC records, and **Production Manager** has read-only visibility into all of them (see [Section 7](#7-rbac--permissions)).
@@ -328,7 +330,7 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 
 | Fieldname | Fieldtype | Label | Notes |
 |---|---|---|---|
-| `batch_no` | Link → Batch | Batch No | `reqd: 1` |
+| `batch_no` | Link → Batch | Batch No | `reqd: 1` · a finished good's batch (2026-11): offers the batches of Finished Goods items, not disabled, newest first, and only the Work Order's item's once a Work Order is picked (`finished_good_batches`); a save refuses another item's batch, but for the batch a record (or the record it amends) already has |
 | `item_code` | Link → Item | Item Code | `fetch_from: batch_no.item`, `read_only: 1` |
 | `item_name` | Data | Item Name | `fetch_from: item_code.item_name`, `read_only: 1` |
 | `scores` | Table → QC Tasting Score | Scores | Child table |
@@ -797,6 +799,9 @@ Frappe stores a Rating as the fraction of stars given (4 of 5 stars is `0.8`) an
 
 ```
 validate():
+    require_finished_good_batch()          # 2026-11: the Batch No is a Finished Goods item's
+                                           # (the group or one under it), but for the batch the
+                                           # record, or the record it amends, already has
     for each taster row:
         overall_percent = sum(min(score, 1) for the five scores) / 5 * 100     # blank = 0
     scored = [overall_percent of rows with any score]                          # no score at all: left out
@@ -1172,7 +1177,7 @@ Each New dialog, the Packaging and Weight form included, sets up its **Operator*
 **Tasting (`tasting`)**
 - Filter bar: date · factory_line · docstatus · Filter button · New Record button
 - Single panel with record list datatable
-- The New Record dialog: Batch No is mandatory, in the **Product** section; the Scores toolbar shows what the stars mean (1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent, `child_legend`), and each taster's **Overall %** is worked out as the scores are picked (a column with `compute`, not sent: the record works it out on save)
+- The New Record dialog: Batch No is mandatory, in the **Product** section, and offers the batches of finished goods (the Work Order's item's once one is picked: `finished_good_batches`, as on the form); the Scores toolbar shows what the stars mean (1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent, `child_legend`), and each taster's **Overall %** is worked out as the scores are picked (a column with `compute`, not sent: the record works it out on save)
 
 **Packaging and Weight Checks (`pkg_weight`)** (Pkg & Weight until 2026-11)
 - One list of both checks, newest first (`get_packaging_and_weight_records`), with a **Check** column (Packaging Check (QCG) or Weight Check (QCI), the form's labels); each row opens its own record. Until 2026-11 the tab had a pill for each, Packaging Checks (QCG) · Weight Checks (QCI), and showed their lists one at a time

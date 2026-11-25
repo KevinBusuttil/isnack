@@ -1043,6 +1043,18 @@ isnack.quality_hub.QualityHub = class {
 
     setup_dialog_specific_behaviour(dialog, doctype) {
         if (doctype === "QC Metal Detector Log") this.setup_metal_detector_dialog(dialog);
+        if (doctype === "QC Tasting Record") {
+            // a finished good's batch, as on the form: the item the Work Order
+            // makes, once picked (a Dialog's Link reads its query from get_query)
+            const batch = dialog.get_field("batch_no");
+            if (batch) {
+                batch.get_query = () => ({
+                    query: "isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_batches",
+                    filters: { work_order: dialog.get_value("work_order") || "" },
+                });
+            }
+            return;
+        }
         if (doctype !== "QC Receiving Record") return;
 
         // A Dialog has no set_query (only a form does): a Link control reads

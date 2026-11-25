@@ -15,6 +15,14 @@
 	// the five scores sit side by side in the grid, one unit each: smaller
 	// stars so all five show (isnack.css, .qc-tasting-scores)
 	frappe.ui.form.on("QC Tasting Record", {
+		setup(frm) {
+			// a finished good's batch: the item the Work Order makes, once picked
+			frm.set_query("batch_no", () => ({
+				query: "isnack.isnack.doctype.qc_tasting_record.qc_tasting_record.finished_good_batches",
+				filters: { work_order: frm.doc.work_order || "" },
+			}));
+		},
+
 		refresh(frm) {
 			frm.fields_dict.scores.$wrapper.addClass("qc-tasting-scores");
 		},
