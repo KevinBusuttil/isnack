@@ -198,13 +198,18 @@ doc_events = {
     },
     **{
         doctype: {
-            # a QC record's Operator is an Employee, and its Operator Name that
-            # Employee's name (isnack/utils/qc_operator.py)
-            "before_validate": "isnack.utils.qc_operator.check_operator",
+            "before_validate": [
+                # in a Data Import, what the file must give (isnack/utils/qc_import.py)
+                "isnack.utils.qc_import.check_import",
+                # a QC record's Operator is an Employee, and its Operator Name that
+                # Employee's name (isnack/utils/qc_operator.py); the retired Oven
+                # record keeps its typed Operator Name
+                *(["isnack.utils.qc_operator.check_operator"] if doctype != "QC Oven Record" else []),
+            ],
             # its Factory Line is one Quality Hub Settings gives its tab
             **(
                 {"validate": "isnack.isnack.doctype.quality_hub_settings.quality_hub_settings.check_factory_line"}
-                if doctype != "QC Receiving Record"
+                if doctype not in ("QC Receiving Record", "QC Oven Record")
                 else {}
             ),
         }
@@ -217,6 +222,7 @@ doc_events = {
             "QC Packaging Check",
             "QC Weight Check",
             "QC Metal Detector Log",
+            "QC Oven Record",
         )
     },
 }

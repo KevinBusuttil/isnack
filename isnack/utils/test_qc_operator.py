@@ -4,6 +4,7 @@
 """The Operator of a QC record (qc_operator.py, quality_hub_operator.js): an
 Employee, looked up without Employee permission (no database)."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -30,7 +31,7 @@ SCRIPT = os.path.join(APP_DIR, "public", "js", "quality_hub_operator.js")
 
 EMPLOYEES = {
     "HR-EMP-00001": frappe._dict(employee_name="Joan Borg", status="Active"),
-    "HR-EMP-00002": frappe._dict(employee_name="Mark Vella", status="Left"),
+    "HR-EMP-00002": frappe._dict(employee_name="Mark Vella", status="Left", relieving_date="2026-06-30"),
 }
 
 
@@ -61,6 +62,8 @@ def _db(saved=None):
     def get_value(doctype, name, fields, as_dict=False):
         if doctype == "Employee":
             row = EMPLOYEES.get(name)
+            if isinstance(fields, str):
+                return row.get(fields) if row else None
             if row and "name" in fields:
                 return frappe._dict(name=name, **row)
             return row
@@ -144,6 +147,220 @@ class TestCheckOperator(unittest.TestCase):
             self._check(_Doc(new=True, operator="HR-EMP-09999"))
         # Frappe's link check, which runs first, was told not to check
         self._check(_Doc(new=True, operator="HR-EMP-09999", flags={"ignore_links": 1}))
+
+
+class TestAnImport(unittest.TestCase):
+    """check_operator in a Data Import, which names the operator by name."""
+
+    @contextlib.contextmanager
+    def _importing(self, employees=None):
+        """In a Data Import, the Employees being ``employees`` (ID: their name,
+        status and relieving date), EMPLOYEES unless given."""
+        employees = EMPLOYEES if employees is None else employees
+        roster = [
+            frappe._dict(name=name, employee_name=row.employee_name, status=row.status)
+            for name, row in employees.items()
+        ]
+        with patch.dict(frappe.flags, {"in_import": True}), patch.dict(EMPLOYEES, employees, clear=True), patch(
+            "frappe.get_all", return_value=roster
+        ) as get_all:
+            yield get_all
+
+    def _check(self, doc, saved=None):
+        with patch("frappe.db.get_value", side_effect=_db(saved)):
+            check_operator(doc)
+        return doc
+
+    def test_the_operator_is_the_employee_of_the_name(self):
+        # a register on paper names its operator, not the Employee's ID
+        with self._importing() as get_all:
+            doc = self._check(_Doc(new=True, record_date="2026-03-02", operator_name="  joan   BORG "))
+        self.assertEqual((doc.operator, doc.operator_name), ("HR-EMP-00001", "Joan Borg"))
+        # every Employee, whatever the user may read: the names are compared here
+        get_all.assert_called_once_with("Employee", fields=["name", "employee_name", "status"], order_by="name asc")
+
+    def test_names_are_compared_whatever_the_case_the_accents_or_the_spacing(self):
+        # on both sides: ERPNext joins an Employee's first and last names as typed
+        employees = {
+            "HR-EMP-00011": frappe._dict(employee_name="Paul  Grech ", status="Active"),
+            "HR-EMP-00012": frappe._dict(employee_name=" Ġorġ Żammit", status="Active"),
+            "HR-EMP-00013": frappe._dict(employee_name="Ħilda\u00a0Camilleri", status="Active"),
+            "HR-EMP-00014": frappe._dict(employee_name="Mary-Anne O’Brien", status="Active"),
+        }
+        for typed, employee in (
+            ("Paul Grech", "HR-EMP-00011"),
+            ("Paul  Grech ", "HR-EMP-00011"),  # the name as the Employee holds it
+            ("PAUL GRECH", "HR-EMP-00011"),
+            ("Paul\tGrech", "HR-EMP-00011"),
+            ("Gorg Zammit", "HR-EMP-00012"),
+            ("ġorġ żammit", "HR-EMP-00012"),
+            ("Hilda Camilleri", "HR-EMP-00013"),
+            # apostrophes and full stops left out, dashes read as spaces
+            ("Mary Anne OBrien", "HR-EMP-00014"),
+            ("mary-anne o'brien", "HR-EMP-00014"),
+            ("Mary Anne O.Brien", "HR-EMP-00014"),
+        ):
+            with self._importing(employees):
+                doc = self._check(_Doc(new=True, record_date="2026-03-02", operator_name=typed))
+            self.assertEqual((doc.operator, doc.operator_name), (employee, employees[employee].employee_name), typed)
+        # other letters are other names
+        with self._importing(employees), self.assertRaisesRegex(frappe.ValidationError, "No Employee is named"):
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name="Paula Grechi"))
+
+    def test_a_name_no_one_or_several_have_is_refused(self):
+        with self._importing(), self.assertRaisesRegex(
+            frappe.ValidationError, "No Employee is named .*Paul Grech.*: add .*Paul Grech.* as an Employee first"
+        ):
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name=" Paul   Grech"))
+        # a namesake who has left counts too: the paper may be theirs
+        employees = {
+            **EMPLOYEES,
+            "HR-EMP-00003": frappe._dict(employee_name="joan borg", status="Left", relieving_date="2025-12-31"),
+        }
+        with self._importing(employees), self.assertRaisesRegex(
+            frappe.ValidationError,
+            r"Several Employees are named .*Joan Borg.* \(HR-EMP-00001, HR-EMP-00003 \(Left\)\): give the Operator by Employee ID",
+        ):
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name="Joan Borg"))
+        # with no name either, the Operator is missing, as ever
+        with self._importing() as get_all, self.assertRaises(frappe.MandatoryError):
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name=" "))
+        get_all.assert_not_called()
+
+    def test_an_employee_who_has_left_since_may_be_the_operator(self):
+        # the paper records work done before: by name, or by ID
+        for fields in ({"operator_name": "mark vella"}, {"operator": "HR-EMP-00002"}):
+            for record_date in ("2026-03-02", "2026-06-30"):
+                with self._importing():
+                    doc = self._check(_Doc(new=True, record_date=record_date, **fields))
+                self.assertEqual((doc.operator, doc.operator_name), ("HR-EMP-00002", "Mark Vella"), fields)
+            # not one who had left by the record's date
+            with self._importing(), self.assertRaisesRegex(
+                frappe.ValidationError, "Mark Vella.* had left by this record's date"
+            ):
+                self._check(_Doc(new=True, record_date="2026-07-01", **fields))
+        # an Employee newly picked outside an import is an Active one, as ever
+        with patch.dict(frappe.flags, {"in_import": False}), self.assertRaisesRegex(
+            frappe.ValidationError, "is not an active Employee"
+        ):
+            self._check(_Doc(new=True, record_date="2026-03-02", operator="HR-EMP-00002"))
+        # and an amendment imported keeps the rules of an amendment
+        with self._importing(), self.assertRaisesRegex(frappe.ValidationError, "is not an active Employee"):
+            self._check(
+                _Doc(new=True, record_date="2026-03-02", amended_from="QCI-2026-00000", operator="HR-EMP-00002"),
+                saved={"QCI-2026-00000": {"operator": "HR-EMP-00001", "operator_name": "Joan Borg"}},
+            )
+
+    def test_a_name_close_to_an_employees_is_not_added_again(self):
+        # a middle name left out, or an initial: give the ID, rather than add a second Employee
+        employees = {**EMPLOYEES, "HR-EMP-00021": frappe._dict(employee_name="Karl Paul Borg", status="Active")}
+        for typed in ("Karl Borg", "K. Borg", "Karl Paul Anthony Borg"):
+            with self._importing(employees), self.assertRaisesRegex(
+                frappe.ValidationError,
+                r"No Employee is named .*, but it may be HR-EMP-00021 \(Karl Paul Borg\): give the Operator by Employee ID, or add .* as an Employee if it is none of them",
+            ):
+                self._check(_Doc(new=True, record_date="2026-03-02", operator_name=typed))
+        # a name nobody's is close to: add the Employee
+        with self._importing(employees), self.assertRaises(frappe.ValidationError) as refused:
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name="Rita Zahra"))
+        self.assertNotIn("it may be", str(refused.exception))
+
+    def test_an_employee_who_had_left_by_the_records_date_is_refused_whatever_their_status(self):
+        # an Active Employee given a Relieving Date (leaving, or put back since)
+        employees = {"HR-EMP-00031": frappe._dict(employee_name="Lina Spiteri", status="Active", relieving_date="2026-05-31")}
+        with self._importing(employees):
+            doc = self._check(_Doc(new=True, record_date="2026-05-31", operator_name="Lina Spiteri"))
+        self.assertEqual(doc.operator, "HR-EMP-00031")
+        with self._importing(employees), self.assertRaisesRegex(frappe.ValidationError, "had left by this record's date"):
+            self._check(_Doc(new=True, record_date="2026-06-01", operator_name="Lina Spiteri"))
+
+    def test_an_employee_who_joined_after_the_records_date_is_refused(self):
+        employees = {"HR-EMP-00032": frappe._dict(employee_name="Lina Spiteri", status="Active", date_of_joining="2026-02-01")}
+        with self._importing(employees):
+            doc = self._check(_Doc(new=True, record_date="2026-02-01", operator_name="Lina Spiteri"))
+        self.assertEqual(doc.operator, "HR-EMP-00032")
+        with self._importing(employees), self.assertRaisesRegex(
+            frappe.ValidationError, "Lina Spiteri.* joined after this record's date .*their Date of Joining is"
+        ):
+            self._check(_Doc(new=True, record_date="2026-01-16", operator="HR-EMP-00032"))
+        # outside an import, a record is of the day it is entered
+        with patch.dict(frappe.flags, {"in_import": False}), patch.dict(EMPLOYEES, employees):
+            self._check(_Doc(new=True, record_date="2026-01-16", operator="HR-EMP-00032"))
+
+    def test_an_import_updating_a_record_does_not_change_its_operator_name(self):
+        saved = {"QCI-2026-00001": {"operator": "HR-EMP-00001", "operator_name": "Joan Borg"}}
+        with self._importing(), self.assertRaisesRegex(
+            frappe.ValidationError, "An import does not change Operator Name .*Joan Borg.*, sent as .*Mark Vella"
+        ):
+            self._check(_Doc(operator="HR-EMP-00001", operator_name="Mark Vella"), saved=saved)
+        with self._importing({**EMPLOYEES, "HR-EMP-00004": frappe._dict(employee_name="Rita Zahra", status="Active")}):
+            # the same name, as typed
+            doc = self._check(_Doc(operator="HR-EMP-00001", operator_name=" joan  BORG"), saved=saved)
+            self.assertEqual(doc.operator_name, "Joan Borg")
+            # another Operator, by ID, the file's name left as it was: the new Operator's name
+            doc = self._check(_Doc(operator="HR-EMP-00004", operator_name="Joan Borg"), saved=saved)
+            self.assertEqual(doc.operator_name, "Rita Zahra")
+            # the Employee's name now, renamed since the record was saved
+            renamed = {"QCI-2026-00001": {"operator": "HR-EMP-00001", "operator_name": "Joan B."}}
+            doc = self._check(_Doc(operator="HR-EMP-00001", operator_name="Joan Borg"), saved=renamed)
+            self.assertEqual(doc.operator_name, "Joan Borg")
+        # a record made before keeps its typed name: not changed by an import either
+        typed = {"QCI-2026-00001": {"operator": None, "operator_name": "J. Borg"}}
+        with self._importing(), self.assertRaisesRegex(frappe.ValidationError, "An import does not change Operator Name"):
+            self._check(_Doc(operator_name="John Borg"), saved=typed)
+        # outside an import, a form sending another name is put right, as ever
+        with patch.dict(frappe.flags, {"in_import": False}):
+            doc = self._check(_Doc(operator="HR-EMP-00001", operator_name="Mark Vella"), saved=saved)
+        self.assertEqual(doc.operator_name, "Joan Borg")
+
+    def test_what_was_sent_is_shown_as_text(self):
+        # Frappe shows a message as HTML, the Data Import Log too
+        with self._importing(), self.assertRaises(frappe.ValidationError) as refused:
+            self._check(_Doc(new=True, record_date="2026-03-02", operator_name="<img src=x onerror=alert(1)>"))
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", str(refused.exception))
+        self.assertNotIn("<img", str(refused.exception))
+
+    def test_an_operator_given_is_taken(self):
+        with self._importing() as get_all:
+            doc = self._check(_Doc(new=True, record_date="2026-03-02", operator="HR-EMP-00001", operator_name="Someone else"))
+        self.assertEqual((doc.operator, doc.operator_name), ("HR-EMP-00001", "Joan Borg"))
+        get_all.assert_not_called()
+
+    def test_only_a_new_record_is_looked_up(self):
+        # a record saved (an import updating it) or amended keeps what it had
+        saved = {"QCI-2026-00001": {"operator": None, "operator_name": "J. Borg"}}
+        with self._importing() as get_all:
+            doc = self._check(_Doc(operator_name="J. Borg"), saved=saved)
+            self.assertEqual((doc.get("operator"), doc.operator_name), (None, "J. Borg"))
+            doc = self._check(_Doc(new=True, amended_from="QCI-2026-00001", operator_name="J. Borg"), saved=saved)
+            self.assertEqual((doc.get("operator"), doc.operator_name), (None, "J. Borg"))
+        get_all.assert_not_called()
+
+    def test_outside_an_import_a_name_is_no_operator(self):
+        with patch.dict(frappe.flags, {"in_import": False}), patch("frappe.get_all") as get_all:
+            with self.assertRaises(frappe.MandatoryError):
+                self._check(_Doc(new=True, operator_name="Joan Borg"))
+        get_all.assert_not_called()
+
+    def test_as_frappe_does_when_told_not_to_check(self):
+        # nothing refused, as for the Operator itself: the name stays as sent
+        namesakes = {
+            "HR-EMP-00011": frappe._dict(employee_name="Paul Grech", status="Active"),
+            "HR-EMP-00012": frappe._dict(employee_name="Paul Grech", status="Left", relieving_date="2026-01-31"),
+        }
+        for flags in ({"ignore_validate": 1}, {"ignore_mandatory": 1}):
+            for employees in ({}, namesakes):
+                with self._importing(employees):
+                    doc = self._check(_Doc(new=True, operator_name="Paul Grech", flags=flags))
+                self.assertEqual(
+                    (doc.get("operator"), doc.operator_name), (None, "Paul Grech"), (flags, list(employees))
+                )
+        # and an Employee who had left by the record's date is not refused either
+        with self._importing():
+            doc = self._check(
+                _Doc(new=True, record_date="2026-07-01", operator="HR-EMP-00002", flags={"ignore_validate": 1})
+            )
+        self.assertEqual(doc.operator_name, "Mark Vella")
 
 
 class TestTheLookup(unittest.TestCase):
@@ -246,7 +463,7 @@ class TestTheHooks(unittest.TestCase):
     def test_each_record_that_names_an_operator_is_checked(self):
         path = f"{qc_operator.__name__}.{check_operator.__name__}"
         self.assertEqual(path, "isnack.utils.qc_operator.check_operator")
-        checked = [d for d, events in self.hooks["doc_events"].items() if events.get("before_validate") == path]
+        checked = [d for d, events in self.hooks["doc_events"].items() if path in (events.get("before_validate") or [])]
         self.assertEqual(sorted(checked), sorted(OPERATOR_DOCTYPES))
 
     def test_the_desk_loads_the_script(self):

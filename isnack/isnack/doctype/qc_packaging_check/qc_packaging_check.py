@@ -21,6 +21,10 @@ class QCPackagingCheck(Document):
     def validate(self):
         self.keep_earlier_layout()
         if not self.in_earlier_layout():
+            for fieldname in RETIRED_FIELDS:
+                if isinstance(self.get(fieldname), str) and not self.get(fieldname).strip():
+                    # nothing said (a stray space or line break): none kept out of sight
+                    self.set(fieldname, None)
             if any(self.get(fieldname) for fieldname in RETIRED_FIELDS):
                 # a form loaded before the change (desk, Duplicate, Quality Hub)
                 # still offers them; the check would keep them out of sight
