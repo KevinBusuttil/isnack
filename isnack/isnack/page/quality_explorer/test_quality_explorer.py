@@ -538,3 +538,33 @@ class TestRetiredRecordTypes(unittest.TestCase):
 		codes = [c["code"] for c in qe._coverage({}, ["QCE"], {})]
 		self.assertNotIn("QCE", codes)
 		self.assertIn("QCB", codes)
+
+
+class TestBatchPicker(unittest.TestCase):
+	"""The Batch picker offers finished goods' batches only."""
+
+	def _search(self, txt="crisps", may=True, groups=("Finished Goods", "Snacks")):
+		with (
+			patch("frappe.db.exists", return_value=True),
+			patch("frappe.has_permission", return_value=may) as has_permission,
+			patch.object(qe, "finished_good_groups", return_value=list(groups)),
+			patch.object(qe.be, "find_batches", return_value=[("FGB-0101", "FG-0001")]) as find,
+		):
+			out = qe.search_finished_good_batches("Batch", txt, "name", "20", "10", {})
+		return out, find, has_permission
+
+	def test_the_batch_explorers_search_of_finished_goods(self):
+		out, find, _has_permission = self._search()
+		self.assertEqual(out, [("FGB-0101", "FG-0001")])
+		find.assert_called_once_with("crisps", 20, 10, item_groups=["Finished Goods", "Snacks"])
+
+	def test_no_finished_goods_group_no_options(self):
+		out, find, _has_permission = self._search(groups=())
+		self.assertEqual(out, [])
+		find.assert_not_called()
+
+	def test_no_batch_read_no_options(self):
+		out, find, has_permission = self._search(may=False)
+		self.assertEqual(out, [])
+		has_permission.assert_called_once_with("Batch", "read")
+		find.assert_not_called()

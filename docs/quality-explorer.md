@@ -7,6 +7,8 @@ It is linked from the Factory workspace (Hubs card) and from the Quality Hub's R
 - `/app/quality-explorer/Batch/<batch>`
 - `/app/quality-explorer/Work Order/<work-order>`
 
+The **Batch** picker offers the batches of finished goods only (2026-11): items of the Finished Goods item group or a group under it, as a tasting's Batch No (`finished_good_groups` in `qc_tasting_record.py`). It searches as the Batch Explorer's does, every word typed in the batch ID, the item code or the item name (`search_finished_good_batches`, sharing `batch_explorer.find_batches`), so a raw material's, a packaging material's or a semi-finished item's batch is not offered, nor found by its item code or name. Disabled and expired batches are offered, as on the Batch Explorer. Only the picker is narrowed: an ingredient batch is still explored from its trace leaf, or a link.
+
 ## What the auditor sees
 
 ```
@@ -63,6 +65,6 @@ The URL always names the subject on screen (`/app/quality-explorer/Batch/<batch>
 
 ## Files
 
-- `isnack/isnack/page/quality_explorer/quality_explorer.py`: `get_quality_records(batch_no=None, work_order=None)`
+- `isnack/isnack/page/quality_explorer/quality_explorer.py`: `get_quality_records(batch_no=None, work_order=None)`; `search_finished_good_batches`, the Batch picker's query
 - `isnack/isnack/page/quality_explorer/quality_explorer.js` / `.css`: the page
 - `isnack/isnack/page/quality_explorer/test_quality_explorer.py`: unit tests (pure mocks)
