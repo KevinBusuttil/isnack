@@ -47,6 +47,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
+from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import finished_good_groups
 from isnack.isnack.page.batch_explorer import batch_explorer as be
 from isnack.isnack.page.quality_hub.quality_hub import QC_DOCTYPES, RETIRED_QC_CODES
 from isnack.utils import batch_lineage
@@ -167,13 +168,37 @@ def get_quality_records(batch_no: str | None = None, work_order: str | None = No
 			"submitted": sum(1 for n in nodes if n["docstatus"] == 1),
 			"drafts": sum(1 for n in nodes if n["docstatus"] == 0),
 			"failed": sum(1 for n in nodes if n["result_level"] == "fail"),
-			"work_orders": sum(1 for w in work_orders if scope["work_order_roles"].get(w) != WO_SUBJECT),
+			# every Work Order the records were looked up for: a Work Order explored
+			# counts itself (the header, not listed under Work Orders below)
+			"work_orders": len(work_orders),
 			"ingredients": len(trace["batches"]),
 			"hidden": hidden,
 			"withheld": sum(len(rows) for rows in withheld.values()),
 			"trace_hint": trace["hint"],
 		},
 	}
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def search_finished_good_batches(doctype, txt, searchfield, start, page_len, filters):
+	"""Link-field query for the page's Batch picker: the Batch Explorer's
+	search (every word typed in the batch ID, the item code or the item name,
+	``be.find_batches``), of finished goods only: the batches of items of the
+	Finished Goods item group or a group under it, as a tasting's Batch No
+	(``finished_good_groups``). A raw material's or a semi-finished item's
+	batch is not offered, nor found by its item. Disabled and expired batches
+	are, as on the Batch Explorer.
+
+	Only the picker: an ingredient batch is still explored from its trace leaf
+	or a link. Gated on Batch read like ``get_quality_records``.
+	"""
+	if not frappe.has_permission("Batch", "read"):
+		return []
+	groups = finished_good_groups()
+	if not groups:
+		return []
+	return be.find_batches(txt, start, page_len, item_groups=groups)
 
 
 # ---------------------------------------------------------------------------

@@ -870,6 +870,39 @@ class TestSearchBatches(unittest.TestCase):
 		_out, query, _params = self._search("crisps", filters={"item": "FG10005"})
 		self.assertIn("where `tabBatch`.item = %(item)s and (`tabBatch`.name like %(term0)s", query)
 
+	def test_the_batch_explorer_lists_the_batches_of_every_item_group(self):
+		_out, query, params = self._search("crisps", filters={"item": "FG10005"})
+		self.assertNotIn("item_group", query)
+		self.assertNotIn("item_groups", params)
+
+	def _find(self, txt="", item_groups=None, item=""):
+		with (
+			patch("frappe.desk.reportview.get_match_cond", return_value=MATCH_COND),
+			patch("frappe.db.sql", return_value=[]) as sql,
+		):
+			out = be.find_batches(txt, 0, 10, item=item, item_groups=item_groups)
+		if not sql.called:
+			return out, None, None
+		query, params = sql.call_args.args
+		return out, " ".join(query.split()), params
+
+	def test_item_groups_list_their_items_batches_only(self):
+		# the Quality Explorer's finished goods; a subquery, not a join, like the item name
+		_out, query, params = self._find("crisps", item_groups=["Finished Goods", "Snacks"])
+		self.assertEqual(params["item_groups"], ("Finished Goods", "Snacks"))
+		self.assertIn(
+			"where `tabBatch`.item in (select `tabItem`.name from `tabItem`"
+			" where `tabItem`.item_group in %(item_groups)s) and (`tabBatch`.name like %(term0)s",
+			query,
+		)
+		self.assertNotIn(" join ", query)
+		# after the item, the cheapest
+		_out, query, _params = self._find("", item_groups=["Finished Goods"], item="FG10005")
+		self.assertIn("where `tabBatch`.item = %(item)s and `tabBatch`.item in (select", query)
+
+	def test_no_item_groups_no_batches(self):
+		self.assertEqual(self._find("crisps", item_groups=[]), ([], None, None))
+
 	def test_words_past_the_limit_are_ignored(self):
 		_out, _query, params = self._search("a b c d e f g")
 		terms = sorted(k for k in params if k.startswith("term"))
@@ -924,21 +957,29 @@ class TestSearchBatchesQueryExecutes(unittest.TestCase):
 		("AV-423", "FG20001", "Paprika Puffs 30g", "2026-09-20", 0, "2026-09-20 08:00"),
 	]
 
-	def _run(self, txt="", filters=None, start=0, page_len=10):
+	def _run(self, txt="", filters=None, start=0, page_len=10, item_groups=None):
 		con = sqlite3.connect(":memory:")
-		con.execute('create table "tabItem" (name text, item_name text)')
+		con.execute('create table "tabItem" (name text, item_name text, item_group text)')
 		con.execute(
 			'create table "tabBatch" (name text, item text, item_name text,'
 			" manufacturing_date text, disabled int, creation text)"
 		)
 		# RM1 has no Item row: the name stored on the batch is shown instead
 		con.executemany(
-			'insert into "tabItem" values (?, ?)',
-			[("FG10005", "Salted Crisps 50g"), ("FG20001", "Paprika Puffs 30g")],
+			'insert into "tabItem" values (?, ?, ?)',
+			[("FG10005", "Salted Crisps 50g", "Finished Goods"), ("FG20001", "Paprika Puffs 30g", "Snacks")],
 		)
 		con.executemany('insert into "tabBatch" values (?, ?, ?, ?, ?, ?)', self.BATCHES)
 
 		def _sql(query, params, as_dict=False):
+			params = dict(params)
+			# pymysql writes a tuple as a parenthesised list of its values
+			for key, value in list(params.items()):
+				if isinstance(value, tuple):
+					names = [f"{key}_{i}" for i in range(len(value))]
+					query = query.replace(f"%({key})s", "(" + ", ".join(f"%({n})s" for n in names) + ")")
+					params.update(zip(names, value))
+					del params[key]
 			sql = re.sub(r"%\((\w+)\)s", r":\1", query.replace("`", '"'))
 			cur = con.execute(sql, params)
 			cols = [c[0] for c in cur.description]
@@ -951,7 +992,22 @@ class TestSearchBatchesQueryExecutes(unittest.TestCase):
 			patch.object(be, "formatdate", side_effect=str),
 			patch("frappe.db.sql", side_effect=_sql),
 		):
+			if item_groups is not None:
+				return be.find_batches(txt, start, page_len, item_groups=item_groups)
 			return be.search_batches("Batch", txt, "name", start, page_len, filters)
+
+	def test_item_groups_list_their_items_batches_only(self):
+		# the Quality Explorer's finished goods: the raw material's batch is not
+		# listed, nor found by its item name
+		finished = ["Finished Goods"]
+		self.assertEqual(
+			[r[0] for r in self._run(item_groups=finished)], ["C125212363-R", "C125212364", "C125212363"]
+		)
+		self.assertEqual([r[0] for r in self._run("salted", item_groups=finished)], ["C125212363-R", "C125212364", "C125212363"])
+		self.assertEqual(self._run("corn", item_groups=finished), [])
+		self.assertEqual(self._run("299/26", item_groups=finished), [])
+		# AV-423, of a Snacks item, is outside the user's permissions
+		self.assertEqual(self._run(item_groups=["Snacks"]), [])
 
 	def test_newest_first_within_the_user_permissions(self):
 		self.assertEqual(

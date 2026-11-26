@@ -84,12 +84,20 @@ def require_finished_good_batch(doc):
         )
 
 
-def finished_goods() -> list[str]:
-    """The items of the Finished Goods item group, or of a group under it."""
+def finished_good_groups() -> list[str]:
+    """The Finished Goods item group and the groups under it (the Quality
+    Explorer's Batch picker offers their items' batches too)."""
     group = frappe.db.get_value("Item Group", FINISHED_GOODS, ["lft", "rgt"], as_dict=True)
     if not group:
         return []
-    groups = frappe.get_all("Item Group", filters={"lft": [">=", group.lft], "rgt": ["<=", group.rgt]}, pluck="name")
+    return frappe.get_all("Item Group", filters={"lft": [">=", group.lft], "rgt": ["<=", group.rgt]}, pluck="name")
+
+
+def finished_goods() -> list[str]:
+    """The items of the Finished Goods item group, or of a group under it."""
+    groups = finished_good_groups()
+    if not groups:
+        return []
     return frappe.get_all("Item", filters={"item_group": ["in", groups]}, pluck="name")
 
 

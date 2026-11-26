@@ -204,34 +204,57 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 	batches only. Disabled and expired batches are listed too: tracing an old
 	batch is what the page is for.
 
-	Gated on Batch read like ``get_batch_usage``; ``get_match_cond`` applies the
-	caller's User Permissions. The table is not aliased because
-	``get_match_cond`` qualifies its columns with the full table name.
-
-	Every condition is on ``tabBatch`` and there is no join: the item name is
-	matched and read through subqueries. A joined ``tabItem`` column in the
-	WHERE clause keeps MariaDB from filtering batches before its sort, which
-	made a search with few hits sort and join every batch (seconds on a site
-	with a few hundred thousand batches).
+	Gated on Batch read like ``get_batch_usage``; the search itself is
+	``find_batches``, which the Quality Explorer's picker shares.
 	"""
-	from frappe.desk.reportview import get_match_cond
-
 	# Frappe answers a PermissionError from a link query with a "Method not
 	# found" page, so a caller who may not read batches just gets no options.
 	if not frappe.has_permission("Batch", "read"):
 		return []
 
+	if isinstance(filters, str):
+		filters = frappe.parse_json(filters)
+	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
+	return find_batches(txt, start, page_len, item=item)
+
+
+def find_batches(txt, start, page_len, item: str = "", item_groups: list[str] | None = None) -> list[tuple]:
+	"""The options of a Batch picker search (``search_batches``): every word of
+	``txt`` in the batch ID, the item code or the item name; an exact batch ID
+	first, then batch IDs starting with ``txt``, then the newest batches.
+	``item`` lists that item's batches only, and ``item_groups`` (when given)
+	those of items in these groups only: none for an empty list. The caller
+	checks Batch read.
+
+	``get_match_cond`` applies the caller's User Permissions. The table is not
+	aliased because ``get_match_cond`` qualifies its columns with the full
+	table name.
+
+	Every condition is on ``tabBatch`` and there is no join: the item name and
+	group are matched and read through subqueries. A joined ``tabItem`` column
+	in the WHERE clause keeps MariaDB from filtering batches before its sort,
+	which made a search with few hits sort and join every batch (seconds on a
+	site with a few hundred thousand batches).
+	"""
+	from frappe.desk.reportview import get_match_cond
+
+	if item_groups is not None and not item_groups:
+		return []  # (``in ()`` is no SQL)
+
 	txt = (txt or "").strip()
 	params = {"txt": txt, "prefix": f"{txt}%", "start": cint(start), "page_len": cint(page_len)}
 	conditions = []
 
-	if isinstance(filters, str):
-		filters = frappe.parse_json(filters)
-	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
-	# first: MariaDB checks the conditions in the order written, and this one is cheap
+	# first: MariaDB checks the conditions in the order written, and these are cheap
 	if item:
 		conditions.append("`tabBatch`.item = %(item)s")
 		params["item"] = item
+	if item_groups is not None:
+		conditions.append(
+			"`tabBatch`.item in (select `tabItem`.name from `tabItem`"
+			" where `tabItem`.item_group in %(item_groups)s)"
+		)
+		params["item_groups"] = tuple(item_groups)
 
 	for i, term in enumerate(txt.split()[:MAX_SEARCH_TERMS]):
 		params[f"term{i}"] = f"%{term}%"

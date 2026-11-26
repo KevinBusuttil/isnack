@@ -494,7 +494,8 @@ class TestGetQualityRecords(unittest.TestCase):
 		node = out["groups"][0]["nodes"][0]
 		self.assertEqual((node["name"], node["qty"], node["route"]), ("FG-1", 40.0, ["quality-explorer", "Batch", "FG-1"]))
 		self.assertEqual((node["qc_count"], node["qc_withheld"]), (0, 0))
-		self.assertEqual(out["summary"]["work_orders"], 0)
+		# the Work Order explored is counted, though the header, not the list, shows it
+		self.assertEqual(out["summary"]["work_orders"], 1)
 		self.assertTrue(all(c["state"] == "missing" for c in out["coverage"]))
 		# no Oven record is expected any more: the extruder records hold the oven readings
 		self.assertNotIn("QCE", [c["code"] for c in out["coverage"]])
@@ -538,3 +539,65 @@ class TestRetiredRecordTypes(unittest.TestCase):
 		codes = [c["code"] for c in qe._coverage({}, ["QCE"], {})]
 		self.assertNotIn("QCE", codes)
 		self.assertIn("QCB", codes)
+
+
+class TestBatchPicker(unittest.TestCase):
+	"""The Batch picker offers finished goods' batches only."""
+
+	def _search(self, txt="crisps", may=True, groups=("Finished Goods", "Snacks")):
+		with (
+			patch("frappe.db.exists", return_value=True),
+			patch("frappe.has_permission", return_value=may) as has_permission,
+			patch.object(qe, "finished_good_groups", return_value=list(groups)),
+			patch.object(qe.be, "find_batches", return_value=[("FGB-0101", "FG-0001")]) as find,
+		):
+			out = qe.search_finished_good_batches("Batch", txt, "name", "20", "10", {})
+		return out, find, has_permission
+
+	def test_the_batch_explorers_search_of_finished_goods(self):
+		out, find, _has_permission = self._search()
+		self.assertEqual(out, [("FGB-0101", "FG-0001")])
+		find.assert_called_once_with("crisps", 20, 10, item_groups=["Finished Goods", "Snacks"])
+
+	def test_no_finished_goods_group_no_options(self):
+		out, find, _has_permission = self._search(groups=())
+		self.assertEqual(out, [])
+		find.assert_not_called()
+
+	def test_no_batch_read_no_options(self):
+		out, find, has_permission = self._search(may=False)
+		self.assertEqual(out, [])
+		has_permission.assert_called_once_with("Batch", "read")
+		find.assert_not_called()
+
+
+class TestWorkOrderCount(unittest.TestCase):
+	"""The Work Orders card counts every Work Order the records were looked up for."""
+
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._build_nodes", side_effect=lambda dt, names: [{"name": n} for n in names])
+	@patch("isnack.isnack.page.batch_explorer.batch_explorer._user_names", return_value={})
+	@patch.object(qe, "_read_records", return_value=({}, [], {}))
+	@patch.object(qe, "_ingredient_trace")
+	@patch.object(qe, "_work_order_scope")
+	def test_a_work_order_and_its_semi_finished_run(self, scope, trace, _read, _names, _build):
+		scope.return_value = (
+			{"kind": "Work Order", "name": "WO-1", "item": "FG1"},
+			{
+				"batches": {},
+				"work_orders": {"WO-1": qe.REL_THIS_WORK_ORDER},
+				"work_order_roles": {"WO-1": qe.WO_SUBJECT},
+				"outputs": [],
+			},
+		)
+		trace.return_value = {
+			"batches": {},
+			"runs": {"WO-S": {"item_code": "SFG1", "for_work_order": "WO-1"}},
+			"hint": None,
+		}
+
+		out = qe.get_quality_records(work_order="WO-1")
+
+		self.assertEqual(out["summary"]["work_orders"], 2)
+		# the list below names the run only: the header is the Work Order explored
+		groups = {g["key"]: g for g in out["groups"]}
+		self.assertEqual([n["name"] for n in groups["work_orders"]["nodes"]], ["WO-S"])

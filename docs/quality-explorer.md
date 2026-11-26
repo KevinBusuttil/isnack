@@ -7,6 +7,8 @@ It is linked from the Factory workspace (Hubs card) and from the Quality Hub's R
 - `/app/quality-explorer/Batch/<batch>`
 - `/app/quality-explorer/Work Order/<work-order>`
 
+The **Batch** picker offers the batches of finished goods only (2026-11): items of the Finished Goods item group or a group under it, as a tasting's Batch No (`finished_good_groups` in `qc_tasting_record.py`). It searches as the Batch Explorer's does, every word typed in the batch ID, the item code or the item name (`search_finished_good_batches`, sharing `batch_explorer.find_batches`), so a raw material's, a packaging material's or a semi-finished item's batch is not offered, nor found by its item code or name. Disabled and expired batches are offered, as on the Batch Explorer. Only the picker is narrowed: an ingredient batch is still explored from its trace leaf, or a link.
+
 ## What the auditor sees
 
 ```
@@ -32,6 +34,8 @@ Batch · AAO-007
 ```
 
 Each record shows its result (Overall Status; "All tests passed" for a metal detector log, "Variance acceptable" for a packaging check made before 2026-11; one made since has no result, as it no longer records the material reconciliation), Draft or Submitted, the operator and the QC inspector. Clicking a record opens it; clicking a Work Order or an ingredient batch explores that one in turn.
+
+The **Work Orders** card counts the Work Orders whose records the dossier was looked up for. For a batch, those are the ones listed under **Work Orders**. For a Work Order, it counts that Work Order too (since 2026-11; it read 0 before, unless a semi-finished run was traced): the Work Order is the page's header, so only the semi-finished runs traced from it are listed under **Work Orders**.
 
 ## Which records belong
 
@@ -63,6 +67,6 @@ The URL always names the subject on screen (`/app/quality-explorer/Batch/<batch>
 
 ## Files
 
-- `isnack/isnack/page/quality_explorer/quality_explorer.py`: `get_quality_records(batch_no=None, work_order=None)`
+- `isnack/isnack/page/quality_explorer/quality_explorer.py`: `get_quality_records(batch_no=None, work_order=None)`; `search_finished_good_batches`, the Batch picker's query
 - `isnack/isnack/page/quality_explorer/quality_explorer.js` / `.css`: the page
 - `isnack/isnack/page/quality_explorer/test_quality_explorer.py`: unit tests (pure mocks)
