@@ -16,6 +16,10 @@ RETIRED_FIELDS = ("film_type", "film_batch", "qty_issued", "qty_used", "qty_retu
 # since records neither, only the Qty Wasted.
 EARLIER_FIELDS = RETIRED_FIELDS + ("variance", "variance_acceptable")
 
+# What a check made since judges the packaging on (2026-11): its Overall Status
+# is Pass only when all four are ticked, otherwise Fail.
+CHECKS = ("print_quality_ok", "seal_integrity_ok", "label_correct", "artwork_matches")
+
 
 class QCPackagingCheck(Document):
     def validate(self):
@@ -29,10 +33,14 @@ class QCPackagingCheck(Document):
                 # a form loaded before the change (desk, Duplicate, Quality Hub)
                 # still offers them; the check would keep them out of sight
                 frappe.throw(_("This page is out of date. Reload it and enter the check again."))
-            # no material reconciliation, so no variance to judge
+            # no material reconciliation, so no variance to judge: the four
+            # checks give the result
             self.variance = 0
             self.variance_acceptable = 0
+            self.overall_status = checks_result(self)
             return
+        # a check made before is judged on its variance, as it was
+        self.overall_status = None
         issued = self.qty_issued or 0
         used = self.qty_used or 0
         wasted = self.qty_wasted or 0
@@ -53,6 +61,13 @@ class QCPackagingCheck(Document):
         if not self.in_earlier_layout():
             for fieldname in EARLIER_FIELDS:
                 self.set(fieldname, None)
+
+
+def checks_result(check) -> str:
+    """A check made since's Overall Status (a doc, a row or a dict): Pass when
+    Print Quality OK, Seal Integrity OK, Packet Label Correct and Artwork
+    Matches are all ticked, otherwise Fail."""
+    return "Pass" if all(cint(check.get(fieldname)) for fieldname in CHECKS) else "Fail"
 
 
 def belongs_to_earlier_layout(check) -> bool:

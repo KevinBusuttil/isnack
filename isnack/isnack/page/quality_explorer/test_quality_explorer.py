@@ -17,7 +17,7 @@ LINK_FIELDS = {
 	"QC Frying Line Record": {"work_order", "product_item", "overall_status"},
 	"QC Oven Record": {"work_order", "product_item", "overall_status"},
 	"QC Tasting Record": {"work_order", "batch_no", "item_code", "overall_status"},
-	"QC Packaging Check": {"work_order", "variance_acceptable", "earlier_layout"},
+	"QC Packaging Check": {"work_order", "overall_status", "variance_acceptable", "earlier_layout"},
 	"QC Metal Detector Log": {"work_order", "all_tests_passed"},
 	"QC Weight Check": {"work_order", "batch_no", "item_code", "overall_status"},
 }
@@ -75,9 +75,16 @@ class TestResult(unittest.TestCase):
 		self.assertEqual(qe._result(_rec("G", variance_acceptable=1, earlier_layout=1))[1], "pass")
 		self.assertEqual(qe._result(_rec("G", variance_acceptable=0, earlier_layout=1))[1], "fail")
 
-	def test_a_packaging_check_made_since_has_no_result(self):
-		# Qty Issued, Used and Returned came off the check: no variance to judge
-		self.assertEqual(qe._result(_rec("G", variance_acceptable=0, earlier_layout=0)), (None, None))
+	def test_a_packaging_check_made_since_has_its_overall_status(self):
+		# Qty Issued, Used and Returned came off the check: no variance to judge,
+		# its four checks are (Pass only when all are ticked)
+		for status, level in (("Pass", "pass"), ("Fail", "fail")):
+			row = _rec("G", overall_status=status, variance_acceptable=0, earlier_layout=0)
+			self.assertEqual(qe._result(row), (status, level))
+		# saved before its Overall Status came: no result
+		self.assertEqual(qe._result(_rec("G", overall_status=None, variance_acceptable=0, earlier_layout=0)), (None, None))
+		# one made before has none: its variance result stands
+		self.assertEqual(qe._result(_rec("G", overall_status=None, variance_acceptable=1, earlier_layout=1)), ("Variance acceptable", "pass"))
 		# before migrate adds the mark, every check is one made before
 		self.assertEqual(qe._result(_rec("G", variance_acceptable=1))[1], "pass")
 

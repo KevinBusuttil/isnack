@@ -11,11 +11,14 @@ from unittest.mock import patch
 
 import frappe
 from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import (
+	CHECKS,
 	EARLIER_FIELDS,
 	QCPackagingCheck,
 	belongs_to_earlier_layout,
+	checks_result,
 )
 from isnack.patches.v1_0 import qc_packaging_check_earlier_layout as patch_module
+from isnack.patches.v1_0 import qc_packaging_check_overall_status as status_patch
 
 
 class _Check(frappe._dict):
@@ -95,6 +98,51 @@ class TestVariance(unittest.TestCase):
 		doc.validate()
 		self.assertEqual((doc.variance, doc.variance_acceptable), (1, 0))
 		self.assertNotIn("earlier_layout", doc)
+
+
+ALL_TICKED = dict.fromkeys(CHECKS, 1)
+
+
+class TestOverallStatus(unittest.TestCase):
+	"""A check made since passes only when its four checks are all ticked (2026-11)."""
+
+	def test_all_four_ticked_is_a_pass(self):
+		doc = _check(qty_wasted=3, **ALL_TICKED)
+		doc.validate()
+		self.assertEqual(doc.overall_status, "Pass")
+
+	def test_any_unticked_is_a_fail(self):
+		for unticked in CHECKS:
+			doc = _check(qty_wasted=3, **{**ALL_TICKED, unticked: 0})
+			doc.validate()
+			self.assertEqual(doc.overall_status, "Fail", unticked)
+		doc = _check(qty_wasted=3)
+		doc.validate()
+		self.assertEqual(doc.overall_status, "Fail")
+
+	def test_worked_out_not_entered(self):
+		# an import, the API or a form loaded before cannot set it
+		doc = _check(qty_wasted=3, overall_status="Pass", **{**ALL_TICKED, "seal_integrity_ok": 0})
+		doc.validate()
+		self.assertEqual(doc.overall_status, "Fail")
+		# ticked again, on a draft saved before
+		doc = _check(saved=_check(), qty_wasted=3, overall_status="Fail", **ALL_TICKED)
+		doc.validate()
+		self.assertEqual(doc.overall_status, "Pass")
+
+	def test_a_check_made_before_keeps_its_variance_result(self):
+		doc = _check(earlier_layout=1, overall_status="Pass", qty_issued=100, qty_used=90, qty_wasted=5, qty_returned=4, **ALL_TICKED)
+		doc.validate()
+		self.assertEqual((doc.overall_status, doc.variance_acceptable), (None, 0))
+
+	def test_a_row_or_a_dict(self):
+		self.assertEqual(checks_result(frappe._dict(ALL_TICKED)), "Pass")
+		self.assertEqual(checks_result({**ALL_TICKED, "label_correct": None}), "Fail")
+
+	def test_printed_on_a_check_made_since(self):
+		doc = _check(qty_wasted=3, overall_status="Pass", **ALL_TICKED)
+		doc.before_print()
+		self.assertEqual(doc.overall_status, "Pass")
 
 
 class TestTheMarkStays(unittest.TestCase):
@@ -206,5 +254,43 @@ class TestPatch(unittest.TestCase):
 	def test_before_the_column_exists(self, has_column, get_all, sql, set_value):
 		has_column.return_value = False
 		patch_module.execute()
+		get_all.assert_not_called()
+		sql.assert_not_called()
+
+
+@patch("frappe.db.sql")
+@patch("frappe.get_all")
+@patch("frappe.db.has_column", return_value=True)
+class TestOverallStatusPatch(unittest.TestCase):
+	def test_the_checks_made_since_are_given_theirs(self, _has, get_all, sql):
+		get_all.return_value = [
+			_row("QCG-7", 1, **ALL_TICKED),  # submitted: a save cannot reach it
+			_row("QCG-8", 0, **{**ALL_TICKED, "artwork_matches": 0}),
+			_row("QCG-9", 2),
+		]
+
+		status_patch.execute()
+
+		get_all.assert_called_once_with("QC Packaging Check", filters={"earlier_layout": 0}, fields=["name", *CHECKS])
+		self.assertEqual(
+			[c.args for c in sql.call_args_list],
+			[
+				("update `tabQC Packaging Check` set overall_status = %(result)s where name in %(names)s", {"result": "Pass", "names": ("QCG-7",)}),
+				("update `tabQC Packaging Check` set overall_status = %(result)s where name in %(names)s", {"result": "Fail", "names": ("QCG-8", "QCG-9")}),
+			],
+		)
+
+	def test_none_to_give(self, _has, get_all, sql):
+		get_all.return_value = [_row("QCG-7", 1, **ALL_TICKED)]
+		status_patch.execute()
+		self.assertEqual(sql.call_count, 1)
+		get_all.return_value = []
+		sql.reset_mock()
+		status_patch.execute()
+		sql.assert_not_called()
+
+	def test_before_the_columns_exist(self, has_column, get_all, sql):
+		has_column.return_value = False
+		status_patch.execute()
 		get_all.assert_not_called()
 		sql.assert_not_called()

@@ -66,7 +66,9 @@ Each physical worksheet (Receiving, Puffs Extruder, Rice Extruder, Frying Line, 
 
 **Extruder readings changed (2026-11).** The Puffs Extruder (QCB) and the Rice Extruder (QCC) each take their own readings and oven readings: QCB in `puffs_readings` (QC Puffs Extruder Reading) and `puffs_oven_readings` (QC Puffs Oven Reading), QCC in `rice_readings` (QC Rice Extruder Reading) and `rice_oven_readings` (QC Rice Oven Reading); both oven tables are shown as **Oven / Slurry Readings**. Their earlier tables, `readings` and `oven_readings`, still point to the shared QC Extruder Reading and QC Oven Reading, so the rows recorded in them stay, in an **Earlier Readings** section shown only on a record that has such rows. Those rows can be corrected or removed on a draft or an amendment, but no rows are added: the form hides Add Row (`cannot_add_rows`, set by each record's form script), and the controller drops a blank row added another way (Tab out of the last cell, the grid's shortcuts, a paste) and refuses one with a value (`isnack/utils/earlier_readings.py`). Duplicate does not copy them (`no_copy`); Amend does.
 
-**Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer shows it with no result.
+**Packaging check changed (2026-11).** The QC Packaging Check (QCG) no longer records Film Type, Film Batch or the material reconciliation (Qty Issued, Used and Returned, and the Variance worked out from them); Qty Wasted is mandatory, and Label Correct reads **Packet Label Correct (Best Before / Batch Ref)**. The checks made before keep those fields and their variance result, in an **Earlier Layout** section: the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding film or reconciliation; a draft holding none is finished the new way. A check made since has no variance, so the Quality Explorer showed it with no result until it had an Overall Status (below).
+
+**Packaging check: an Overall Status (2026-11).** A QC Packaging Check made since the change above has a read-only **Overall Status**: **Pass** when Print Quality OK, Seal Integrity OK, Packet Label Correct (Best Before / Batch Ref) and Artwork Matches are all ticked, otherwise **Fail** (`checks_result` in `qc_packaging_check.py`, worked out on every save; never entered). The desk form and the Quality Hub's Packaging and Weight form show it as the checks are ticked; the Quality Hub's Result column and the Quality Explorer show it (the Explorer read "No result" for these checks before). A check made before (`earlier_layout`) has none: it keeps its variance result. The patch `isnack.patches.v1_0.qc_packaging_check_overall_status` gives the checks made since theirs, submitted and cancelled ones too (a plain update, `modified` left alone).
 
 **Weight check changed (2026-11).** The QC Weight Check (QCI) judges each sample: a sample has a mandatory **Status** (Pass / Fail) and its own **Remarks**, next to the Gross Weight. The TU1 and TU2 limits, the samples' Tare Weight and the Outcome section (Overall Status, Remarks) came off the check. The checks made before keep them, with the TU failures, each sample's net weight and in-range mark and the Overall Status they were given, in an **Earlier Layout** section; their Samples grid keeps the columns it was made with (Gross, Tare, Net Weight, In Range; no Status or Remarks), set by the form script: the patch `isnack.patches.v1_0.qc_weight_check_earlier_layout` marks them (`earlier_layout`, hidden), every submitted or cancelled one and each draft holding a limit, an Overall Status, Remarks or a tare; a draft holding none is finished the new way. On a check made since, the Overall Status is worked out from the samples (Fail when any sample failed) for the Quality Hub lists and the Quality Explorer; the form does not show it. The mark is kept the way the packaging check's is (`isnack/utils/earlier_layout.py`, shared by both).
 
@@ -352,6 +354,7 @@ The averages and the out-of-range count of the earlier layout are kept with its 
 | `label_correct` | Check | Packet Label Correct (Best Before / Batch Ref) | — |
 | `artwork_matches` | Check | Artwork Matches | — |
 | `qty_wasted` | Float | Qty Wasted | `reqd: 1` (a check made before keeps the 0 Frappe saved for a blank) |
+| `overall_status` | Select | Overall Status | options: (blank) / Pass / Fail · `read_only: 1`, `no_copy: 1`, `print_hide_if_no_value: 1`, `depends_on: eval:!doc.earlier_layout` (2026-11) — worked out on save on a check made since: Pass when the four checks above are all ticked, otherwise Fail; none on a check made before |
 | `earlier_layout_section` | Section Break | Earlier Layout | shown only on a check made before 2026-11 (`earlier_layout`) |
 | `film_type` | Data | Film Type | `no_copy: 1`; earlier layout |
 | `film_batch` | Data | Film Batch | `no_copy: 1`; earlier layout |
@@ -829,7 +832,11 @@ validate():
         if any RETIRED_FIELDS holds a value:
             throw "This page is out of date"   # a form, Duplicate or hub page from before
         variance, variance_acceptable = 0, 0
+        overall_status = checks_result()   # 2026-11: Pass when print_quality_ok,
+                                           # seal_integrity_ok, label_correct and
+                                           # artwork_matches are all ticked, else Fail
         return
+    overall_status = None               # a check made before: its variance result stands
     issued   = qty_issued   or 0
     used     = qty_used     or 0
     wasted   = qty_wasted   or 0
@@ -842,7 +849,7 @@ before_print():
         blank EARLIER_FIELDS            # film, reconciliation, variance (in memory)
 ```
 
-The checks made before 2026-11 that keep the earlier layout (`earlier_layout`, set by the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout`: every submitted or cancelled check, and each draft holding film or reconciliation, `belongs_to_earlier_layout`) keep their film, their reconciliation and the variance result worked out from it, in the Earlier Layout section; those can be corrected on a draft or an amendment. The patch marks a check deleted before in its Deleted Document too, so a restore brings it back as it was. A check made since records neither: its variance is 0, a value in a retired field is refused (a form loaded before the change), and the Quality Explorer gives it no result (`_result` in `quality_explorer.py`). Until the migrate adds the mark, every check is treated as one made before.
+The checks made before 2026-11 that keep the earlier layout (`earlier_layout`, set by the patch `isnack.patches.v1_0.qc_packaging_check_earlier_layout`: every submitted or cancelled check, and each draft holding film or reconciliation, `belongs_to_earlier_layout`) keep their film, their reconciliation and the variance result worked out from it, in the Earlier Layout section; those can be corrected on a draft or an amendment. The patch marks a check deleted before in its Deleted Document too, so a restore brings it back as it was. A check made since records neither: its variance is 0 and a value in a retired field is refused (a form loaded before the change). Its result is its Overall Status (2026-11), worked out from the four checks, which the Quality Hub lists and the Quality Explorer (`_result` in `quality_explorer.py`) show; the desk form's script (`qc_packaging_check.js`) sets it as the checks are ticked, and the save works it out again. Until the migrate adds the mark, every check is treated as one made before.
 
 ---
 
@@ -1211,7 +1218,7 @@ Each New dialog, the Packaging and Weight form included, sets up its **Operator*
   - Until 2026-11, picking the Work Order filled the weight check's Item Code with the Work Order's product (`get_work_order_product`, since removed) and Batch No offered that item's batches; the weight check names neither since.
   - **Save Draft** and **Save & Submit** call `create_qc_records(details, records, submit)`: each record is built as `create_qc_record` builds it (`_new_qc_record`), all are inserted before any is submitted, and a failure keeps none (the request rolls back, and so does the `create_qc_records` savepoint). The alert names both records; a Check filter that would hide a saved check is cleared (the Date, Work Order and Status filters stay, and can still hide them).
   - A dialog draws a field it has no document for as `value || null`, which loses a 0, and Frappe redraws a required field holding 0 as it reads the dialog. So a dialog's values are read once (on Save Draft, those its button already read), a required 0 is drawn again after the read (`read_dialog_values`), and the tick keeps a 0 when it changes a field's `reqd` (`set_dialog_df_property`): a Qty Wasted of 0 saves.
-- The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them) and a mandatory **Qty Wasted**; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
+- The Packaging Check dialog: the four checks (**Packet Label Correct (Best Before / Batch Ref)** among them), a mandatory **Qty Wasted** and a read-only **Overall Status** (2026-11): Pass when the four are all ticked, otherwise Fail, shown as they are ticked (a parent field with `compute` and `compute_from`, set up by `setup_computed_fields`) and not sent, as the check works it out on save; no film or reconciliation since 2026-11. A page loaded before that change still sends them: the check refuses them with "This page is out of date" (`QCPackagingCheck.validate`)
 - The Weight Check dialog: Record Details, Product (the Nominal Weight, required; Item Code and Batch No until 2026-11; Product & Limits until the TU limits came off, 2026-11) and the Samples editor (Sample No, Gross Weight, Status, Remarks); no Outcome section. Sample No, Gross Weight and Status are required columns (`reqd` on a child field: the header is marked and Save names the rows without one, `missing_child_values`), and Sample No and Gross Weight must be more than 0 (`positive`: Save names the rows, `not_positive_child_values`, numbered as the editor shows them; Sample No's input starts at 1). A save needs a sample, Save Draft as well as Save & Submit (`min_rows: 1`). A page loaded before the change still sends the TU limits, Remarks or tares: the check refuses them with "This page is out of date" (`QCWeightCheck.validate`)
 - The two dialogs above are no longer opened from the tab: the combined form is built from them
 - Filter bar: date · work_order · check · docstatus · Filter button · New Packaging and Weight Check button
@@ -1420,9 +1427,10 @@ isnack/
         │   └── __init__.py
         │
         ├── qc_packaging_check/               ── QCG
+        │   ├── qc_packaging_check.js         ── Overall Status as the checks are ticked
         │   ├── qc_packaging_check.json
         │   ├── qc_packaging_check.py
-        │   ├── test_packaging_layout.py      ── variance, print, earlier-layout patch
+        │   ├── test_packaging_layout.py      ── variance, Overall Status, print, both patches
         │   ├── test_qc_packaging_check.py
         │   └── __init__.py
         │

@@ -33,7 +33,7 @@ Batch · AAO-007
                                        RAB-220 [No receiving record] · 0 QC records
 ```
 
-Each record shows its result (Overall Status; "All tests passed" for a metal detector log, "Variance acceptable" for a packaging check made before 2026-11; one made since has no result, as it no longer records the material reconciliation), Draft or Submitted, the operator and the QC inspector. Clicking a record opens it; clicking a Work Order or an ingredient batch explores that one in turn.
+Each record shows its result (Overall Status; "All tests passed" for a metal detector log, "Variance acceptable" for a packaging check made before 2026-11; one made since shows its Overall Status, Pass when its four checks are all ticked, otherwise Fail), Draft or Submitted, the operator and the QC inspector. Clicking a record opens it; clicking a Work Order or an ingredient batch explores that one in turn.
 
 The **Work Orders** card counts the Work Orders whose records the dossier was looked up for. For a batch, those are the ones listed under **Work Orders**. For a Work Order, it counts that Work Order too (since 2026-11; it read 0 before, unless a semi-finished run was traced): the Work Order is the page's header, so only the semi-finished runs traced from it are listed under **Work Orders**.
 

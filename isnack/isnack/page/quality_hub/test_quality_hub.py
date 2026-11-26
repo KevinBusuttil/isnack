@@ -521,6 +521,111 @@ class TestPackagingCheckSchema(unittest.TestCase):
 		self.assertLess(block.index('label: __("Usage & Outcome")'), block.index('fieldname: "qty_wasted"'))
 
 
+class TestPackagingOverallStatus(unittest.TestCase):
+	"""A packaging check made since 2026-11 has an Overall Status, worked out
+	from its four checks: Pass only when all are ticked, otherwise Fail."""
+
+	def setUp(self):
+		self.doc = _doctype("QC Packaging Check")
+		self.fields = _fields(self.doc)
+		self.order = self.doc["field_order"]
+		with open(os.path.join(os.path.dirname(__file__), "quality_hub.js")) as fh:
+			self.script = fh.read()
+
+	def _method(self, signature):
+		start = self.script.index(f"    {signature} {{")
+		return self.script[start : self.script.index("\n    }\n", start) + 6]
+
+	def _helpers(self):
+		start = self.script.index("// A packaging check's Overall Status")
+		return self.script[start : self.script.index("// The Metal Detectors used on a factory line", start)]
+
+	def test_the_field(self):
+		field = self.fields["overall_status"]
+		self.assertEqual((field["fieldtype"], field["label"], field["options"]), ("Select", "Overall Status", "\nPass\nFail"))
+		# worked out, never entered or carried by Duplicate; not shown (nor printed) on a check made before
+		self.assertEqual((field.get("read_only"), field.get("no_copy"), field.get("print_hide_if_no_value")), (1, 1, 1))
+		self.assertEqual(field.get("depends_on"), "eval:!doc.earlier_layout")
+		self.assertLess(self.order.index("artwork_matches"), self.order.index("overall_status"))
+		self.assertLess(self.order.index("overall_status"), self.order.index("earlier_layout_section"))
+
+	def test_the_same_four_checks_everywhere(self):
+		from isnack.isnack.doctype.qc_packaging_check.qc_packaging_check import CHECKS
+
+		self.assertEqual(CHECKS, ("print_quality_ok", "seal_integrity_ok", "label_correct", "artwork_matches"))
+		for fieldname in CHECKS:
+			self.assertEqual(self.fields[fieldname]["fieldtype"], "Check", fieldname)
+		listed = json.dumps(list(CHECKS))
+		self.assertIn(f"isnack.quality_hub.PACKAGING_CHECKS = {listed};", self.script)
+		form = os.path.join(DOCTYPE_DIR, "qc_packaging_check", "qc_packaging_check.js")
+		with open(form) as fh:
+			self.assertIn(f"const CHECKS = {listed};", fh.read())
+
+	def test_the_dialog_shows_it(self):
+		start = self.script.index('"QC Packaging Check": {')
+		block = self.script[start : self.script.index('"QC Metal Detector Log": {', start)]
+		field = block[block.index('fieldname: "overall_status"') :]
+		field = field[: field.index("},")]
+		self.assertIn("read_only: 1", field)
+		self.assertIn("compute: isnack.quality_hub.packaging_overall_status", field)
+		self.assertIn("compute_from: isnack.quality_hub.PACKAGING_CHECKS", field)
+		self.assertLess(block.index('fieldname: "qty_wasted"'), block.index('fieldname: "overall_status"'))
+		# both forms set it up
+		for method in ("open_new_record(doctype)", "open_packaging_and_weight()"):
+			self.assertIn("this.setup_computed_fields(dialog);", self._method(method), method)
+
+	@unittest.skipUnless(shutil.which("node"), "needs node to run the dialog's code")
+	def test_shown_as_the_checks_are_ticked_and_not_sent(self):
+		# the dialog's own code, on a dialog holding the packaging check's fields
+		script = (
+			"const __ = (msg) => msg;\n"
+			"const frappe = {provide: () => {}};\n"
+			"const isnack = {quality_hub: {}};\n"
+			f"{self._helpers()}\n"
+			f"class Hub {{\n{self._method('setup_computed_fields(dialog)')}\n"
+			f"{self._method('handle_dialog_save(dialog, doctype, submit, values)')}\n"
+			"    read_dialog_values(dialog, values) { return values; }\n"
+			"    add_child_rows() { return true; }\n"
+			"    save_dialog_record(args) { this.saved = args.payload; }\n}\n"
+			"const fields = [...isnack.quality_hub.PACKAGING_CHECKS.map((fieldname) => ({fieldname, fieldtype: 'Check'})),\n"
+			"  {fieldname: 'overall_status', fieldtype: 'Data', read_only: 1, compute: isnack.quality_hub.packaging_overall_status, compute_from: isnack.quality_hub.PACKAGING_CHECKS}];\n"
+			"const values = {};\n"
+			"const controls = Object.fromEntries(fields.map((df) => [df.fieldname, {df}]));\n"
+			"let seen = 0;\n"
+			"controls.label_correct.df.onchange = () => { seen += 1; };\n"
+			"const dialog = {fields, get_field: (f) => controls[f], get_value: (f) => values[f] ?? null,\n"
+			"  set_value: (f, v) => { values[f] = v; }};\n"
+			"const tick = (fieldname, value) => { values[fieldname] = value; controls[fieldname].df.onchange(); };\n"
+			"const hub = new Hub();\n"
+			"hub.setup_computed_fields(dialog);\n"
+			"const out = {opened: values.overall_status};\n"
+			"isnack.quality_hub.PACKAGING_CHECKS.forEach((f) => tick(f, 1));\n"
+			"out.all_ticked = values.overall_status;\n"
+			"tick('label_correct', 0);\n"
+			"out.one_unticked = values.overall_status;\n"
+			"out.own_onchange_kept = seen;\n"
+			"hub.handle_dialog_save(dialog, 'QC Packaging Check', false, {...values});\n"
+			"out.sent = Object.keys(hub.saved).sort();\n"
+			"console.log(JSON.stringify(out));\n"
+		)
+		out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+		self.assertEqual(
+			out,
+			{
+				"opened": "Fail",
+				"all_ticked": "Pass",
+				"one_unticked": "Fail",
+				"own_onchange_kept": 2,
+				# the check works it out on save
+				"sent": ["artwork_matches", "label_correct", "print_quality_ok", "seal_integrity_ok"],
+			},
+		)
+
+	def test_the_packaging_and_weight_form_does_not_send_it(self):
+		method = self._method("handle_combined_save(dialog, records, submit, values)")
+		self.assertIn("if (df.fieldname in values && !df.compute) picked[df.fieldname] = values[df.fieldname];", method)
+
+
 class TestWeightCheckSchema(unittest.TestCase):
 	"""Since 2026-11 each sample has a Status and Remarks; the TU limits, the tare
 	and the Outcome section (Overall Status, Remarks) came off the check. The
