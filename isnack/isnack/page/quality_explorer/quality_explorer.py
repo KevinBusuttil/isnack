@@ -168,7 +168,9 @@ def get_quality_records(batch_no: str | None = None, work_order: str | None = No
 			"submitted": sum(1 for n in nodes if n["docstatus"] == 1),
 			"drafts": sum(1 for n in nodes if n["docstatus"] == 0),
 			"failed": sum(1 for n in nodes if n["result_level"] == "fail"),
-			"work_orders": sum(1 for w in work_orders if scope["work_order_roles"].get(w) != WO_SUBJECT),
+			# every Work Order the records were looked up for: a Work Order explored
+			# counts itself (the header, not listed under Work Orders below)
+			"work_orders": len(work_orders),
 			"ingredients": len(trace["batches"]),
 			"hidden": hidden,
 			"withheld": sum(len(rows) for rows in withheld.values()),

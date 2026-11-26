@@ -404,7 +404,14 @@ isnack.QualityExplorer = class QualityExplorer {
 					${stat(summary.submitted, __("Submitted"))}
 					${stat(summary.drafts, __("Drafts"), summary.drafts ? "qe-warn" : "", __("Not submitted yet"))}
 					${stat(summary.failed, __("Failed / Rejected"), summary.failed ? "qe-danger" : "")}
-					${stat(summary.work_orders, __("Work Orders"), "", __("Work Orders traced from here, listed under Work Orders below"))}
+					${stat(
+						summary.work_orders,
+						__("Work Orders"),
+						"",
+						is_batch
+							? __("Work Orders traced from here, listed under Work Orders below")
+							: __("This Work Order, and any semi-finished runs traced from it (listed under Work Orders below)")
+					)}
 					${stat(summary.ingredients, __("Ingredient Batches"), "", __("Raw-material batches the Work Orders consumed"))}
 				</div>
 				<div class="qe-card-foot">
