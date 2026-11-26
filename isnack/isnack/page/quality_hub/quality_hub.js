@@ -11,6 +11,13 @@ isnack.quality_hub.tasting_overall_percent = (row) => {
     return Math.round((stars.reduce((sum, value) => sum + value, 0) / full_marks) * 1000) / 10;
 };
 
+// A packaging check's Overall Status: Pass when its four checks are all ticked,
+// otherwise Fail. Shown as they are ticked; the check works it out again on
+// save (checks_result in qc_packaging_check.py).
+isnack.quality_hub.PACKAGING_CHECKS = ["print_quality_ok", "seal_integrity_ok", "label_correct", "artwork_matches"];
+isnack.quality_hub.packaging_overall_status = (values) =>
+    isnack.quality_hub.PACKAGING_CHECKS.every((fieldname) => Number(values[fieldname])) ? __("Pass") : __("Fail");
+
 // The Metal Detectors used on a factory line (their Factory Lines): those a
 // metal detector log on it offers. Every one when no line is picked yet.
 isnack.quality_hub.metal_detectors_on_line = (factory_line) =>
@@ -257,6 +264,16 @@ isnack.quality_hub.DIALOG_RECORD_CONFIG = {
             // ── Section: Usage & Outcome ─────────────────────────────────────
             { fieldname: "sb_usage", fieldtype: "Section Break", label: __("Usage & Outcome") },
             { fieldname: "qty_wasted", fieldtype: "Float", label: __("Qty Wasted"), reqd: 1 },
+            // worked out from the four checks, not entered (setup_computed_fields)
+            {
+                fieldname: "overall_status",
+                fieldtype: "Data",
+                label: __("Overall Status"),
+                read_only: 1,
+                description: __("Pass when all four checks are ticked, otherwise Fail."),
+                compute: isnack.quality_hub.packaging_overall_status,
+                compute_from: isnack.quality_hub.PACKAGING_CHECKS,
+            },
             { fieldname: "cb_usage", fieldtype: "Column Break" },
             { fieldname: "remarks", fieldtype: "Small Text", label: __("Remarks") },
         ],
@@ -710,6 +727,7 @@ isnack.quality_hub.QualityHub = class {
         this.restrict_work_order(dialog);
         this.restrict_operator(dialog);
         this.setup_dialog_specific_behaviour(dialog, doctype);
+        this.setup_computed_fields(dialog);
         this.setup_dialog_secondary_action(dialog, doctype);
         tables.forEach((table) => this.render_child_editor(dialog, table));
     }
@@ -937,6 +955,32 @@ isnack.quality_hub.QualityHub = class {
         this.restrict_factory_line(dialog, records.map((record) => record.doctype));
         this.restrict_work_order(dialog);
         this.restrict_operator(dialog);
+        this.setup_computed_fields(dialog);
+    }
+
+    /** A field with ``compute`` (the packaging check's Overall Status) is
+     *  worked out from the fields in its ``compute_from``, not entered: shown
+     *  when the dialog opens and again as they change. Not sent: the record
+     *  works it out on save. */
+    setup_computed_fields(dialog) {
+        const computed = dialog.fields.filter((df) => df.compute);
+        const update = (df) => {
+            const values = Object.fromEntries((df.compute_from || []).map((fieldname) => [fieldname, dialog.get_value(fieldname)]));
+            const value = df.compute(values);
+            if (dialog.get_value(df.fieldname) !== value) dialog.set_value(df.fieldname, value);
+        };
+        computed.forEach((df) => {
+            (df.compute_from || []).forEach((fieldname) => {
+                const field = dialog.get_field(fieldname);
+                if (!field) return;
+                const on_change = field.df.onchange;
+                field.df.onchange = (...args) => {
+                    if (on_change) on_change.apply(field, args);
+                    update(df);
+                };
+            });
+            update(df);
+        });
     }
 
     /** A dialog config's Record Details (its first section) and the rest. */
@@ -1005,7 +1049,8 @@ isnack.quality_hub.QualityHub = class {
         const pick = (fields) => {
             const picked = {};
             fields.forEach((df) => {
-                if (df.fieldname in values) picked[df.fieldname] = values[df.fieldname];
+                // a computed field is worked out on save, not sent
+                if (df.fieldname in values && !df.compute) picked[df.fieldname] = values[df.fieldname];
             });
             return picked;
         };
@@ -1220,6 +1265,8 @@ isnack.quality_hub.QualityHub = class {
         if (!values) return;
 
         const payload = { ...values };
+        // worked out on save, not sent
+        dialog.fields.filter((df) => df.compute).forEach((df) => delete payload[df.fieldname]);
         if (!this.add_child_rows(dialog, dialog.__config, payload)) return;
 
         this.save_dialog_record({ dialog, doctype, payload, submit });

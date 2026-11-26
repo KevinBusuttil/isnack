@@ -435,10 +435,11 @@ def _read_records(
 def _result(row) -> tuple[str | None, str | None]:
 	"""The record's outcome and how it reads: ``pass``, ``warn`` or ``fail``.
 
-	Metal detector logs and packaging checks have no Overall Status; their
-	computed pass flags stand in for it. A packaging check made since 2026-11
-	has none: it no longer records the material reconciliation its variance
-	was judged on.
+	Metal detector logs have no Overall Status; their computed pass flag stands
+	in for it. A packaging check made since 2026-11 has one, worked out from its
+	four checks (``checks_result``). One made before has none: its variance
+	result stands in for it. A check made since that has none (saved before its
+	Overall Status came) has no result.
 	"""
 	if row.get("overall_status"):
 		return row.overall_status, _RESULT_LEVEL.get(row.overall_status, "warn")

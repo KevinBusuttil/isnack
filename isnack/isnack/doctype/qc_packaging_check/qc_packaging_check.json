@@ -22,6 +22,7 @@
   "label_correct",
   "artwork_matches",
   "qty_wasted",
+  "overall_status",
   "earlier_layout_section",
   "film_type",
   "film_batch",
@@ -131,6 +132,17 @@
    "reqd": 1
   },
   {
+   "fieldname": "overall_status",
+   "fieldtype": "Select",
+   "label": "Overall Status",
+   "options": "\nPass\nFail",
+   "read_only": 1,
+   "no_copy": 1,
+   "depends_on": "eval:!doc.earlier_layout",
+   "print_hide_if_no_value": 1,
+   "description": "Pass when Print Quality OK, Seal Integrity OK, Packet Label Correct and Artwork Matches are all ticked, otherwise Fail. Worked out from them, not entered. A check made before 2026-11 has none: it keeps its variance result."
+  },
+  {
    "fieldname": "earlier_layout_section",
    "fieldtype": "Section Break",
    "label": "Earlier Layout",
@@ -201,7 +213,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-24 20:00:00.000000",
+ "modified": "2026-11-26 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isnack",
  "name": "QC Packaging Check",
