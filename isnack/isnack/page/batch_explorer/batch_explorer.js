@@ -36,14 +36,21 @@ isnack.BatchExplorer = class BatchExplorer {
 
 	controls() {
 		// Optional: narrows the Batch picker to one item's batches, newest first.
+		// The picker offers finished goods' batches only (search_batches), so
+		// this offers finished goods only: the Finished Goods item group, or one
+		// under it (isnack/utils/finished_goods.py)
 		this.item_field = this.page.add_field({
 			fieldname: "item",
 			label: __("Item"),
 			fieldtype: "Link",
 			options: "Item",
-			get_query: () => ({ filters: { has_batch_no: 1 } }),
+			get_query: () => ({
+				filters: { has_batch_no: 1, item_group: ["descendants of (inclusive)", "Finished Goods"] },
+			}),
 			change: () => this.on_item_change(),
 		});
+		// said under the options, in place of Frappe's "Filters applied for …"
+		this.item_field.df.filter_description = __("Finished Goods items with batches");
 
 		this.batch_field = this.page.add_field({
 			fieldname: "batch",

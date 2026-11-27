@@ -2,6 +2,8 @@
 
 The Batch Explorer (`/app/batch-explorer/<batch>`) lists every transaction a batch took part in. For a finished-goods batch it now also shows, under each Work Order that produced the batch, what went into it: the raw materials and raw-material batches consumed, and every Stock Entry the MES booked against that Work Order. This is the drill-down an auditor needs to go from a finished-goods lot back to raw-material lots and, one click further, to their Purchase Receipts and suppliers.
 
+**Picking a batch (2026-11).** The **Batch** picker offers the batches of finished goods only: items of the Finished Goods item group or a group under it (`isnack/utils/finished_goods.py`), as the Quality Explorer's picker does. It matches every word typed in the batch ID, the item code or the item name (`search_batches`, through `find_batches`), so a raw material's, a packaging material's or a semi-finished item's batch is not offered, nor found by its item code or name. Disabled and expired batches are offered. The **Item** filter, which narrows the picker to one item's batches, offers the Finished Goods items with batches. Only the pickers are narrowed: a raw-material batch is still explored from a link, such as a raw-material batch under Materials consumed, or `/app/batch-explorer/<batch>`.
+
 ## What the auditor sees
 
 ```

@@ -3,6 +3,7 @@
 
 """Unit tests for the Batch Explorer production-inputs level and Batch picker (pure mocks)."""
 
+import os
 import re
 import sqlite3
 import unittest
@@ -12,6 +13,7 @@ import frappe
 from frappe.utils import getdate
 from isnack.isnack.page.batch_explorer import batch_explorer as be
 from isnack.utils import batch_lineage as bl
+from isnack.utils.finished_goods import FINISHED_GOODS
 
 BATCH = frappe._dict(name="AAO-007", item="FG10005", stock_uom="Carton")
 
@@ -801,13 +803,21 @@ class TestDerivedVouchersUnchanged(unittest.TestCase):
 MATCH_COND = " and (`tabBatch`.`item` in ('FG10005'))"
 
 
-class TestSearchBatches(unittest.TestCase):
-	"""The Batch picker matches the batch ID, the item code or the item name."""
+# what the picker's finished goods make of the WHERE clause (isnack/utils/finished_goods.py)
+FINISHED_GOODS_COND = (
+	"`tabBatch`.item in (select `tabItem`.name from `tabItem` where `tabItem`.item_group in %(item_groups)s)"
+)
 
-	def _search(self, txt="", filters=None, rows=(), start=0, page_len=10):
+
+class TestSearchBatches(unittest.TestCase):
+	"""The Batch picker matches the batch ID, the item code or the item name,
+	among the finished goods' batches."""
+
+	def _search(self, txt="", filters=None, rows=(), start=0, page_len=10, groups=("Finished Goods", "Snacks")):
 		with (
 			patch("frappe.has_permission", return_value=True),
 			patch("frappe.db.exists", return_value=True),
+			patch.object(be, "finished_good_groups", return_value=list(groups)),
 			patch("frappe.desk.reportview.get_match_cond", return_value=MATCH_COND) as match_cond,
 			patch.object(be, "formatdate", side_effect=lambda d: d.strftime("%d-%m-%Y")),
 			patch("frappe.db.sql", return_value=list(rows)) as sql,
@@ -848,10 +858,10 @@ class TestSearchBatches(unittest.TestCase):
 			query,
 		)
 
-	def test_no_text_lists_every_batch(self):
+	def test_no_text_lists_every_finished_goods_batch(self):
 		_out, query, params = self._search("", start="20", page_len="10")
 		self.assertNotIn("%(term", query)
-		self.assertIn("where 1=1 " + MATCH_COND.strip(), query)
+		self.assertIn(f"where {FINISHED_GOODS_COND} {MATCH_COND.strip()}", query)
 		self.assertEqual((params["start"], params["page_len"]), (20, 10))
 
 	def test_item_filter_lists_that_items_batches_only(self):
@@ -868,12 +878,27 @@ class TestSearchBatches(unittest.TestCase):
 	def test_item_filter_is_checked_before_the_words(self):
 		# MariaDB checks the conditions in the order written; the item is the cheap one
 		_out, query, _params = self._search("crisps", filters={"item": "FG10005"})
-		self.assertIn("where `tabBatch`.item = %(item)s and (`tabBatch`.name like %(term0)s", query)
+		self.assertIn(
+			f"where `tabBatch`.item = %(item)s and {FINISHED_GOODS_COND} and (`tabBatch`.name like %(term0)s", query
+		)
 
-	def test_the_batch_explorer_lists_the_batches_of_every_item_group(self):
-		_out, query, params = self._search("crisps", filters={"item": "FG10005"})
-		self.assertNotIn("item_group", query)
-		self.assertNotIn("item_groups", params)
+	def test_finished_goods_batches_only(self):
+		# 2026-11: a raw material's, a packaging material's or a semi-finished
+		# item's batch is not offered, nor found by its item code or name
+		_out, query, params = self._search("crisps")
+		self.assertEqual(params["item_groups"], ("Finished Goods", "Snacks"))
+		self.assertIn(f"where {FINISHED_GOODS_COND} and (`tabBatch`.name like %(term0)s", query)
+		# an Item filter of another item (a link from before) still lists finished goods' only
+		_out, query, params = self._search("", filters={"item": "RM20001"})
+		self.assertIn(f"where `tabBatch`.item = %(item)s and {FINISHED_GOODS_COND}", query)
+
+	@patch("frappe.db.sql")
+	@patch("frappe.db.exists", return_value=True)
+	@patch("frappe.has_permission", return_value=True)
+	def test_no_finished_goods_group_no_options(self, _may, _exists, sql):
+		with patch.object(be, "finished_good_groups", return_value=[]):
+			self.assertEqual(be.search_batches("Batch", "crisps", "name", 0, 10, None), [])
+		sql.assert_not_called()
 
 	def _find(self, txt="", item_groups=None, item=""):
 		with (
@@ -935,6 +960,22 @@ class TestSearchBatches(unittest.TestCase):
 		sql.assert_not_called()
 
 
+class TestTheItemFilter(unittest.TestCase):
+	"""The page's Item filter narrows the Batch picker, which offers finished
+	goods' batches only: it offers finished goods only (2026-11), so no item
+	picked there leaves the picker empty."""
+
+	def test_finished_goods_with_batches(self):
+		with open(os.path.join(os.path.dirname(be.__file__), "batch_explorer.js")) as fh:
+			script = fh.read()
+		start = script.index('fieldname: "item",')
+		field = script[start : script.index("this.batch_field = this.page.add_field(", start)]
+		self.assertIn(
+			f'filters: {{ has_batch_no: 1, item_group: ["descendants of (inclusive)", "{FINISHED_GOODS}"] }},', field
+		)
+		self.assertIn('this.item_field.df.filter_description = __("Finished Goods items with batches");', field)
+
+
 class TestSearchBatchesQueryExecutes(unittest.TestCase):
 	"""The picker's SQL is run, not just read back as a string.
 
@@ -957,7 +998,9 @@ class TestSearchBatchesQueryExecutes(unittest.TestCase):
 		("AV-423", "FG20001", "Paprika Puffs 30g", "2026-09-20", 0, "2026-09-20 08:00"),
 	]
 
-	def _run(self, txt="", filters=None, start=0, page_len=10, item_groups=None):
+	def _run(self, txt="", filters=None, start=0, page_len=10, item_groups=None, picker=False):
+		"""The search itself, over every batch or ``item_groups``' (``find_batches``),
+		or with ``picker`` the Batch picker's, ``item_groups`` being its finished goods."""
 		con = sqlite3.connect(":memory:")
 		con.execute('create table "tabItem" (name text, item_name text, item_group text)')
 		con.execute(
@@ -991,10 +1034,27 @@ class TestSearchBatchesQueryExecutes(unittest.TestCase):
 			patch("frappe.desk.reportview.get_match_cond", return_value=self.MATCH_COND),
 			patch.object(be, "formatdate", side_effect=str),
 			patch("frappe.db.sql", side_effect=_sql),
+			patch.object(be, "finished_good_groups", return_value=list(item_groups or [])),
 		):
-			if item_groups is not None:
-				return be.find_batches(txt, start, page_len, item_groups=item_groups)
-			return be.search_batches("Batch", txt, "name", start, page_len, filters)
+			if picker:
+				return be.search_batches("Batch", txt, "name", start, page_len, filters)
+			item = (filters or {}).get("item", "")
+			return be.find_batches(txt, start, page_len, item=item, item_groups=item_groups)
+
+	def test_the_picker_offers_finished_goods_batches_only(self):
+		# 2026-11: the raw material's batch is not offered, nor found by its item or its name
+		finished = ["Finished Goods"]
+		fg_batches = ["C125212363-R", "C125212364", "C125212363"]
+		self.assertEqual([r[0] for r in self._run(item_groups=finished, picker=True)], fg_batches)
+		for txt in ("corn", "grits", "RM1", "299/26"):
+			self.assertEqual(self._run(txt, item_groups=finished, picker=True), [], txt)
+		self.assertEqual([r[0] for r in self._run("salted crisps", item_groups=finished, picker=True)], fg_batches)
+		self.assertEqual([r[0] for r in self._run("C125212363", item_groups=finished, picker=True)], ["C125212363", "C125212363-R"])
+		# with the Item filter
+		self.assertEqual([r[0] for r in self._run(filters={"item": "FG10005"}, item_groups=finished, picker=True)], fg_batches)
+		self.assertEqual(self._run(filters={"item": "RM1"}, item_groups=finished, picker=True), [])
+		# no Finished Goods group: none
+		self.assertEqual(self._run(item_groups=[], picker=True), [])
 
 	def test_item_groups_list_their_items_batches_only(self):
 		# the Quality Explorer's finished goods: the raw material's batch is not

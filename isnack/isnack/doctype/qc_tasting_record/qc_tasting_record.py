@@ -7,16 +7,14 @@ from frappe.model.document import Document
 from frappe.utils import cint, cstr, flt
 
 from isnack.isnack.doctype.quality_hub_settings.quality_hub_settings import get_work_order_details
+# a tasting is of a finished good: its Batch No is a batch of one (2026-11)
+from isnack.utils.finished_goods import finished_goods
 
 # The scores a taster gives, each a Rating; their Overall % is worked out from them.
 CRITERIA = ("appearance_score", "colour_score", "aroma_score", "taste_score", "texture_score")
 
 # The average Overall % a tasting needs to pass: 3 of 5 stars.
 PASS_THRESHOLD_PERCENT = 60.0
-
-# A tasting is of a finished good: its Batch No is a batch of an item of this
-# group, or of one under it (2026-11).
-FINISHED_GOODS = "Finished Goods"
 
 
 class QCTastingRecord(Document):
@@ -82,23 +80,6 @@ def require_finished_good_batch(doc):
             ),
             title=_("Batch No"),
         )
-
-
-def finished_good_groups() -> list[str]:
-    """The Finished Goods item group and the groups under it (the Quality
-    Explorer's Batch picker offers their items' batches too)."""
-    group = frappe.db.get_value("Item Group", FINISHED_GOODS, ["lft", "rgt"], as_dict=True)
-    if not group:
-        return []
-    return frappe.get_all("Item Group", filters={"lft": [">=", group.lft], "rgt": ["<=", group.rgt]}, pluck="name")
-
-
-def finished_goods() -> list[str]:
-    """The items of the Finished Goods item group, or of a group under it."""
-    groups = finished_good_groups()
-    if not groups:
-        return []
-    return frappe.get_all("Item", filters={"item_group": ["in", groups]}, pluck="name")
 
 
 @frappe.whitelist()

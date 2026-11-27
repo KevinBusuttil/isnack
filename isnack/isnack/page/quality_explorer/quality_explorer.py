@@ -47,10 +47,10 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
-from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import finished_good_groups
 from isnack.isnack.page.batch_explorer import batch_explorer as be
 from isnack.isnack.page.quality_hub.quality_hub import QC_DOCTYPES, RETIRED_QC_CODES
 from isnack.utils import batch_lineage
+from isnack.utils.finished_goods import finished_good_groups
 from isnack.utils.qty import qty_tick
 
 # Display metadata per QC record type, keyed by code.
