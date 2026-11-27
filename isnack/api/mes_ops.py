@@ -2410,16 +2410,109 @@ def get_sfg_components_for_wo(work_order: str):
     return {"items": items, "bom_quantity": flt(bom.quantity) or 1.0}
 
 
-def _sfg_available_qty(item_code: str, warehouse: str) -> float:
-    """Current stock of a semi-finished item in its source warehouse."""
+def _sfg_available_qty(item_code: str, warehouse: str,
+                       unreadable: Optional[float] = 0.0) -> Optional[float]:
+    """Current stock of a semi-finished item in its source warehouse.
+
+    ``unreadable`` is what comes back when there is no balance to read — no
+    warehouse, or a read that fails. The guard and the dialog have always taken
+    that as 0.0, an empty warehouse, which refuses the entry. The rounding
+    allowance asks for None instead, because it must not act on a balance
+    nobody saw (see _sfg_qty_within_stock).
+    """
     if not (item_code and warehouse):
-        return 0.0
+        return unreadable
     from erpnext.stock.utils import get_stock_balance
 
     try:
         return flt(get_stock_balance(item_code, warehouse))
     except Exception:
-        return 0.0
+        return unreadable
+
+
+def _sfg_qty_within_stock(qty: float, available: Optional[float]) -> float:
+    """What End WO consumes of a semi-finished item when ``qty`` is asked for
+    and its warehouse holds ``available``.
+
+    ``qty`` comes back untouched in every case but one: a request no more than
+    one posting tick above what the warehouse can give. That shape is not a
+    shortage, it is how the stock was made. A split Production Plan leaves the
+    last sub-assembly Work Order a repeating quantity — 266.666666667 Kg of
+    CORN MIX 1 is planned as 160 and 106.666666667 — and a Work Order's output
+    is received truncated to the posting precision, because with no
+    over-production allowance ERPNext refuses anything above the order (see
+    _clamp_good_qty_to_allowance). So 266.666 Kg is made, the finished-good
+    order that needs it reads 266.667 on the Work Order, and typing that at
+    End WO was refused over a gram that never existed: "266.667 entered,
+    266.666 available" (MFG-WO-2026-00036).
+
+    Letting the figure past the guard would not be enough: ERPNext's own
+    negative-stock check refuses the row for the same gram. The quantity itself
+    has to come down to what is there — which is also all the order can have
+    used.
+
+    Everything else comes back as asked, for _validate_sfg_availability to
+    decide in its own words: more than one tick short is a real shortage, and
+    neither a balance that could not be read (``available`` None) nor a figure
+    that is not a finite number is grounds for rounding anything. A quantity
+    the guard already lets through is not touched, and QTY_EPSILON is not
+    widened for this: it stays a float-comparison tolerance (see its comment).
+    So this is for a float precision of 3 or less, where a tick is larger than
+    QTY_EPSILON. At 4 a tick equals it and float noise decides whether the
+    guard lets a one-tick figure through; this takes the ones it does not.
+    From 5 up the guard lets every one through and this never applies.
+    """
+    qty = flt(qty)
+    if available is None or not math.isfinite(flt(available)):
+        return qty
+    available = flt(available)
+    if qty <= available + QTY_EPSILON:
+        return qty
+
+    on_hand = truncate_qty(available)
+    # A rounding tick is never more than about a tick and a half above the
+    # balance, so a gap of two ticks or more cannot be one. Settle that here,
+    # before the test below, which cannot see past flt: under Banker's
+    # rounding flt answers 0.0 for inf, NaN or a figure too large to round,
+    # and the gap would then look like no gap at all.
+    if not math.isfinite(qty) or qty - on_hand >= 2 * qty_tick():
+        return qty
+    # Both sides are put on the posting grid, so the gap is a whole number of
+    # ticks and rounding it to nearest only removes float noise: 0.3 - 0.299 is
+    # 0.0010000000000000009, which is one tick and not more than one.
+    if postable_qty(postable_qty(qty) - on_hand) > qty_tick():
+        return qty
+    return on_hand if on_hand > 0 else 0.0
+
+
+def _sfg_usage_within_stock(usage: dict, warehouse: str) -> tuple[dict, list[str]]:
+    """``usage`` with each quantity put through _sfg_qty_within_stock, and a
+    line for every item that was taken down to what the warehouse holds.
+
+    ``usage`` maps item_code to the quantity about to be consumed. An item is
+    left out of the result when all that was asked for is the tick itself: an
+    order ended with 266.666 recorded, reopened with Undo End WO and ended again
+    at 266.667 asks for 0.001 the warehouse does not have, and has nothing more
+    to consume.
+
+    The lines are for a note on the Work Order, which the caller writes once
+    nothing is left to refuse.
+    """
+    out: dict = {}
+    notes: list[str] = []
+    for item_code, qty in usage.items():
+        available = _sfg_available_qty(item_code, warehouse, unreadable=None)
+        take = _sfg_qty_within_stock(qty, available)
+        if take < qty:
+            # Twelve significant digits, not the six :g keeps: from a thousand
+            # up that prints 1266.667 and 1266.666 alike, and the difference
+            # between them is what this note is for. The balance is shown as
+            # the rule read it, on the posting grid.
+            notes.append(_("{0}: {1:.12g} to consume, {2:.12g} in {3}, {4:.12g} consumed").format(
+                item_code, qty, max(truncate_qty(available), 0.0), warehouse, take))
+        if take > 0:
+            out[item_code] = take
+    return out, notes
 
 
 def _pending_sfg_work_orders(item_code: str) -> list[dict]:
@@ -2451,7 +2544,9 @@ def _validate_sfg_availability(usage: dict, warehouse: str) -> None:
     Fails fast with an actionable message (naming the Work Orders that should
     have produced the missing stock) instead of letting ERPNext's valuation /
     negative-stock errors reach the operator. ``usage`` maps item_code to the
-    total quantity entered in the End WO dialog.
+    quantity about to be consumed: what the End WO dialog was given, less
+    anything already recorded, taken down to the balance when that is only a
+    rounding tick short (see _sfg_usage_within_stock).
     """
     problems = []
     for item_code, qty in usage.items():
@@ -2530,6 +2625,10 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
 
     Expects rows like: {"item_code": "SFG10003", "qty": 123.45}.
     We consume from the configured semi-finished warehouse into the line's WIP (or default warehouse).
+
+    A quantity the warehouse cannot cover is refused, with one exception: a
+    figure no more than one posting tick above the balance consumes the
+    balance (see _sfg_qty_within_stock).
     """
     if not rows:
         return
@@ -2554,7 +2653,11 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
             qty = 0.0
         if item_code and qty > 0:
             usage[item_code] = usage.get(item_code, 0.0) + qty
-    _validate_sfg_availability(usage, default_sfg_wh)
+    # A figure no more than one rounding tick above the balance takes what is
+    # there rather than being refused; anything short by more is still refused,
+    # in the guard's own words.
+    to_consume, rounding_notes = _sfg_usage_within_stock(usage, default_sfg_wh)
+    _validate_sfg_availability(to_consume, default_sfg_wh)
 
     se = frappe.new_doc("Stock Entry")
     se.company = wo.company
@@ -2581,20 +2684,16 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
     # inflates produced_qty.
     se.fg_completed_qty = flt(fg_completed_qty) or flt(wo.qty)
 
-    for r in rows:
-        item_code = (r.get("item_code") or "").strip()
-        if not item_code:
-            continue
-        try:
-            qty = float(r.get("qty") or 0)
-        except Exception:
-            qty = 0.0
-        if qty <= 0:
-            continue
-
+    # One row per item, from the quantities settled above. Every item asked for
+    # must be on the BOM, one the rounding left with nothing to consume included.
+    for item_code in usage:
         ok, msg = _validate_item_in_bom(wo.name, item_code)
         if not ok:
             frappe.throw(msg)
+
+        qty = to_consume.get(item_code, 0.0)
+        if qty <= 0:
+            continue
 
         uom = frappe.db.get_value("Item", item_code, "stock_uom") or "Nos"
 
@@ -2609,6 +2708,28 @@ def _post_sfg_consumption(wo, rows: list[dict], fg_completed_qty: float = 0):
                 "t_warehouse": t_wh,
             },
         )
+
+    if rounding_notes:
+        # The operator typed one figure and the ledger will show another, and
+        # whoever compares the two later should not have to work out why. When
+        # _sfg_usage_not_yet_recorded has written its "consumed now" note (an
+        # order ended again after Undo End WO, or an item LOAD already drew)
+        # this one follows and corrects it, since that note was written before
+        # stock was looked at. Written after this function's own checks; any
+        # later refusal, ERPNext's or End WO's, rolls it back with the request.
+        try:
+            wo.add_comment("Info", _(
+                "Semi-finished usage rounded to stock: {0}. A shortfall of no more "
+                "than one posting unit ({1:g}) is rounding, not missing material, so "
+                "no more than the warehouse held was consumed."
+            ).format("; ".join(rounding_notes), qty_tick()))
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            # The database has already rolled the whole transaction back;
+            # carrying on would post the consumption without what came before.
+            raise
+        except Exception:
+            # A missing audit comment must never be what stops an order ending.
+            pass
 
     if not se.items:
         return
@@ -3378,7 +3499,10 @@ def get_end_wo_summary(work_order: str):
         consumed = _get_consumed_materials_from_load(work_order)
         for row in summary["sfg_items"]:
             row["source_warehouse"] = sfg_src_wh
-            row["available_qty"] = _sfg_available_qty(row["item_code"], sfg_src_wh)
+            # Read the way End WO reads it (see _sfg_usage_within_stock); a
+            # balance that cannot be read still shows as 0, as it always has.
+            available = _sfg_available_qty(row["item_code"], sfg_src_wh, unreadable=None)
+            row["available_qty"] = flt(available)
             row["already_consumed"] = flt(consumed.get(row["item_code"], 0), 4)
             # Which components are semi-finished stays a BOM question
             # (get_sfg_components_for_wo); only the planned quantity follows the
@@ -3395,9 +3519,20 @@ def get_end_wo_summary(work_order: str):
             # recorded and End WO will not consume it again. Comparing the full
             # requirement with stock told a manager reopening WO-00086 that its
             # slurry was short, when nothing more was needed.
-            row["still_needed_qty"] = max(
-                postable_qty(row["required_qty"] - row["already_consumed"]), 0.0
+            #
+            # Nor is a requirement one rounding tick above the balance short:
+            # End WO consumes what is there (_sfg_qty_within_stock), and this is
+            # the figure the dialog compares with stock, so it has to be put
+            # through the same rule or the warning contradicts the button. The
+            # rule decides on a single tick, so the figure has to be the one
+            # End WO will net, to the tick: the operator types the Planned
+            # figure, which reaches the server on the posting grid, and End WO
+            # subtracts what is recorded from that. Subtracting first and
+            # rounding after can land a tick away when the fourth decimal is 5.
+            still_needed = max(
+                postable_qty(postable_qty(row["required_qty"]) - row["already_consumed"]), 0.0
             )
+            row["still_needed_qty"] = _sfg_qty_within_stock(still_needed, available)
             row["pending_wos"] = _pending_sfg_work_orders(row["item_code"])
     return summary
 

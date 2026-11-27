@@ -352,7 +352,7 @@ A **Material Transfer** SE moves the 2 kg from WIP back to the Staging Warehouse
 When the machine has finished processing the batch:
 
 1. Click **End WO**.
-2. If the BOM contains **semi-finished components** (e.g., a slurry produced in-house), a dialog appears asking for the actual quantities used. Enter each one and click **Submit**.
+2. If the BOM contains **semi-finished components** (e.g., a slurry produced in-house), a dialog appears asking for the actual quantities used. Enter each one and click **End WO**. If what you enter comes to 0.001 more than the stock can cover, End WO still accepts it: that last unit is rounding (see the question on *Insufficient semi-finished stock* below), and End WO consumes what is in stock.
 3. The dialog lists every BOM material with what the recipe wanted against what was consumed. A material still **Short** blocks End WO until it is consumed or a Production Manager overrides with a written reason — except for three kinds that are never the operator's to load: semi-finished components (entered in the dialog itself), packaging (deferred to Close Production), and anything listed under **Factory Settings → Metered Materials**, which follows the recipe and is consumed when the Work Order is received into stock.
 4. The Work Order is flagged as production-ended and disappears from the active queue.
 
@@ -498,6 +498,15 @@ The finished product's End WO consumes the semi-finished items (mix / slurry) fr
 
 - If **Close Semi-finished WOs at End WO** is enabled: end the semi-finished Work Orders (mix / slurry) *first* — that receives their output into stock — then end the finished product's Work Order.
 - If it is disabled (legacy behaviour): the semi-finished stock only enters the warehouse when the semi-finished Work Orders are closed via **Close Production**. Run Close Production for the mixing/slurry line *before* ending the finished product's Work Order, or ask your administrator to enable the setting.
+
+---
+
+### "End WO says 'Insufficient semi-finished stock'"
+
+What End WO still had to consume for a mix or slurry — what you entered, less anything already recorded for the order — is more than the Semi-finished warehouse holds. The message names the item, that quantity (as "entered") and what is available.
+
+- **Off by exactly 0.001?** You should no longer see this. When a plan splits a mix into uneven batches (say 160 Kg and 106.667 Kg), the second batch is received as 106.666 Kg, so 266.666 Kg is in stock while your order shows 266.667 Kg. End WO accepts 266.667, consumes the 266.666 that exists and notes it on the Work Order.
+- **Off by more than that?** The stock really is not there. Check that the mix / slurry Work Orders have been ended and, unless your site receives them at End WO, closed with Close Production (the message names any that are not), and that their output went into the Semi-finished warehouse. If several orders drew on the same mix, enter what is **Available** plus anything **Already recorded** for this order (both are shown under the field).
 
 ---
 

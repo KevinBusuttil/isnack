@@ -339,6 +339,19 @@ Click **End WO** (enabled when WO is not already ended) to mark production as ph
    - The Work Order is flagged `custom_production_ended = 1`.
 4. The WO moves out of the active queue and awaits **Close Production**.
 
+**A rounding tick is not a shortage.** What End WO still has to consume of each SFG — the
+entered total less anything already recorded for the order — has to be in the SFG warehouse,
+or End WO stops with *Insufficient semi-finished stock*. One case is let through: a figure no
+more than one posting unit (0.001 at the default float precision of 3) above the balance. A
+Production Plan that splits a sub-assembly leaves its last Work Order a repeating quantity
+(266.667 Kg of mix planned as 160 + 106.666666667), and with no over-production allowance the
+output is received truncated to the posting precision, so 266.666 Kg is made while the
+finished good's requirement reads 266.667. End WO then consumes what the warehouse holds
+(266.666) instead of refusing the figure, and says so in a comment on the Work Order. The
+dialog follows the same rule (`_sfg_qty_within_stock`), so it does not print *Available stock
+is below the planned requirement* for that tick. Anything short by more than one unit, or a
+balance that cannot be read, is refused as before.
+
 **Semi-finished Work Orders — structural mode.** When Factory Settings →
 **Close Semi-finished WOs at End WO** is enabled and the WO's production item
 is semi-finished (Item Group based, see `_is_fg`), the End WO dialog
