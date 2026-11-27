@@ -15,9 +15,7 @@ import frappe
 from isnack.isnack.doctype.qc_tasting_record import qc_tasting_record
 from isnack.isnack.doctype.qc_tasting_record.qc_tasting_record import (
 	finished_good_batches,
-	finished_good_groups,
 	finished_good_made,
-	finished_goods,
 	require_finished_good_batch,
 )
 
@@ -140,25 +138,6 @@ class TestTheFinishedGoodMade(unittest.TestCase):
 		# another item: any finished good's batch; none there, or not the user's to pick
 		self.assertEqual(self._made({"factory_line": "FRYING", "production_item": "RM-0001"})[0], "")
 		self.assertEqual(self._made({})[0], "")
-
-
-class TestTheFinishedGoods(unittest.TestCase):
-	def test_the_group_and_those_under_it(self):
-		def get_all(doctype, filters=None, pluck=None):
-			if doctype == "Item Group":
-				self.assertEqual(filters, {"lft": [">=", 8], "rgt": ["<=", 13]})
-				return ["Finished Goods", "Snacks"]
-			self.assertEqual((doctype, filters), ("Item", {"item_group": ["in", ["Finished Goods", "Snacks"]]}))
-			return ["FG-0001", "FG-0002"]
-
-		with patch("frappe.db.get_value", return_value=frappe._dict(lft=8, rgt=13)), patch("frappe.get_all", side_effect=get_all):
-			self.assertEqual(finished_goods(), ["FG-0001", "FG-0002"])
-			# the Quality Explorer's Batch picker offers these groups' batches
-			self.assertEqual(finished_good_groups(), ["Finished Goods", "Snacks"])
-		with patch("frappe.db.get_value", return_value=None), patch("frappe.get_all") as get_all_:
-			self.assertEqual(finished_goods(), [])
-			self.assertEqual(finished_good_groups(), [])
-			get_all_.assert_not_called()
 
 
 class TestTheSearch(unittest.TestCase):

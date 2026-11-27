@@ -59,6 +59,7 @@ from frappe import _
 from frappe.utils import cint, flt, formatdate, getdate, nowdate
 
 from isnack.utils import batch_lineage
+from isnack.utils.finished_goods import finished_good_groups
 from isnack.utils.qty import qty_tick
 
 # Display metadata per doctype: colour + logical ordering for the tree.
@@ -195,7 +196,13 @@ def get_work_order_inputs(work_order: str | None = None, batch_no: str | None = 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def search_batches(doctype, txt, searchfield, start, page_len, filters):
-	"""Link-field query for the page's Batch picker.
+	"""Link-field query for the page's Batch picker: the batches of finished
+	goods only (2026-11), items of the Finished Goods item group or a group
+	under it (``finished_good_groups``), as on the Quality Explorer. A raw
+	material's, a packaging material's or a semi-finished item's batch is not
+	offered, nor found by its item code or name; none at all without that
+	group. Only the picker is narrowed: such a batch is still explored from a
+	link (``/app/batch-explorer/<batch>``).
 
 	Every word typed must appear in the batch ID, the item code or the item name,
 	so "crisps 50" finds the batches of "Salted Crisps 50g". An exact batch ID
@@ -215,7 +222,7 @@ def search_batches(doctype, txt, searchfield, start, page_len, filters):
 	if isinstance(filters, str):
 		filters = frappe.parse_json(filters)
 	item = (filters.get("item") or "").strip() if isinstance(filters, dict) else ""
-	return find_batches(txt, start, page_len, item=item)
+	return find_batches(txt, start, page_len, item=item, item_groups=finished_good_groups())
 
 
 def find_batches(txt, start, page_len, item: str = "", item_groups: list[str] | None = None) -> list[tuple]:
