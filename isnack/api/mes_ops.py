@@ -2611,7 +2611,7 @@ def _sfg_usage_not_yet_recorded(wo, rows: list[dict]) -> list[dict]:
         # nearest keeps float noise from costing a tick.
         remaining = postable_qty(qty - recorded)
         if recorded > 0:
-            notes.append(_("{0}: {1:g} entered, {2:g} already recorded, {3:g} consumed now").format(
+            notes.append(_("{0}: {1:.12g} entered, {2:.12g} already recorded, {3:.12g} consumed now").format(
                 item_code, qty, recorded, max(remaining, 0.0)))
         if remaining > 0:
             out.append({"item_code": item_code, "qty": remaining})
