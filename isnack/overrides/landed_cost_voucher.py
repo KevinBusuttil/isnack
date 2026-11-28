@@ -36,6 +36,16 @@ class CustomLandedCostVoucher(LandedCostVoucher):
         for row in (self.get("purchase_receipts") or []):
             try:
                 sync_draft_assets_for_receipt(row.receipt_document_type, row.receipt_document)
+            except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+                # This runs after ERPNext has re-posted the receipts' stock
+                # ledger and GL entries for the voucher. A deadlock has rolled
+                # all of that back and the next statement starts a fresh
+                # transaction, so swallowing it would let the submit (or cancel)
+                # finish and report success with none of it in the database. A
+                # lock wait timeout goes the same way rather than count on the
+                # server's innodb_rollback_on_timeout. Any other failure only
+                # leaves a draft Asset to resync.
+                raise
             except Exception:
                 frappe.log_error(
                     title="isnack: sync_draft_assets_for_receipt failed",

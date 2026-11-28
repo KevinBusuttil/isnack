@@ -8,8 +8,9 @@ sending — none require a live ERPNext site, so they run fast in CI.
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import frappe
 from frappe.utils import add_days, nowdate
 
 from isnack.utils.maintenance import (
@@ -109,6 +110,52 @@ class TestReminderIdempotency(unittest.TestCase):
         log_old = {"custom_reminder_stage": "7 days before due",
                    "custom_last_reminder_on": add_days(nowdate(), -1)}
         self.assertFalse(mt._already_sent_today(log_old, Rule()))
+
+
+class TestReassignTask(unittest.TestCase):
+    """reassign_task saves the log, then adds the technician's ToDo best effort."""
+
+    def reassign(self, assign_failure):
+        import isnack.api.maintenance_hub as hub
+
+        doc = MagicMock()
+        doc.custom_operational_status = OP_PLANNED
+        with patch.object(hub, "_ensure_manager"), \
+                patch.object(hub.frappe, "get_doc", return_value=doc), \
+                patch.object(hub.frappe.db, "get_value", return_value="tech@example.com"), \
+                patch("frappe.desk.form.assign_to.add", side_effect=assign_failure) as assign, \
+                patch.object(hub.frappe, "clear_last_message") as clear:
+            try:
+                result, raised = hub.reassign_task("MAT-AML-2026-00012", "tech@example.com"), None
+            except Exception as e:
+                result, raised = None, e
+        return result, raised, doc, assign, clear
+
+    def test_a_deadlock_adding_the_todo_is_not_swallowed(self):
+        """The reassignment saved before it went with the transaction, so ok
+        would tell the manager it was made. A lock wait timeout goes the same
+        way."""
+        for failure in (
+            frappe.QueryDeadlockError("(1213, 'Deadlock found when trying to get lock')"),
+            frappe.QueryTimeoutError("(1205, 'Lock wait timeout exceeded')"),
+        ):
+            with self.subTest(type(failure).__name__):
+                result, raised, doc, assign, clear = self.reassign(failure)
+
+                doc.save.assert_called_once_with(ignore_permissions=True)
+                assign.assert_called_once()
+                self.assertIs(raised, failure)
+                self.assertIsNone(result)
+                clear.assert_not_called()
+
+    def test_a_todo_that_cannot_be_added_still_reassigns(self):
+        result, raised, doc, _assign, clear = self.reassign(
+            frappe.PermissionError("Not permitted to assign"))
+
+        self.assertIsNone(raised)
+        self.assertEqual(result, {"ok": True, "technician": "tech@example.com"})
+        self.assertEqual(doc.custom_operational_status, OP_ASSIGNED)
+        clear.assert_called_once()
 
 
 if __name__ == "__main__":
