@@ -5,6 +5,7 @@
 import unittest
 from unittest.mock import MagicMock, call, patch
 
+import frappe
 from frappe.utils import flt
 
 from isnack.overrides.landed_cost_voucher import (
@@ -370,6 +371,10 @@ class TestCustomLandedCostVoucherSyncWrapsErrors(unittest.TestCase):
 
         mock_sync.side_effect = Exception("DB error")
         mock_frappe.get_traceback.return_value = "traceback text"
+        # The real classes: the code names them in an except clause, and a
+        # MagicMock there cannot catch anything.
+        mock_frappe.QueryDeadlockError = frappe.QueryDeadlockError
+        mock_frappe.QueryTimeoutError = frappe.QueryTimeoutError
 
         lcv = CustomLandedCostVoucher.__new__(CustomLandedCostVoucher)
 
@@ -382,6 +387,35 @@ class TestCustomLandedCostVoucherSyncWrapsErrors(unittest.TestCase):
         lcv._isnack_sync_draft_assets()
 
         mock_frappe.log_error.assert_called_once()
+
+    @patch("isnack.overrides.landed_cost_voucher.sync_draft_assets_for_receipt")
+    def test_a_deadlock_in_the_sync_is_not_swallowed(self, mock_sync):
+        """The sync runs after ERPNext has re-posted the receipts for the
+        voucher, and a deadlock has rolled that back. Swallowing it would let
+        the submit finish and report success with none of it in the database.
+        A lock wait timeout goes the same way."""
+        from isnack.overrides.landed_cost_voucher import CustomLandedCostVoucher
+
+        for failure in (
+            frappe.QueryDeadlockError("(1213, 'Deadlock found when trying to get lock')"),
+            frappe.QueryTimeoutError("(1205, 'Lock wait timeout exceeded')"),
+        ):
+            with self.subTest(type(failure).__name__):
+                mock_sync.reset_mock()
+                mock_sync.side_effect = failure
+                first, second = MagicMock(), MagicMock()
+                first.receipt_document_type = second.receipt_document_type = "Purchase Receipt"
+                first.receipt_document, second.receipt_document = "MAT-PRE-0001", "MAT-PRE-0002"
+                lcv = CustomLandedCostVoucher.__new__(CustomLandedCostVoucher)
+                lcv.get = MagicMock(return_value=[first, second])
+
+                with patch("isnack.overrides.landed_cost_voucher.frappe.log_error") as log:
+                    with self.assertRaises(type(failure)) as raised:
+                        lcv._isnack_sync_draft_assets()
+
+                self.assertIs(raised.exception, failure)
+                mock_sync.assert_called_once_with("Purchase Receipt", "MAT-PRE-0001")
+                log.assert_not_called()
 
     @patch("isnack.overrides.landed_cost_voucher.sync_draft_assets_for_receipt")
     @patch("isnack.overrides.landed_cost_voucher.frappe")

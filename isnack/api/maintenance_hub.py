@@ -359,6 +359,12 @@ def reassign_task(log, technician, due_date=None):
             "name": log,
             "description": _("Maintenance task assigned to you."),
         })
+    except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+        # Not a duplicate assignment but the transaction failing: a deadlock
+        # has rolled back the reassignment saved above, and returning ok would
+        # tell the manager it was made. A lock wait timeout goes the same way
+        # rather than count on the server's innodb_rollback_on_timeout.
+        raise
     except Exception:
         frappe.clear_last_message()
     return {"ok": True, "technician": technician}

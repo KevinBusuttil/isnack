@@ -1215,15 +1215,27 @@ def _record_material_shortfall(wo, row: dict, output_qty: float) -> None:
         row["post_qty"], row["short_qty"], row["source_warehouse"],
     )
 
+    # Neither note may stop a close, unless writing it is where the transaction
+    # failed. A deadlock rolls back everything the request has written so far
+    # (on Close Production: the orders already closed, the surplus swept) and
+    # the next statement starts a fresh transaction, so swallowing it would
+    # commit the rest of the close without its beginning. A lock wait timeout
+    # undoes only its own statement unless the server sets
+    # innodb_rollback_on_timeout, which nothing here can see, so it goes the
+    # same way. The request then fails whole and can be retried.
     try:
         frappe.log_error(
             title="Material Yield Variance",
             message=f"Work Order {wo.name}\n{detail}\n{reason}",
         )
+    except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+        raise
     except Exception:
         pass
     try:
         wo.add_comment("Comment", f"{detail} {reason}")
+    except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+        raise
     except Exception:
         # A missing audit comment must never be what stops a close.
         pass
@@ -1868,6 +1880,12 @@ def leave_job_card(job_card: str, employee: Optional[str] = None):
     if not _open_time_logs(job_card):
         try:
             frappe.db.set_value("Job Card", job_card, "status", "On Hold", update_modified=False)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            # The transaction failed, not the status (see
+            # _record_material_shortfall): after a deadlock the time log closed
+            # above is gone too, and returning True would tell the operator
+            # they left a job they are still on.
+            raise
         except Exception:
             pass
     return True
@@ -1918,14 +1936,22 @@ def set_card_status(
     else:
         frappe.throw(_("Unknown action"))
 
+    # The transaction failing is not a field failing (see
+    # _record_material_shortfall): after a deadlock the time logs a Pause or
+    # Stop closed above are gone, and saving the card would commit its new
+    # status without them.
     if remarks:
         try:
             jc.db_set("mes_remarks", remarks, commit=False)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            raise
         except Exception:
             pass
     if reason:
         try:
             jc.db_set("mes_reason", reason, commit=False)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            raise
         except Exception:
             pass
 
@@ -2339,6 +2365,15 @@ def _sweep_surplus_to_wip(
                 )
                 created.append(new_name)
             frappe.db.release_savepoint(save_point)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            # Not this surplus failing but the transaction (see
+            # _record_material_shortfall). A deadlock takes the savepoint with
+            # everything else, so rolling back to it would only fail on a
+            # savepoint that no longer exists, and carrying on would commit the
+            # rest of the start or close without what it wrote before the
+            # sweep. A lock wait timeout goes the same way rather than count on
+            # the server to have kept the savepoint.
+            raise
         except Exception as exc:
             # Takes the claim back with the partial transfer, so the surplus
             # stays unswept and can be retried on a later start or close.
@@ -2932,6 +2967,11 @@ def set_wo_status(work_order, action, reason=None, remarks=None):
         for k, v in updates.items():
             try:
                 wo.db_set(k, v, commit=False)
+            except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+                # The transaction failed, not the field (see
+                # _record_material_shortfall); after a deadlock the fields set
+                # before it are gone too.
+                raise
             except Exception:
                 pass
 
@@ -3146,9 +3186,16 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         _post_sfg_consumption(wo, sfg_rows, good)
 
     # 3) Remarks + rejects
+    # Each write is best effort, except where it is the transaction that
+    # failed (see _record_material_shortfall). By now the Manufacture entry and
+    # any semi-finished consumption are written; a deadlock has rolled them
+    # back, and carrying on would commit the Work Order as Completed without
+    # them.
     if remarks:
         try:
             wo.db_set("remarks", remarks, commit=False)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            raise
         except Exception:
             pass
 
@@ -3156,6 +3203,8 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
         try:
             current = float(wo.get("custom_rejects_qty") or 0)
             wo.db_set("custom_rejects_qty", current + rejects, commit=False)
+        except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+            raise
         except Exception:
             pass
 
@@ -3165,6 +3214,8 @@ def complete_work_order(work_order, good, rejects=0, remarks=None, sfg_usage=Non
             work_order,
             {"status": "Completed", "actual_end_date": frappe.utils.now_datetime()},
         )
+    except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+        raise
     except Exception:
         pass
 
