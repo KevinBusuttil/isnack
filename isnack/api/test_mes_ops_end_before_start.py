@@ -180,6 +180,20 @@ class TestSfgUsageNotYetRecorded(unittest.TestCase):
                                  {"item_code": "SFG10001", "qty": 60}], {})
         self.assertEqual(rows, [{"item_code": "SFG10001", "qty": 160.0}])
 
+    def test_the_note_keeps_the_third_decimal_from_a_thousand_up(self):
+        """With :g, which keeps six significant digits, ending again at
+        1066.667 Kg with 1066.666 recorded noted "1066.67 entered, 1066.67
+        already recorded, 0.001 consumed now", and a consumed-now figure of
+        1200.001 read 1200."""
+        _rows, notes = self.net([{"item_code": "SFG10001", "qty": 1066.667},
+                                 {"item_code": "SFG10005", "qty": 2266.667}],
+                                {"SFG10001": 1066.666, "SFG10005": 1066.666})
+        self.assertEqual(notes, [
+            "End WO semi-finished usage: "
+            "SFG10001: 1066.667 entered, 1066.666 already recorded, 0.001 consumed now; "
+            "SFG10005: 2266.667 entered, 1066.666 already recorded, 1200.001 consumed now."
+        ])
+
 
 def undo(wo, manufactured=0.0, reason="Ended before Start by mistake", roles_ok=True,
          locked_row=None):
